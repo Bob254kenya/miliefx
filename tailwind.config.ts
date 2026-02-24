@@ -63,6 +63,18 @@ export default {
           DEFAULT: "hsl(var(--warning))",
           foreground: "hsl(var(--warning-foreground))",
         },
+        even: {
+          DEFAULT: "hsl(var(--even))",
+          foreground: "hsl(var(--even-foreground))",
+        },
+        odd: {
+          DEFAULT: "hsl(var(--odd))",
+          foreground: "hsl(var(--odd-foreground))",
+        },
+        signal: {
+          DEFAULT: "hsl(var(--signal))",
+          foreground: "hsl(var(--signal-foreground))",
+        },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
           foreground: "hsl(var(--sidebar-foreground))",
