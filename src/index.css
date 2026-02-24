@@ -49,6 +49,13 @@
     --chart-4: 38 92% 50%;
     --chart-5: 270 60% 55%;
 
+    --even: 210 90% 55%;
+    --even-foreground: 210 90% 95%;
+    --odd: 25 90% 55%;
+    --odd-foreground: 25 90% 95%;
+    --signal: 270 70% 60%;
+    --signal-foreground: 270 70% 95%;
+
     --sidebar-background: 225 25% 5%;
     --sidebar-foreground: 210 15% 65%;
     --sidebar-primary: 195 100% 50%;

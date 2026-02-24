@@ -1,34 +1,26 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { MARKETS, derivApi, type MarketSymbol } from '@/services/deriv-api';
+import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { getLastDigit } from '@/services/analysis';
 import { useAuth } from '@/contexts/AuthContext';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
-import { Play, Pause, StopCircle } from 'lucide-react';
-
-interface TradeLog {
-  id: number;
-  time: string;
-  market: string;
-  contract: string;
-  stake: number;
-  result: 'Win' | 'Loss' | 'Pending';
-  pnl: number;
-}
+import TradeConfig, { type TradeConfigState } from '@/components/auto-trade/TradeConfig';
+import DigitDisplay from '@/components/auto-trade/DigitDisplay';
+import PercentagePanel from '@/components/auto-trade/PercentagePanel';
+import PatternStrategy, { doesPatternMatch, type PatternCondition } from '@/components/auto-trade/PatternStrategy';
+import SignalAlerts from '@/components/auto-trade/SignalAlerts';
+import StatsPanel from '@/components/auto-trade/StatsPanel';
+import TradeLogComponent from '@/components/auto-trade/TradeLog';
+import { type TradeLog } from '@/components/auto-trade/types';
 
 /**
- * Helper: Wait for the next fresh tick on a given symbol.
- * Returns the tick data so we can extract the confirmed digit.
- * FIX: Bot now waits for a NEW tick before placing any trade — no premature entries.
+ * Wait for a fresh tick on a given symbol.
+ * Resolves with the new tick data so we can extract the confirmed digit.
  */
 function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number }> {
   return new Promise((resolve) => {
     const unsub = derivApi.onMessage((data: any) => {
       if (data.tick && data.tick.symbol === symbol) {
-        unsub(); // stop listening after first tick
+        unsub();
         resolve({ quote: data.tick.quote, epoch: data.tick.epoch });
       }
     });
@@ -36,39 +28,87 @@ function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number
 }
 
 export default function AutoTrade() {
-  const { isAuthorized, activeAccount } = useAuth();
-  const [market, setMarket] = useState<MarketSymbol>('R_100');
-  const [contractType, setContractType] = useState('DIGITOVER');
-  const [digit, setDigit] = useState('4');
-  const [stake, setStake] = useState('1');
-  const [martingale, setMartingale] = useState(false);
-  const [multiplier, setMultiplier] = useState('2');
-  const [stopLoss, setStopLoss] = useState('10');
-  const [takeProfit, setTakeProfit] = useState('20');
-  const [maxTrades, setMaxTrades] = useState('50');
+  const { isAuthorized, activeAccount, balance } = useAuth();
+
+  // Trade configuration
+  const [config, setConfig] = useState<TradeConfigState>({
+    market: 'R_100',
+    contractType: 'DIGITOVER',
+    digit: '4',
+    stake: '1',
+    martingale: false,
+    multiplier: '2',
+    stopLoss: '10',
+    takeProfit: '20',
+    maxTrades: '50',
+  });
+
+  // Runtime state
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [trades, setTrades] = useState<TradeLog[]>([]);
+  const [digits, setDigits] = useState<number[]>([]);
+  const [currentStake, setCurrentStake] = useState(1);
   const runningRef = useRef(false);
   const pausedRef = useRef(false);
   const tradeIdRef = useRef(0);
 
-  const needsDigit = ['DIGITOVER', 'DIGITUNDER', 'DIGITMATCH', 'DIGITDIFF'].includes(contractType);
+  // Pattern strategy state
+  const [patternEnabled, setPatternEnabled] = useState(false);
+  const [patternLength, setPatternLength] = useState(3);
+  const [pattern, setPattern] = useState<PatternCondition[]>(['Odd', 'Odd', 'Even']);
 
-  const contractTypes = [
-    { value: 'DIGITOVER', label: 'Over' },
-    { value: 'DIGITUNDER', label: 'Under' },
-    { value: 'DIGITEVEN', label: 'Even' },
-    { value: 'DIGITODD', label: 'Odd' },
-    { value: 'DIGITMATCH', label: 'Matches' },
-    { value: 'DIGITDIFF', label: 'Differs' },
-  ];
+  // Signal sound
+  const [soundEnabled, setSoundEnabled] = useState(false);
 
-  const totalPnL = trades.reduce((sum, t) => sum + t.pnl, 0);
-  const wins = trades.filter(t => t.result === 'Win').length;
-  const losses = trades.filter(t => t.result === 'Loss').length;
-  const winRate = trades.length > 0 ? (wins / trades.length) * 100 : 0;
+  const barrier = parseInt(config.digit);
 
+  // Handle config changes
+  const handleConfigChange = useCallback(<K extends keyof TradeConfigState>(key: K, val: TradeConfigState[K]) => {
+    setConfig(prev => ({ ...prev, [key]: val }));
+  }, []);
+
+  // Handle pattern change with auto-resize
+  const handlePatternLengthChange = useCallback((len: number) => {
+    setPatternLength(len);
+    setPattern(prev => {
+      const next = [...prev];
+      while (next.length < len) next.push('Any');
+      return next.slice(0, len);
+    });
+  }, []);
+
+  const handlePatternChange = useCallback((idx: number, val: PatternCondition) => {
+    setPattern(prev => {
+      const next = [...prev];
+      next[idx] = val;
+      return next;
+    });
+  }, []);
+
+  // Subscribe to ticks for digit tracking (even when not trading)
+  useEffect(() => {
+    if (!derivApi.isConnected) return;
+
+    let active = true;
+    const handler = (data: any) => {
+      if (data.tick && data.tick.symbol === config.market && active) {
+        const d = getLastDigit(data.tick.quote);
+        setDigits(prev => [...prev, d].slice(-30));
+      }
+    };
+
+    const unsub = derivApi.onMessage(handler);
+
+    derivApi.subscribeTicks(config.market, () => {}).catch(console.error);
+
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, [config.market]);
+
+  // Main trading loop
   const startTrading = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
     setIsRunning(true);
@@ -76,15 +116,16 @@ export default function AutoTrade() {
     pausedRef.current = false;
     setIsPaused(false);
 
-    // Ensure we have a tick subscription for timing
-    await derivApi.subscribeTicks(market, () => {});
+    await derivApi.subscribeTicks(config.market, () => {});
 
-    let currentStake = parseFloat(stake);
+    let stake = parseFloat(config.stake);
+    setCurrentStake(stake);
     let totalPnl = 0;
     let tradeCount = 0;
-    const maxTradeCount = parseInt(maxTrades);
-    const sl = parseFloat(stopLoss);
-    const tp = parseFloat(takeProfit);
+    const maxTradeCount = parseInt(config.maxTrades);
+    const sl = parseFloat(config.stopLoss);
+    const tp = parseFloat(config.takeProfit);
+    const needsDigit = ['DIGITOVER', 'DIGITUNDER', 'DIGITMATCH', 'DIGITDIFF'].includes(config.contractType);
 
     while (runningRef.current && tradeCount < maxTradeCount) {
       if (pausedRef.current) {
@@ -93,46 +134,51 @@ export default function AutoTrade() {
       }
 
       try {
-        // ──────────────────────────────────────────────
-        // FIX: Wait for a fresh tick BEFORE placing trade.
-        // This ensures we have the latest confirmed digit.
-        // ──────────────────────────────────────────────
-        const freshTick = await waitForNextTick(market);
+        // FIX: Wait for fresh tick before placing trade
+        const freshTick = await waitForNextTick(config.market);
         const extractedDigit = getLastDigit(freshTick.quote);
 
-        // Debug logging — always fires, even when digit is 0
+        // Debug logging — digit 0 is valid
         console.log('──── TRADE CYCLE ────');
         console.log('Tick quote:', freshTick.quote);
         console.log('Extracted digit:', extractedDigit, '(type:', typeof extractedDigit, ')');
-        console.log('Contract type:', contractType);
-        console.log('Barrier:', needsDigit ? digit : 'N/A');
+        console.log('Contract type:', config.contractType);
+        console.log('Barrier:', needsDigit ? config.digit : 'N/A');
+
+        // Pattern check — skip if enabled and not matched
+        if (patternEnabled) {
+          const recentDigits = [...digits, extractedDigit].slice(-30);
+          if (!doesPatternMatch(recentDigits, pattern, barrier)) {
+            console.log('Pattern not matched, skipping trade');
+            continue;
+          }
+          console.log('✓ Pattern matched, entering trade');
+        }
 
         const params: any = {
-          contract_type: contractType,
-          symbol: market,
+          contract_type: config.contractType,
+          symbol: config.market,
           duration: 1,
           duration_unit: 't',
           basis: 'stake',
-          amount: currentStake,
+          amount: stake,
         };
-
         if (needsDigit) {
-          params.barrier = digit;
+          params.barrier = config.digit;
         }
 
         const id = ++tradeIdRef.current;
         const now = new Date().toLocaleTimeString();
 
         setTrades(prev => [{
-          id, time: now, market, contract: contractType,
-          stake: currentStake, result: 'Pending' as const, pnl: 0,
+          id, time: now, market: config.market, contract: config.contractType,
+          stake, result: 'Pending' as const, pnl: 0,
         }, ...prev].slice(0, 100));
 
         const result = await derivApi.buy(params);
         const pnl = result.buy?.profit || 0;
         const won = pnl > 0;
 
-        // Debug: log result
         console.log('Result:', won ? 'WIN' : 'LOSS', '| P/L:', pnl);
         console.log('─────────────────────');
 
@@ -143,20 +189,20 @@ export default function AutoTrade() {
         totalPnl += pnl;
         tradeCount++;
 
-        // Martingale: increase stake on loss, reset on win
-        if (martingale && !won) {
-          currentStake *= parseFloat(multiplier);
+        // Martingale logic
+        if (config.martingale && !won) {
+          stake *= parseFloat(config.multiplier);
         } else {
-          currentStake = parseFloat(stake);
+          stake = parseFloat(config.stake);
         }
+        setCurrentStake(stake);
 
-        // Stop Loss / Take Profit check
+        // Stop Loss / Take Profit
         if (totalPnl <= -sl || totalPnl >= tp) {
           console.log('SL/TP hit. Total P/L:', totalPnl);
           runningRef.current = false;
         }
 
-        // Small delay between trades to avoid flooding
         await new Promise(r => setTimeout(r, 500));
       } catch (err) {
         console.error('Trade error:', err);
@@ -166,8 +212,8 @@ export default function AutoTrade() {
 
     setIsRunning(false);
     runningRef.current = false;
-    console.log('Trading session ended. Total trades:', tradeCount, 'P/L:', totalPnl);
-  }, [isAuthorized, isRunning, stake, market, contractType, digit, needsDigit, martingale, multiplier, maxTrades, stopLoss, takeProfit]);
+    console.log('Session ended. Trades:', tradeCount, 'P/L:', totalPnl);
+  }, [isAuthorized, isRunning, config, patternEnabled, pattern, barrier, digits]);
 
   const pauseTrading = () => {
     pausedRef.current = !pausedRef.current;
@@ -181,191 +227,73 @@ export default function AutoTrade() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Auto Trade</h1>
-        <p className="text-sm text-muted-foreground">Configure and run automated digit trading</p>
+        <h1 className="text-xl font-bold text-foreground">Digit Trading Bot</h1>
+        <p className="text-xs text-muted-foreground">Real-time analysis, pattern strategies & automated execution</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Config Panel */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="bg-card border border-border rounded-xl p-5 space-y-4"
-        >
-          <h2 className="font-semibold text-foreground">Configuration</h2>
+      {/* Stats bar */}
+      <StatsPanel
+        trades={trades}
+        balance={balance}
+        currentStake={currentStake}
+        market={config.market}
+        currency={activeAccount?.currency || 'USD'}
+      />
 
-          <div>
-            <label className="text-xs text-muted-foreground">Market</label>
-            <Select value={market} onValueChange={(v) => setMarket(v as MarketSymbol)} disabled={isRunning}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {MARKETS.map(m => (
-                  <SelectItem key={m.symbol} value={m.symbol}>{m.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        {/* Left column: Config + Pattern */}
+        <div className="lg:col-span-3 space-y-4">
+          <TradeConfig
+            config={config}
+            onChange={handleConfigChange}
+            isRunning={isRunning}
+            isPaused={isPaused}
+            isAuthorized={isAuthorized}
+            currency={activeAccount?.currency || 'USD'}
+            onStart={startTrading}
+            onPause={pauseTrading}
+            onStop={stopTrading}
+          />
+          <PatternStrategy
+            enabled={patternEnabled}
+            onToggle={setPatternEnabled}
+            patternLength={patternLength}
+            onLengthChange={handlePatternLengthChange}
+            pattern={pattern}
+            onPatternChange={handlePatternChange}
+            disabled={isRunning}
+          />
+        </div>
 
-          <div>
-            <label className="text-xs text-muted-foreground">Contract Type</label>
-            <Select value={contractType} onValueChange={setContractType} disabled={isRunning}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {contractTypes.map(ct => (
-                  <SelectItem key={ct.value} value={ct.value}>{ct.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {needsDigit && (
-            <div>
-              <label className="text-xs text-muted-foreground">Digit (0-9)</label>
-              <Input type="number" min="0" max="9" value={digit} onChange={e => setDigit(e.target.value)} disabled={isRunning} />
-            </div>
-          )}
-
-          <div>
-            <label className="text-xs text-muted-foreground">Stake ({activeAccount?.currency || 'USD'})</label>
-            <Input type="number" min="0.35" step="0.01" value={stake} onChange={e => setStake(e.target.value)} disabled={isRunning} />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <label className="text-sm text-foreground">Martingale</label>
-            <Switch checked={martingale} onCheckedChange={setMartingale} disabled={isRunning} />
-          </div>
-
-          {martingale && (
-            <div>
-              <label className="text-xs text-muted-foreground">Multiplier</label>
-              <Input type="number" min="1.1" step="0.1" value={multiplier} onChange={e => setMultiplier(e.target.value)} disabled={isRunning} />
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground">Stop Loss</label>
-              <Input type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunning} />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground">Take Profit</label>
-              <Input type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunning} />
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-muted-foreground">Max Trades</label>
-            <Input type="number" value={maxTrades} onChange={e => setMaxTrades(e.target.value)} disabled={isRunning} />
-          </div>
-
-          {/* Control Buttons */}
-          <div className="flex gap-2 pt-2">
-            {!isRunning ? (
-              <Button onClick={startTrading} disabled={!isAuthorized} className="flex-1 bg-profit hover:bg-profit/90 text-profit-foreground">
-                <Play className="w-4 h-4 mr-1" /> Start
-              </Button>
-            ) : (
-              <>
-                <Button onClick={pauseTrading} variant="outline" className="flex-1">
-                  <Pause className="w-4 h-4 mr-1" /> {isPaused ? 'Resume' : 'Pause'}
-                </Button>
-                <Button onClick={stopTrading} variant="destructive" className="flex-1">
-                  <StopCircle className="w-4 h-4 mr-1" /> Stop
-                </Button>
-              </>
-            )}
-          </div>
-        </motion.div>
-
-        {/* Performance + Trade Log */}
-        <div className="lg:col-span-2 space-y-4">
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.1 }}
-            className="grid grid-cols-2 sm:grid-cols-4 gap-3"
-          >
-            <div className="bg-card border border-border rounded-lg p-3 text-center">
-              <div className="text-xs text-muted-foreground">Win Rate</div>
-              <div className={`font-mono text-lg font-bold ${winRate >= 50 ? 'text-profit' : 'text-loss'}`}>
-                {winRate.toFixed(1)}%
-              </div>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-3 text-center">
-              <div className="text-xs text-muted-foreground">Total Trades</div>
-              <div className="font-mono text-lg font-bold text-foreground">{trades.length}</div>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-3 text-center">
-              <div className="text-xs text-muted-foreground">W / L</div>
-              <div className="font-mono text-lg font-bold">
-                <span className="text-profit">{wins}</span>
-                <span className="text-muted-foreground"> / </span>
-                <span className="text-loss">{losses}</span>
-              </div>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-3 text-center">
-              <div className="text-xs text-muted-foreground">P/L</div>
-              <div className={`font-mono text-lg font-bold ${totalPnL >= 0 ? 'text-profit' : 'text-loss'}`}>
-                {totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(2)}
-              </div>
-            </div>
+        {/* Center column: Digits + Percentages + Signals */}
+        <div className="lg:col-span-4 space-y-4">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+            <DigitDisplay digits={digits} barrier={barrier} />
           </motion.div>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
+            <PercentagePanel
+              digits={digits}
+              barrier={barrier}
+              selectedDigit={barrier}
+              onSelectDigit={d => handleConfigChange('digit', String(d))}
+            />
+          </motion.div>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
+            <SignalAlerts
+              digits={digits}
+              barrier={barrier}
+              soundEnabled={soundEnabled}
+              onSoundToggle={setSoundEnabled}
+            />
+          </motion.div>
+        </div>
 
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.2 }}
-            className="bg-card border border-border rounded-xl overflow-hidden"
-          >
-            <div className="p-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Trade Log</h2>
-            </div>
-            <div className="max-h-96 overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="text-xs text-muted-foreground bg-muted/50 sticky top-0">
-                  <tr>
-                    <th className="text-left p-2">Time</th>
-                    <th className="text-left p-2">Market</th>
-                    <th className="text-left p-2">Type</th>
-                    <th className="text-right p-2">Stake</th>
-                    <th className="text-center p-2">Result</th>
-                    <th className="text-right p-2">P/L</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {trades.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="text-center text-muted-foreground py-8">
-                        No trades yet. Configure and start trading.
-                      </td>
-                    </tr>
-                  ) : trades.map(trade => (
-                    <tr key={trade.id} className="border-t border-border/50 hover:bg-muted/30">
-                      <td className="p-2 font-mono text-xs">{trade.time}</td>
-                      <td className="p-2 font-mono text-xs">{trade.market}</td>
-                      <td className="p-2 text-xs">{trade.contract}</td>
-                      <td className="p-2 font-mono text-xs text-right">{trade.stake.toFixed(2)}</td>
-                      <td className="p-2 text-center">
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${
-                          trade.result === 'Win' ? 'bg-profit/10 text-profit' :
-                          trade.result === 'Loss' ? 'bg-loss/10 text-loss' :
-                          'bg-warning/10 text-warning'
-                        }`}>
-                          {trade.result}
-                        </span>
-                      </td>
-                      <td className={`p-2 font-mono text-xs text-right ${
-                        trade.pnl > 0 ? 'text-profit' : trade.pnl < 0 ? 'text-loss' : 'text-muted-foreground'
-                      }`}>
-                        {trade.pnl > 0 ? '+' : ''}{trade.pnl.toFixed(2)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        {/* Right column: Trade Log */}
+        <div className="lg:col-span-5">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15 }}>
+            <TradeLogComponent trades={trades} />
           </motion.div>
         </div>
       </div>
