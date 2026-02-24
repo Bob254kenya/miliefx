@@ -19,6 +19,22 @@ interface TradeLog {
   pnl: number;
 }
 
+/**
+ * Helper: Wait for the next fresh tick on a given symbol.
+ * Returns the tick data so we can extract the confirmed digit.
+ * FIX: Bot now waits for a NEW tick before placing any trade — no premature entries.
+ */
+function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number }> {
+  return new Promise((resolve) => {
+    const unsub = derivApi.onMessage((data: any) => {
+      if (data.tick && data.tick.symbol === symbol) {
+        unsub(); // stop listening after first tick
+        resolve({ quote: data.tick.quote, epoch: data.tick.epoch });
+      }
+    });
+  });
+}
+
 export default function AutoTrade() {
   const { isAuthorized, activeAccount } = useAuth();
   const [market, setMarket] = useState<MarketSymbol>('R_100');
@@ -60,6 +76,9 @@ export default function AutoTrade() {
     pausedRef.current = false;
     setIsPaused(false);
 
+    // Ensure we have a tick subscription for timing
+    await derivApi.subscribeTicks(market, () => {});
+
     let currentStake = parseFloat(stake);
     let totalPnl = 0;
     let tradeCount = 0;
@@ -74,6 +93,20 @@ export default function AutoTrade() {
       }
 
       try {
+        // ──────────────────────────────────────────────
+        // FIX: Wait for a fresh tick BEFORE placing trade.
+        // This ensures we have the latest confirmed digit.
+        // ──────────────────────────────────────────────
+        const freshTick = await waitForNextTick(market);
+        const extractedDigit = getLastDigit(freshTick.quote);
+
+        // Debug logging — always fires, even when digit is 0
+        console.log('──── TRADE CYCLE ────');
+        console.log('Tick quote:', freshTick.quote);
+        console.log('Extracted digit:', extractedDigit, '(type:', typeof extractedDigit, ')');
+        console.log('Contract type:', contractType);
+        console.log('Barrier:', needsDigit ? digit : 'N/A');
+
         const params: any = {
           contract_type: contractType,
           symbol: market,
@@ -89,7 +122,7 @@ export default function AutoTrade() {
 
         const id = ++tradeIdRef.current;
         const now = new Date().toLocaleTimeString();
-        
+
         setTrades(prev => [{
           id, time: now, market, contract: contractType,
           stake: currentStake, result: 'Pending' as const, pnl: 0,
@@ -99,6 +132,10 @@ export default function AutoTrade() {
         const pnl = result.buy?.profit || 0;
         const won = pnl > 0;
 
+        // Debug: log result
+        console.log('Result:', won ? 'WIN' : 'LOSS', '| P/L:', pnl);
+        console.log('─────────────────────');
+
         setTrades(prev => prev.map(t =>
           t.id === id ? { ...t, result: won ? 'Win' : 'Loss', pnl } : t
         ));
@@ -106,18 +143,21 @@ export default function AutoTrade() {
         totalPnl += pnl;
         tradeCount++;
 
+        // Martingale: increase stake on loss, reset on win
         if (martingale && !won) {
           currentStake *= parseFloat(multiplier);
         } else {
           currentStake = parseFloat(stake);
         }
 
+        // Stop Loss / Take Profit check
         if (totalPnl <= -sl || totalPnl >= tp) {
+          console.log('SL/TP hit. Total P/L:', totalPnl);
           runningRef.current = false;
         }
 
-        // Small delay between trades
-        await new Promise(r => setTimeout(r, 1000));
+        // Small delay between trades to avoid flooding
+        await new Promise(r => setTimeout(r, 500));
       } catch (err) {
         console.error('Trade error:', err);
         await new Promise(r => setTimeout(r, 2000));
@@ -126,6 +166,7 @@ export default function AutoTrade() {
 
     setIsRunning(false);
     runningRef.current = false;
+    console.log('Trading session ended. Total trades:', tradeCount, 'P/L:', totalPnl);
   }, [isAuthorized, isRunning, stake, market, contractType, digit, needsDigit, martingale, multiplier, maxTrades, stopLoss, takeProfit]);
 
   const pauseTrading = () => {
@@ -154,7 +195,7 @@ export default function AutoTrade() {
           className="bg-card border border-border rounded-xl p-5 space-y-4"
         >
           <h2 className="font-semibold text-foreground">Configuration</h2>
-          
+
           <div>
             <label className="text-xs text-muted-foreground">Market</label>
             <Select value={market} onValueChange={(v) => setMarket(v as MarketSymbol)} disabled={isRunning}>
@@ -240,7 +281,6 @@ export default function AutoTrade() {
 
         {/* Performance + Trade Log */}
         <div className="lg:col-span-2 space-y-4">
-          {/* Performance */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -273,7 +313,6 @@ export default function AutoTrade() {
             </div>
           </motion.div>
 
-          {/* Trade Log */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
