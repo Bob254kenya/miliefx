@@ -6,21 +6,23 @@ interface DigitDisplayProps {
 }
 
 /**
- * Shows last 30 digits as colored boxes.
+ * Shows digits as colored boxes.
  * Green = digit > barrier (Over), Red = digit < barrier (Under),
  * Blue border = Even, Orange border = Odd.
+ * Digit 0 is always included.
  */
 export default function DigitDisplay({ digits, barrier }: DigitDisplayProps) {
-  const last30 = digits.slice(-30);
-
   return (
     <div className="bg-card border border-border rounded-xl p-4">
-      <h3 className="text-sm font-semibold text-foreground mb-3">Last 30 Digits</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-foreground">Digit Stream</h3>
+        <span className="text-[10px] text-muted-foreground font-mono">{digits.length} ticks</span>
+      </div>
       <div className="flex flex-wrap gap-1.5">
-        {last30.length === 0 && (
+        {digits.length === 0 && (
           <p className="text-xs text-muted-foreground">Waiting for ticks…</p>
         )}
-        {last30.map((d, i) => {
+        {digits.map((d, i) => {
           const isOver = d > barrier;
           const isUnder = d < barrier;
           const isEven = d % 2 === 0;
@@ -29,9 +31,7 @@ export default function DigitDisplay({ digits, barrier }: DigitDisplayProps) {
           if (isOver) bgClass = 'bg-profit/20';
           else if (isUnder) bgClass = 'bg-loss/20';
 
-          const borderClass = isEven
-            ? 'border-even'
-            : 'border-odd';
+          const borderClass = isEven ? 'border-even' : 'border-odd';
 
           return (
             <motion.div

@@ -1,12 +1,11 @@
 import { NavLink } from '@/components/NavLink';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  LayoutDashboard, BarChart3, Activity, Bot, History, Settings, LogOut, ChevronDown,
+  LayoutDashboard, BarChart3, Activity, Bot, History, Settings, LogOut, ChevronDown, Cpu,
 } from 'lucide-react';
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
   SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
-  SidebarTrigger,
 } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import {
@@ -18,27 +17,27 @@ const navItems = [
   { title: 'Markets', url: '/markets', icon: BarChart3 },
   { title: 'Analyzer', url: '/analyzer', icon: Activity },
   { title: 'Auto Trade', url: '/auto-trade', icon: Bot },
+  { title: 'Smart Bots', url: '/bots', icon: Cpu },
   { title: 'Trade History', url: '/history', icon: History },
   { title: 'Settings', url: '/settings', icon: Settings },
 ];
 
 export function AppSidebar() {
-  const { activeAccount, accounts, balance, accountInfo, logout, switchAccount } = useAuth();
+  const { activeAccount, accounts, balance, logout, switchAccount } = useAuth();
 
   return (
     <Sidebar className="border-r border-sidebar-border">
       <div className="p-4 border-b border-sidebar-border">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
-            <Activity className="w-4 h-4 text-primary-foreground" />
+            <Cpu className="w-4 h-4 text-primary-foreground" />
           </div>
           <span className="font-bold text-foreground text-lg">
-            Digit<span className="text-primary">Edge</span>
+            Ceoramz<span className="text-primary">Traders</span>
           </span>
         </div>
       </div>
 
-      {/* Account Selector */}
       {activeAccount && (
         <div className="p-3 border-b border-sidebar-border">
           <DropdownMenu>
@@ -97,7 +96,6 @@ export function AppSidebar() {
         </SidebarGroup>
       </SidebarContent>
 
-      {/* Logout */}
       <div className="mt-auto p-3 border-t border-sidebar-border">
         <Button variant="ghost" onClick={logout} className="w-full justify-start text-muted-foreground hover:text-loss">
           <LogOut className="mr-2 h-4 w-4" /> Logout
