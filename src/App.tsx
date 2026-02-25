@@ -10,6 +10,7 @@ import Dashboard from "@/pages/Dashboard";
 import Markets from "@/pages/Markets";
 import Analyzer from "@/pages/Analyzer";
 import AutoTrade from "@/pages/AutoTrade";
+import BotsPage from "@/pages/BotsPage";
 import TradeHistory from "@/pages/TradeHistory";
 import SettingsPage from "@/pages/SettingsPage";
 import NotFound from "./pages/NotFound";
@@ -41,6 +42,7 @@ function AppRoutes() {
         <Route path="/markets" element={<Markets />} />
         <Route path="/analyzer" element={<Analyzer />} />
         <Route path="/auto-trade" element={<AutoTrade />} />
+        <Route path="/bots" element={<BotsPage />} />
         <Route path="/history" element={<TradeHistory />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
