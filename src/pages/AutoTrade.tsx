@@ -12,10 +12,6 @@ import StatsPanel from '@/components/auto-trade/StatsPanel';
 import TradeLogComponent from '@/components/auto-trade/TradeLog';
 import { type TradeLog } from '@/components/auto-trade/types';
 
-/**
- * Wait for a fresh tick on a given symbol.
- * Resolves with the new tick data so we can extract the confirmed digit.
- */
 function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number }> {
   return new Promise((resolve) => {
     const unsub = derivApi.onMessage((data: any) => {
@@ -30,7 +26,6 @@ function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number
 export default function AutoTrade() {
   const { isAuthorized, activeAccount, balance } = useAuth();
 
-  // Trade configuration
   const [config, setConfig] = useState<TradeConfigState>({
     market: 'R_100',
     contractType: 'DIGITOVER',
@@ -43,7 +38,6 @@ export default function AutoTrade() {
     maxTrades: '50',
   });
 
-  // Runtime state
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [trades, setTrades] = useState<TradeLog[]>([]);
@@ -53,22 +47,17 @@ export default function AutoTrade() {
   const pausedRef = useRef(false);
   const tradeIdRef = useRef(0);
 
-  // Pattern strategy state
   const [patternEnabled, setPatternEnabled] = useState(false);
   const [patternLength, setPatternLength] = useState(3);
   const [pattern, setPattern] = useState<PatternCondition[]>(['Odd', 'Odd', 'Even']);
-
-  // Signal sound
   const [soundEnabled, setSoundEnabled] = useState(false);
 
   const barrier = parseInt(config.digit);
 
-  // Handle config changes
   const handleConfigChange = useCallback(<K extends keyof TradeConfigState>(key: K, val: TradeConfigState[K]) => {
     setConfig(prev => ({ ...prev, [key]: val }));
   }, []);
 
-  // Handle pattern change with auto-resize
   const handlePatternLengthChange = useCallback((len: number) => {
     setPatternLength(len);
     setPattern(prev => {
@@ -86,10 +75,9 @@ export default function AutoTrade() {
     });
   }, []);
 
-  // Subscribe to ticks for digit tracking (even when not trading)
+  // Subscribe to ticks for digit tracking
   useEffect(() => {
     if (!derivApi.isConnected) return;
-
     let active = true;
     const handler = (data: any) => {
       if (data.tick && data.tick.symbol === config.market && active) {
@@ -97,18 +85,12 @@ export default function AutoTrade() {
         setDigits(prev => [...prev, d].slice(-30));
       }
     };
-
     const unsub = derivApi.onMessage(handler);
-
     derivApi.subscribeTicks(config.market, () => {}).catch(console.error);
-
-    return () => {
-      active = false;
-      unsub();
-    };
+    return () => { active = false; unsub(); };
   }, [config.market]);
 
-  // Main trading loop
+  // Main trading loop — FIXED: API-confirmed results + reversed martingale
   const startTrading = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
     setIsRunning(true);
@@ -125,6 +107,7 @@ export default function AutoTrade() {
     const maxTradeCount = parseInt(config.maxTrades);
     const sl = parseFloat(config.stopLoss);
     const tp = parseFloat(config.takeProfit);
+    const mult = parseFloat(config.multiplier);
     const needsDigit = ['DIGITOVER', 'DIGITUNDER', 'DIGITMATCH', 'DIGITDIFF'].includes(config.contractType);
 
     while (runningRef.current && tradeCount < maxTradeCount) {
@@ -134,25 +117,19 @@ export default function AutoTrade() {
       }
 
       try {
-        // FIX: Wait for fresh tick before placing trade
+        // Wait for fresh tick before placing trade
         const freshTick = await waitForNextTick(config.market);
         const extractedDigit = getLastDigit(freshTick.quote);
 
-        // Debug logging — digit 0 is valid
-        console.log('──── TRADE CYCLE ────');
-        console.log('Tick quote:', freshTick.quote);
-        console.log('Extracted digit:', extractedDigit, '(type:', typeof extractedDigit, ')');
-        console.log('Contract type:', config.contractType);
-        console.log('Barrier:', needsDigit ? config.digit : 'N/A');
+        console.log('── TRADE CYCLE ──');
+        console.log('Tick:', freshTick.quote, '→ digit:', extractedDigit);
 
-        // Pattern check — skip if enabled and not matched
+        // Pattern check
         if (patternEnabled) {
           const recentDigits = [...digits, extractedDigit].slice(-30);
           if (!doesPatternMatch(recentDigits, pattern, barrier)) {
-            console.log('Pattern not matched, skipping trade');
             continue;
           }
-          console.log('✓ Pattern matched, entering trade');
         }
 
         const params: any = {
@@ -163,9 +140,7 @@ export default function AutoTrade() {
           basis: 'stake',
           amount: stake,
         };
-        if (needsDigit) {
-          params.barrier = config.digit;
-        }
+        if (needsDigit) params.barrier = config.digit;
 
         const id = ++tradeIdRef.current;
         const now = new Date().toLocaleTimeString();
@@ -175,12 +150,16 @@ export default function AutoTrade() {
           stake, result: 'Pending' as const, pnl: 0,
         }, ...prev].slice(0, 100));
 
-        const result = await derivApi.buy(params);
-        const pnl = result.buy?.profit || 0;
-        const won = pnl > 0;
+        // Buy contract (non-blocking)
+        const { contractId, buyPrice } = await derivApi.buyContract(params);
+        console.log(`Contract ${contractId} opened @ ${buyPrice} — waiting for settlement...`);
 
-        console.log('Result:', won ? 'WIN' : 'LOSS', '| P/L:', pnl);
-        console.log('─────────────────────');
+        // WAIT for Deriv to confirm result
+        const result = await derivApi.waitForContractResult(contractId);
+        const won = result.status === 'won';
+        const pnl = result.profit;
+
+        console.log(`Result: ${won ? 'WIN' : 'LOSS'} | P/L: ${pnl} (API-confirmed)`);
 
         setTrades(prev => prev.map(t =>
           t.id === id ? { ...t, result: won ? 'Win' : 'Loss', pnl } : t
@@ -189,9 +168,13 @@ export default function AutoTrade() {
         totalPnl += pnl;
         tradeCount++;
 
-        // Martingale logic
-        if (config.martingale && !won) {
-          stake *= parseFloat(config.multiplier);
+        // REVERSED MARTINGALE: WIN → multiply, LOSS → reset
+        if (config.martingale) {
+          if (won) {
+            stake *= mult;
+          } else {
+            stake = parseFloat(config.stake);
+          }
         } else {
           stake = parseFloat(config.stake);
         }
@@ -212,7 +195,6 @@ export default function AutoTrade() {
 
     setIsRunning(false);
     runningRef.current = false;
-    console.log('Session ended. Trades:', tradeCount, 'P/L:', totalPnl);
   }, [isAuthorized, isRunning, config, patternEnabled, pattern, barrier, digits]);
 
   const pauseTrading = () => {
@@ -230,10 +212,9 @@ export default function AutoTrade() {
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-bold text-foreground">Digit Trading Bot</h1>
-        <p className="text-xs text-muted-foreground">Real-time analysis, pattern strategies & automated execution</p>
+        <p className="text-xs text-muted-foreground">API-confirmed results • Reversed martingale (WIN → multiply)</p>
       </div>
 
-      {/* Stats bar */}
       <StatsPanel
         trades={trades}
         balance={balance}
@@ -243,7 +224,6 @@ export default function AutoTrade() {
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left column: Config + Pattern */}
         <div className="lg:col-span-3 space-y-4">
           <TradeConfig
             config={config}
@@ -267,7 +247,6 @@ export default function AutoTrade() {
           />
         </div>
 
-        {/* Center column: Digits + Percentages + Signals */}
         <div className="lg:col-span-4 space-y-4">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <DigitDisplay digits={digits} barrier={barrier} />
@@ -290,7 +269,6 @@ export default function AutoTrade() {
           </motion.div>
         </div>
 
-        {/* Right column: Trade Log */}
         <div className="lg:col-span-5">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15 }}>
             <TradeLogComponent trades={trades} />

@@ -6,10 +6,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   evaluateOver2, evaluateUnder6, evaluateEvenOdd,
   evaluateMatchesDiffers, evaluateRiseFall,
-  calculateConfidence, hasConsecutiveRepeat, type BotDecision,
+  calculateConfidence, type BotDecision,
 } from '@/services/bot-engine';
+import { validateDigitEligibility } from '@/services/smart-signal-engine';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import BotCard, { type BotSettings } from '@/components/bots/BotCard';
 import ConfidenceScore from '@/components/bots/ConfidenceScore';
 import VolatilityMeter from '@/components/bots/VolatilityMeter';
@@ -91,12 +91,10 @@ export default function BotsPage() {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [historyView, setHistoryView] = useState<number>(30);
 
-  // Anti-overtrading
   const MAX_SESSION_TRADES = 50;
   const [cooldownActive, setCooldownActive] = useState(false);
   const cooldownTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Capital protection
   const startBalanceRef = useRef(balance);
   useEffect(() => { if (balance > 0 && startBalanceRef.current === 0) startBalanceRef.current = balance; }, [balance]);
   const drawdownPct = startBalanceRef.current > 0 ? ((startBalanceRef.current - balance) / startBalanceRef.current) * 100 : 0;
@@ -104,7 +102,6 @@ export default function BotsPage() {
 
   const tradeIdRef = useRef(0);
 
-  // Bot states
   const [bots, setBots] = useState<Record<BotId, BotState>>(() => {
     const init: Record<string, BotState> = {};
     for (const [id, cfg] of Object.entries(DEFAULT_BOT_CONFIGS)) {
@@ -114,7 +111,6 @@ export default function BotsPage() {
   });
   const botRunningRef = useRef<Record<BotId, boolean>>({ over2: false, under6: false, evenodd: false, matchdiff: false, risefall: false });
 
-  // Confidence score
   const totalConsecutiveLosses = Math.max(...Object.values(bots).map(b => b.consecutiveLosses));
   const confidence = useMemo(() => calculateConfidence(digits, totalConsecutiveLosses), [digits, totalConsecutiveLosses]);
 
@@ -122,7 +118,6 @@ export default function BotsPage() {
   useEffect(() => {
     if (!derivApi.isConnected) return;
     let active = true;
-
     const handler = (data: any) => {
       if (data.tick && data.tick.symbol === market && active) {
         const d = getLastDigit(data.tick.quote);
@@ -130,20 +125,14 @@ export default function BotsPage() {
         setPrices(prev => [...prev, data.tick.quote].slice(-500));
       }
     };
-
     const unsub = derivApi.onMessage(handler);
     derivApi.subscribeTicks(market, () => {}).catch(console.error);
-
     return () => { active = false; unsub(); };
   }, [market]);
 
-  // Clear data on market change
-  useEffect(() => {
-    setDigits([]);
-    setPrices([]);
-  }, [market]);
+  useEffect(() => { setDigits([]); setPrices([]); }, [market]);
 
-  // Bot trading loop
+  // Bot trading loop — FIXED: API-confirmed results + reversed martingale
   const runBot = useCallback(async (botId: BotId) => {
     if (!isAuthorized || botRunningRef.current[botId]) return;
     botRunningRef.current[botId] = true;
@@ -151,12 +140,11 @@ export default function BotsPage() {
 
     await derivApi.subscribeTicks(market, () => {});
 
-    let stake = bots[botId].settings.stake;
-    let consLosses = 0;
     const settings = bots[botId].settings;
+    let stake = settings.stake;
+    let consLosses = 0;
 
     while (botRunningRef.current[botId]) {
-      // Capital protection checks
       if (drawdownPct > 20) {
         setBots(prev => ({ ...prev, [botId]: { ...prev[botId], lastReason: '🛑 20% drawdown limit hit' } }));
         break;
@@ -177,12 +165,9 @@ export default function BotsPage() {
       try {
         const tick = await waitForNextTick(market);
         const digit = getLastDigit(tick.quote);
-
-        // Update live digits
         const currentDigits = [...digits, digit].slice(-500);
         const currentPrices = [...prices, tick.quote].slice(-500);
 
-        // Evaluate strategy
         let decision: BotDecision;
         switch (botId) {
           case 'over2': decision = evaluateOver2(currentDigits, currentPrices); break;
@@ -207,7 +192,18 @@ export default function BotsPage() {
           continue;
         }
 
-        // Place trade
+        // Digit eligibility validation
+        const eligibility = validateDigitEligibility(
+          currentDigits,
+          decision.contractType,
+          parseInt(decision.barrier || '0'),
+        );
+        if (!eligibility.eligible && botId !== 'risefall') {
+          setBots(prev => ({ ...prev, [botId]: { ...prev[botId], lastReason: `Digit check: ${eligibility.reason}` } }));
+          await new Promise(r => setTimeout(r, 500));
+          continue;
+        }
+
         const params: any = {
           contract_type: decision.contractType,
           symbol: market,
@@ -216,9 +212,7 @@ export default function BotsPage() {
           basis: 'stake',
           amount: stake,
         };
-        if (decision.barrier !== undefined) {
-          params.barrier = decision.barrier;
-        }
+        if (decision.barrier !== undefined) params.barrier = decision.barrier;
 
         const id = ++tradeIdRef.current;
         const now = new Date().toLocaleTimeString();
@@ -230,32 +224,35 @@ export default function BotsPage() {
 
         console.log(`[${botId}] TRADE: ${decision.contractType} barrier=${decision.barrier || 'N/A'} stake=${stake}`);
 
-        const result = await derivApi.buy(params);
-        const pnl = result.buy?.profit || 0;
-        const won = pnl > 0;
+        // Buy contract then WAIT for API-confirmed result
+        const { contractId, buyPrice } = await derivApi.buyContract(params);
+        console.log(`[${botId}] Contract ${contractId} opened @ ${buyPrice} — waiting for settlement...`);
 
-        console.log(`[${botId}] ${won ? 'WIN' : 'LOSS'} P/L=${pnl}`);
+        const result = await derivApi.waitForContractResult(contractId);
+        const won = result.status === 'won';
+        const pnl = result.profit;
+
+        console.log(`[${botId}] ${won ? 'WIN' : 'LOSS'} P/L=${pnl} (API-confirmed)`);
 
         setTrades(prev => prev.map(t =>
           t.id === id ? { ...t, result: won ? 'Win' : 'Loss', pnl } : t
         ));
 
+        // REVERSED MARTINGALE: WIN → multiply, LOSS → reset
         if (won) {
           consLosses = 0;
-          stake = settings.stake;
+          if (settings.martingale) {
+            stake *= settings.multiplier; // Increase on WIN
+          }
         } else {
           consLosses++;
-          if (settings.martingale && consLosses <= settings.maxRecovery) {
-            stake *= settings.multiplier;
-          }
-          // Cooldown after 3 consecutive losses
+          stake = settings.stake; // Reset on LOSS
           if (consLosses >= 3 && !cooldownActive) {
             setCooldownActive(true);
             cooldownTimerRef.current = setTimeout(() => setCooldownActive(false), 10000);
           }
         }
 
-        // Stop loss / take profit for this bot
         const botPnl = bots[botId].pnl + pnl;
         if (botPnl <= -settings.stopLoss || botPnl >= settings.takeProfit) {
           setBots(prev => ({ ...prev, [botId]: {
@@ -269,7 +266,6 @@ export default function BotsPage() {
           break;
         }
 
-        // Max recovery stop
         if (consLosses > settings.maxRecovery) {
           setBots(prev => ({ ...prev, [botId]: { ...prev[botId], lastReason: '🛑 Max recovery exceeded' } }));
           break;
@@ -310,7 +306,7 @@ export default function BotsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-foreground">🤖 Smart Trading Bots</h1>
-          <p className="text-xs text-muted-foreground">AI-powered automated digit trading with risk management</p>
+          <p className="text-xs text-muted-foreground">API-verified results • Reversed martingale • Digit validation</p>
         </div>
         <div className="flex items-center gap-3">
           <Select value={String(historyView)} onValueChange={v => setHistoryView(parseInt(v))}>
@@ -332,7 +328,6 @@ export default function BotsPage() {
         </div>
       </div>
 
-      {/* Top metrics row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <ConfidenceScore score={confidence} />
         <VolatilityMeter prices={prices} />
@@ -346,7 +341,6 @@ export default function BotsPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* Left: Bot Cards */}
         <div className="lg:col-span-4 space-y-3">
           {(Object.entries(DEFAULT_BOT_CONFIGS) as [BotId, typeof DEFAULT_BOT_CONFIGS[BotId]][]).map(([id, cfg]) => (
             <BotCard
@@ -370,7 +364,6 @@ export default function BotsPage() {
           ))}
         </div>
 
-        {/* Center: Digits + Analysis */}
         <div className="lg:col-span-4 space-y-4">
           <DigitDisplay digits={displayDigits} barrier={selectedDigit} />
           <SmartDigitGrid
@@ -387,7 +380,6 @@ export default function BotsPage() {
           />
         </div>
 
-        {/* Right: Trade Log */}
         <div className="lg:col-span-4">
           <TradeLogComponent trades={trades} />
         </div>

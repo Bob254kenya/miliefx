@@ -1,7 +1,7 @@
 import { NavLink } from '@/components/NavLink';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  LayoutDashboard, BarChart3, Activity, Bot, History, Settings, LogOut, ChevronDown, Cpu,
+  LayoutDashboard, BarChart3, Activity, Bot, History, Settings, LogOut, ChevronDown, Cpu, Zap,
 } from 'lucide-react';
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
@@ -18,6 +18,7 @@ const navItems = [
   { title: 'Analyzer', url: '/analyzer', icon: Activity },
   { title: 'Auto Trade', url: '/auto-trade', icon: Bot },
   { title: 'Smart Bots', url: '/bots', icon: Cpu },
+  { title: 'Smart Signal Bot', url: '/smart-bot', icon: Zap },
   { title: 'Trade History', url: '/history', icon: History },
   { title: 'Settings', url: '/settings', icon: Settings },
 ];
