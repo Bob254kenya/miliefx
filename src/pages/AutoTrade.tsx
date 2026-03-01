@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
 import { derivApi, MARKETS, type MarketSymbol } from '@/services/deriv-api';
@@ -12,21 +12,9 @@ import SignalAlerts from '@/components/auto-trade/SignalAlerts';
 import StatsPanel from '@/components/auto-trade/StatsPanel';
 import TradeLogComponent from '@/components/auto-trade/TradeLog';
 import { type TradeLog } from '@/components/auto-trade/types';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import { Slider } from '@/components/ui/slider';
 import { Loader2 } from 'lucide-react';
-
-/** Built-in pattern strategies */
-const STRATEGIES: { id: string; label: string; check: (d: number[], p: number[]) => boolean; contract: string; barrier: string }[] = [
-  { id: 'odd4_up', label: 'Last 4 digits are ODD → Trade DIGITOVER', check: (d) => d.length >= 4 && d.slice(-4).every(x => x % 2 !== 0), contract: 'DIGITOVER', barrier: '1' },
-  { id: 'even4_down', label: 'Last 4 digits are EVEN → Trade DIGITUNDER', check: (d) => d.length >= 4 && d.slice(-4).every(x => x % 2 === 0), contract: 'DIGITUNDER', barrier: '6' },
-  { id: 'zero_over', label: 'Last digit is 0 → Trade DIGITOVER 0', check: (d) => d.length > 0 && d[d.length - 1] === 0, contract: 'DIGITOVER', barrier: '0' },
-  { id: 'rise3_fall', label: '3 consecutive rises → Trade PUT (Fall)', check: (_d, p) => { if (p.length < 4) return false; const t = p.slice(-4); return t[1] > t[0] && t[2] > t[1] && t[3] > t[2]; }, contract: 'PUT', barrier: '' },
-  { id: 'fall3_rise', label: '3 consecutive falls → Trade CALL (Rise)', check: (_d, p) => { if (p.length < 4) return false; const t = p.slice(-4); return t[1] < t[0] && t[2] < t[1] && t[3] < t[2]; }, contract: 'CALL', barrier: '' },
-  { id: 'over5_under', label: 'Last 5 digits all > 5 → Trade DIGITUNDER', check: (d) => d.length >= 5 && d.slice(-5).every(x => x > 5), contract: 'DIGITUNDER', barrier: '6' },
-  { id: 'under4_over', label: 'Last 5 digits all < 4 → Trade DIGITOVER', check: (d) => d.length >= 5 && d.slice(-5).every(x => x < 4), contract: 'DIGITOVER', barrier: '3' },
-];
 
 function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number }> {
   return new Promise((resolve) => {
@@ -51,13 +39,8 @@ export default function AutoTrade() {
     martingale: false, multiplier: '2', stopLoss: '10', takeProfit: '20', maxTrades: '50',
   });
 
-  // Dual market
-  const [market2Enabled, setMarket2Enabled] = useState(false);
-  const [market2, setMarket2] = useState<MarketSymbol>('R_75');
-  const [activeMarketIdx, setActiveMarketIdx] = useState<1 | 2>(1);
-
-  // Strategy
-  const [strategyId, setStrategyId] = useState<string>(STRATEGIES[0].id);
+  // Per-market tick range (1-1000)
+  const [tickRange, setTickRange] = useState<number>(100);
 
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
@@ -68,22 +51,20 @@ export default function AutoTrade() {
   const pausedRef = useRef(false);
   const tradeIdRef = useRef(0);
 
-  const currentMarket = activeMarketIdx === 1 ? config.market : market2;
-  const { digits, prices, isLoading, tickCount } = useTickLoader(currentMarket, 1000);
+  const { digits, prices, isLoading, tickCount } = useTickLoader(config.market, 1000);
 
+  // Use tickRange to slice analysis window
+  const analysisDigits = digits.slice(-tickRange);
   const barrier = parseInt(config.digit);
 
   const handleConfigChange = useCallback(<K extends keyof TradeConfigState>(key: K, val: TradeConfigState[K]) => {
     setConfig(prev => ({ ...prev, [key]: val }));
   }, []);
 
-  const selectedStrategy = STRATEGIES.find(s => s.id === strategyId) || STRATEGIES[0];
-
   // Main trading loop
   const startTrading = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
 
-    // Balance guard
     const stakeNum = parseFloat(config.stake);
     if (balance < stakeNum) {
       toast.error('Insufficient balance — Bot halted');
@@ -103,7 +84,6 @@ export default function AutoTrade() {
     const sl = parseFloat(config.stopLoss);
     const tp = parseFloat(config.takeProfit);
     const mult = parseFloat(config.multiplier);
-    let currentMktIdx: 1 | 2 = 1;
 
     while (runningRef.current && tradeCount < maxTradeCount) {
       if (pausedRef.current) { await new Promise(r => setTimeout(r, 500)); continue; }
@@ -116,28 +96,27 @@ export default function AutoTrade() {
       }
 
       try {
-        const mkt = currentMktIdx === 1 ? config.market : market2;
-        setActiveMarketIdx(currentMktIdx);
-
+        const mkt = config.market;
         const freshTick = await waitForNextTick(mkt);
         const extractedDigit = getLastDigit(freshTick.quote);
 
-        // Check strategy condition
-        const latestDigits = [...digits, extractedDigit].slice(-1000);
-        const latestPrices = [...prices, freshTick.quote].slice(-1000);
-        const conditionMet = selectedStrategy.check(latestDigits, latestPrices);
+        // Validate digit 0-9 explicitly
+        if (extractedDigit < 0 || extractedDigit > 9 || Number.isNaN(extractedDigit)) {
+          console.error('[AutoTrade] Invalid digit extracted:', extractedDigit);
+          continue;
+        }
 
-        if (!conditionMet) { continue; }
-
-        const contractType = selectedStrategy.contract || config.contractType;
-        const tradeBarrier = selectedStrategy.barrier || config.digit;
+        const contractType = config.contractType;
+        const tradeBarrier = config.digit;
         const needsBarrier = ['DIGITOVER', 'DIGITUNDER', 'DIGITMATCH', 'DIGITDIFF'].includes(contractType);
 
         const params: any = {
           contract_type: contractType, symbol: mkt,
           duration: 1, duration_unit: 't', basis: 'stake', amount: stake,
         };
-        if (needsBarrier && tradeBarrier) params.barrier = tradeBarrier;
+        if (needsBarrier && tradeBarrier !== undefined && tradeBarrier !== null) {
+          params.barrier = tradeBarrier;
+        }
 
         const id = ++tradeIdRef.current;
         const now = new Date().toLocaleTimeString();
@@ -160,17 +139,6 @@ export default function AutoTrade() {
           else { stake *= mult; }
         } else { stake = parseFloat(config.stake); }
         setCurrentStake(stake);
-
-        // Dual market switching: loss in M1 → switch to M2, win in M2 → back to M1
-        if (market2Enabled) {
-          if (!won && currentMktIdx === 1) {
-            currentMktIdx = 2;
-            toast.info(`Switched to ${MARKETS.find(m => m.symbol === market2)?.name || market2} due to loss`);
-          } else if (won && currentMktIdx === 2) {
-            currentMktIdx = 1;
-            toast.info(`Switched back to ${MARKETS.find(m => m.symbol === config.market)?.name || config.market}`);
-          }
-        }
 
         // Stop Loss / Take Profit
         if (totalPnl <= -sl) {
@@ -198,7 +166,7 @@ export default function AutoTrade() {
 
     setIsRunning(false);
     runningRef.current = false;
-  }, [isAuthorized, isRunning, config, balance, market2Enabled, market2, selectedStrategy, digits, prices]);
+  }, [isAuthorized, isRunning, config, balance]);
 
   const pauseTrading = () => { pausedRef.current = !pausedRef.current; setIsPaused(!isPaused); };
   const stopTrading = () => { runningRef.current = false; setIsRunning(false); setIsPaused(false); };
@@ -223,7 +191,7 @@ export default function AutoTrade() {
         )}
       </div>
 
-      <StatsPanel trades={trades} balance={balance} currentStake={currentStake} market={currentMarket} currency={activeAccount?.currency || 'USD'} />
+      <StatsPanel trades={trades} balance={balance} currentStake={currentStake} market={config.market} currency={activeAccount?.currency || 'USD'} />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-3 space-y-4">
@@ -234,65 +202,37 @@ export default function AutoTrade() {
             onStart={startTrading} onPause={pauseTrading} onStop={stopTrading}
           />
 
-          {/* Strategy Selector */}
-          <div className="bg-card border border-border rounded-xl p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-foreground">Pattern Strategy</h3>
-            <Select value={strategyId} onValueChange={setStrategyId} disabled={isRunning}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {STRATEGIES.map(s => (
-                  <SelectItem key={s.id} value={s.id} className="text-xs">{s.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-[10px] text-muted-foreground italic">
-              IF [{selectedStrategy.label.split('→')[0].trim()}] THEN [{selectedStrategy.label.split('→')[1]?.trim()}] IN [{MARKETS.find(m => m.symbol === currentMarket)?.name}]
-            </p>
-          </div>
-
-          {/* Dual Market Config */}
+          {/* Tick Range Configuration */}
           <div className="bg-card border border-border rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground">Dual Market</h3>
-              <Switch checked={market2Enabled} onCheckedChange={setMarket2Enabled} disabled={isRunning} />
+              <h3 className="text-sm font-semibold text-foreground">Analysis Window</h3>
+              <span className="text-xs font-mono text-primary">{tickRange} ticks</span>
             </div>
-            {market2Enabled && (
-              <>
-                <div>
-                  <label className="text-[10px] text-muted-foreground">Market Two</label>
-                  <Select value={market2} onValueChange={v => setMarket2(v as MarketSymbol)} disabled={isRunning}>
-                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {MARKETS.filter(m => m.symbol !== config.market).map(m => (
-                        <SelectItem key={m.symbol} value={m.symbol}>{m.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="text-[10px] text-muted-foreground space-y-1">
-                  <p>• Loss in M1 → Switch to M2</p>
-                  <p>• Win in M2 → Switch back to M1</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-muted-foreground">Active:</span>
-                  <Badge variant={activeMarketIdx === 1 ? 'default' : 'secondary'} className="text-[9px]">
-                    {activeMarketIdx === 1 ? MARKETS.find(m => m.symbol === config.market)?.name : MARKETS.find(m => m.symbol === market2)?.name}
-                  </Badge>
-                </div>
-              </>
-            )}
+            <Slider
+              min={1}
+              max={1000}
+              step={1}
+              value={[tickRange]}
+              onValueChange={([v]) => setTickRange(v)}
+              disabled={isRunning}
+            />
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>1</span>
+              <span>500</span>
+              <span>1000</span>
+            </div>
           </div>
         </div>
 
         <div className="lg:col-span-4 space-y-4">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            <DigitDisplay digits={digits.slice(-30)} barrier={barrier} />
+            <DigitDisplay digits={analysisDigits.slice(-30)} barrier={barrier} />
           </motion.div>
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
-            <PercentagePanel digits={digits} barrier={barrier} selectedDigit={barrier} onSelectDigit={d => handleConfigChange('digit', String(d))} />
+            <PercentagePanel digits={analysisDigits} barrier={barrier} selectedDigit={barrier} onSelectDigit={d => handleConfigChange('digit', String(d))} />
           </motion.div>
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
-            <SignalAlerts digits={digits} barrier={barrier} soundEnabled={soundEnabled} onSoundToggle={setSoundEnabled} />
+            <SignalAlerts digits={analysisDigits} barrier={barrier} soundEnabled={soundEnabled} onSoundToggle={setSoundEnabled} />
           </motion.div>
         </div>
 
