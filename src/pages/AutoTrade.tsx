@@ -54,6 +54,10 @@ export default function AutoTrade() {
   const recoveryRunningRef = useRef(false);
   const recoveryPausedRef = useRef(false);
   const [recoveryPaused, setRecoveryPaused] = useState(false);
+  const [recoveryDigit, setRecoveryDigit] = useState(4);
+  const [recoveryMode, setRecoveryMode] = useState<'DIGITEVEN' | 'DIGITODD'>('DIGITEVEN');
+  const recoveryDigitRef = useRef(4);
+  const recoveryModeRef = useRef<'DIGITEVEN' | 'DIGITODD'>('DIGITEVEN');
 
   const runningRef = useRef(false);
   const pausedRef = useRef(false);
@@ -189,10 +193,9 @@ export default function AutoTrade() {
 
         if (!inRecovery) {
           contractType = 'DIGITOVER';
-          barrier = config.digit;
+          barrier = String(recoveryDigitRef.current);
         } else {
-          // Recovery: predict Even (digit 0 is even)
-          contractType = 'DIGITEVEN';
+          contractType = recoveryModeRef.current;
           barrier = undefined;
         }
 
@@ -307,11 +310,62 @@ export default function AutoTrade() {
             </div>
             {recoveryEnabled && (
               <>
+                {/* Over Digit Selector */}
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Over Digit (Barrier)</label>
+                  <div className="grid grid-cols-5 gap-1 mt-1">
+                    {Array.from({ length: 10 }, (_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => { setRecoveryDigit(i); recoveryDigitRef.current = i; }}
+                        disabled={recoveryRunning}
+                        className={`h-7 rounded text-xs font-mono font-bold transition-all ${
+                          recoveryDigit === i
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-muted text-foreground hover:bg-secondary'
+                        }`}
+                      >
+                        {i}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Recovery Mode */}
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Recovery Mode</label>
+                  <div className="flex gap-1 mt-1">
+                    <button
+                      onClick={() => { setRecoveryMode('DIGITEVEN'); recoveryModeRef.current = 'DIGITEVEN'; }}
+                      disabled={recoveryRunning}
+                      className={`flex-1 h-7 rounded text-xs font-bold transition-all ${
+                        recoveryMode === 'DIGITEVEN'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted text-foreground hover:bg-secondary'
+                      }`}
+                    >
+                      Even
+                    </button>
+                    <button
+                      onClick={() => { setRecoveryMode('DIGITODD'); recoveryModeRef.current = 'DIGITODD'; }}
+                      disabled={recoveryRunning}
+                      className={`flex-1 h-7 rounded text-xs font-bold transition-all ${
+                        recoveryMode === 'DIGITODD'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted text-foreground hover:bg-secondary'
+                      }`}
+                    >
+                      Odd
+                    </button>
+                  </div>
+                </div>
+
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
-                  Starts with <span className="text-profit font-bold">OVER {config.digit}</span>.
-                  On loss → recovers with <span className="text-primary font-bold">EVEN</span>.
+                  Starts with <span className="text-profit font-bold">OVER {recoveryDigit}</span>.
+                  On loss → recovers with <span className="text-primary font-bold">{recoveryMode === 'DIGITEVEN' ? 'EVEN' : 'ODD'}</span>.
                   On win → resets to OVER. Martingale applies on losses only.
                 </p>
+
                 <div className="flex gap-2">
                   {!recoveryRunning ? (
                     <Button onClick={startRecoveryBot}
