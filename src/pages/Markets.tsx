@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { MARKETS, MARKET_GROUPS } from '@/services/deriv-api';
+import { Input } from '@/components/ui/input';
 import VolatilityCard from '@/components/analyzer/VolatilityCard';
 
 export default function Markets() {
   const [selectedGroup, setSelectedGroup] = useState<string>('vol');
+  const [tickCount, setTickCount] = useState(1000);
 
   const groups = ['all', ...MARKET_GROUPS.map(g => g.value)];
   const filtered = selectedGroup === 'all'
@@ -12,9 +14,22 @@ export default function Markets() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-bold text-foreground">Live Markets</h1>
-        <p className="text-xs text-muted-foreground">Live digit analysis across all markets</p>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-foreground">Live Markets</h1>
+          <p className="text-xs text-muted-foreground">Live digit analysis across all markets</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-[10px] text-muted-foreground">Ticks:</label>
+          <Input
+            type="number"
+            min={50}
+            max={1000}
+            value={tickCount}
+            onChange={(e) => setTickCount(Math.max(50, Math.min(1000, parseInt(e.target.value) || 1000)))}
+            className="h-8 w-24 text-xs"
+          />
+        </div>
       </div>
 
       <div className="flex gap-2 flex-wrap">
@@ -38,7 +53,7 @@ export default function Markets() {
           <VolatilityCard
             key={market.symbol}
             symbol={market.symbol}
-            tickCount={1000}
+            tickCount={tickCount}
             mode="over"
           />
         ))}

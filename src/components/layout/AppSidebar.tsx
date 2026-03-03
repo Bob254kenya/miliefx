@@ -7,6 +7,7 @@ import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
   SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { Rocket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -19,6 +20,7 @@ const navItems = [
   { title: 'Auto Trade', url: '/auto-trade', icon: Bot },
   { title: 'Smart Bots', url: '/bots', icon: Cpu },
   { title: 'Smart Signal Bot', url: '/smart-bot', icon: Zap },
+  { title: 'Ramz Bot', url: '/ramz-bot', icon: Rocket },
   { title: 'Trade History', url: '/history', icon: History },
   { title: 'Settings', url: '/settings', icon: Settings },
 ];
