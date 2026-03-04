@@ -8,7 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
-import { Play, StopCircle, Trash2 } from 'lucide-react';
+import { Slider } from '@/components/ui/slider';
+import { Play, StopCircle, Trash2, Radar, Search } from 'lucide-react';
 
 type ContractType = 'DIGITEVEN' | 'DIGITODD' | 'DIGITMATCH' | 'DIGITDIFF' | 'DIGITOVER' | 'DIGITUNDER';
 type PatternType = 'pattern' | 'digit';
@@ -27,6 +28,7 @@ interface TradeEntry {
   id: number;
   time: string;
   market: string;
+  symbol: string;
   contractType: string;
   stake: number;
   exitDigit: string;
@@ -38,18 +40,15 @@ interface TradeEntry {
   martingaleStep: number;
 }
 
-/** Extract last digit: parseFloat → toFixed(2) → last char. Zero-safe. */
+const SCANNER_MARKETS = MARKETS.map(m => m.symbol);
+
 function extractLastDigit(price: number): number {
-  const numPrice = parseFloat(String(price));
-  return parseInt(numPrice.toFixed(2).slice(-1), 10);
+  return parseInt(parseFloat(String(price)).toFixed(2).slice(-1), 10);
 }
 
-/** Extract last two digits for extended range 0-24 */
 function extractExtendedDigit(price: number): number {
-  const numPrice = parseFloat(String(price));
-  const priceStr = numPrice.toFixed(2);
-  const lastTwo = priceStr.replace('.', '').slice(-2);
-  return parseInt(lastTwo, 10);
+  const priceStr = parseFloat(String(price)).toFixed(2);
+  return parseInt(priceStr.replace('.', '').slice(-2), 10);
 }
 
 function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number }> {
@@ -66,8 +65,13 @@ function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number
 export default function AdvancedRamzBot() {
   const { isAuthorized, balance, activeAccount } = useAuth();
 
-  // Symbol
   const [symbol, setSymbol] = useState('R_100');
+
+  // Scanner
+  const [scannerActive, setScannerActive] = useState(false);
+  const [scannerTickCount, setScannerTickCount] = useState(100);
+  const [scannerTickHistory, setScannerTickHistory] = useState<Record<string, TickEntry[]>>({});
+  const scannerTickRef = useRef<Record<string, TickEntry[]>>({});
 
   // Market 1 (Home)
   const [m1Contract, setM1Contract] = useState<ContractType>('DIGITEVEN');
@@ -102,6 +106,7 @@ export default function AdvancedRamzBot() {
   const [currentMarket, setCurrentMarket] = useState<1 | 2>(1);
   const [botStatus, setBotStatus] = useState('Idle');
   const [waitingForPattern, setWaitingForPattern] = useState(false);
+  const [scannerMatchedMarket, setScannerMatchedMarket] = useState<string | null>(null);
 
   // Stats
   const [wins, setWins] = useState(0);
@@ -111,7 +116,7 @@ export default function AdvancedRamzBot() {
   const [currentStake, setCurrentStake] = useState(1);
   const [winRate, setWinRate] = useState(0);
 
-  // Live tick history (with digit + extended digit)
+  // Live tick history
   const [liveDigits, setLiveDigits] = useState<TickEntry[]>([]);
   const tickHistoryRef = useRef<TickEntry[]>([]);
 
@@ -119,7 +124,7 @@ export default function AdvancedRamzBot() {
   const [trades, setTrades] = useState<TradeEntry[]>([]);
   const tradeIdRef = useRef(0);
 
-  // Subscribe to ticks
+  // Subscribe to main symbol ticks
   useEffect(() => {
     if (!isAuthorized) return;
     tickHistoryRef.current = [];
@@ -130,13 +135,7 @@ export default function AdvancedRamzBot() {
         const price = parseFloat(data.tick.quote);
         const digit = extractLastDigit(price);
         const extendedDigit = extractExtendedDigit(price);
-        const entry: TickEntry = {
-          digit,
-          extendedDigit,
-          isEven: digit % 2 === 0,
-          price,
-          time: Date.now(),
-        };
+        const entry: TickEntry = { digit, extendedDigit, isEven: digit % 2 === 0, price, time: Date.now() };
         tickHistoryRef.current.push(entry);
         if (tickHistoryRef.current.length > 1000) tickHistoryRef.current.shift();
         setLiveDigits([...tickHistoryRef.current]);
@@ -146,30 +145,53 @@ export default function AdvancedRamzBot() {
     return () => { derivApi.unsubscribeTicks(symbol); };
   }, [symbol, isAuthorized]);
 
-  // Update win rate
+  // Subscribe to ALL markets for scanner
+  useEffect(() => {
+    if (!isAuthorized || !scannerActive) return;
+    let active = true;
+
+    const handler = (data: any) => {
+      if (!data.tick || !active) return;
+      const sym = data.tick.symbol as string;
+      const price = parseFloat(data.tick.quote);
+      const digit = extractLastDigit(price);
+      const extendedDigit = extractExtendedDigit(price);
+      const entry: TickEntry = { digit, extendedDigit, isEven: digit % 2 === 0, price, time: Date.now() };
+
+      if (!scannerTickRef.current[sym]) scannerTickRef.current[sym] = [];
+      scannerTickRef.current[sym].push(entry);
+      if (scannerTickRef.current[sym].length > 200) scannerTickRef.current[sym].shift();
+    };
+
+    const unsub = derivApi.onMessage(handler);
+    MARKETS.forEach(m => { derivApi.subscribeTicks(m.symbol, () => {}).catch(() => {}); });
+
+    // Update UI periodically
+    const interval = setInterval(() => {
+      if (active) setScannerTickHistory({ ...scannerTickRef.current });
+    }, 2000);
+
+    return () => { active = false; unsub(); clearInterval(interval); };
+  }, [isAuthorized, scannerActive]);
+
   useEffect(() => {
     const total = wins + losses;
     setWinRate(total > 0 ? (wins / total) * 100 : 0);
   }, [wins, losses]);
 
-  // ─── Pattern matching (Even/Odd) ───
-  const checkPatternMatch = useCallback((): boolean => {
+  // Pattern matching helpers
+  const checkPatternMatchForHistory = useCallback((history: TickEntry[]): boolean => {
     const pattern = patternText.toUpperCase();
     if (pattern.length < 2) return false;
-    const history = tickHistoryRef.current;
     if (history.length < pattern.length) return false;
     const recent = history.slice(-pattern.length);
     for (let i = 0; i < pattern.length; i++) {
-      const expected = pattern[i];
-      const actual = recent[i].isEven ? 'E' : 'O';
-      if (expected !== actual) return false;
+      if (pattern[i] !== (recent[i].isEven ? 'E' : 'O')) return false;
     }
     return true;
   }, [patternText]);
 
-  // ─── Digit condition check (0-24 range support) ───
-  const checkDigitCondition = useCallback((): boolean => {
-    const history = tickHistoryRef.current;
+  const checkDigitConditionForHistory = useCallback((history: TickEntry[]): boolean => {
     if (history.length < digitAnalysisWindow) return false;
     const recent = history.slice(-digitAnalysisWindow);
     for (const tick of recent) {
@@ -187,16 +209,31 @@ export default function AdvancedRamzBot() {
     return true;
   }, [digitCondition, digitCompareValue, digitAnalysisWindow]);
 
-  // ─── Main trading loop (mirrors the provided script logic) ───
+  const checkPatternMatch = useCallback(() => checkPatternMatchForHistory(tickHistoryRef.current), [checkPatternMatchForHistory]);
+  const checkDigitCondition = useCallback(() => checkDigitConditionForHistory(tickHistoryRef.current), [checkDigitConditionForHistory]);
+
+  // Find first scanner market matching strategy
+  const findScannerMatch = useCallback((): string | null => {
+    for (const sym of SCANNER_MARKETS) {
+      const history = scannerTickRef.current[sym];
+      if (!history || history.length < 10) continue;
+
+      if (strategyMode === 'pattern') {
+        if (checkPatternMatchForHistory(history)) return sym;
+      } else {
+        if (checkDigitConditionForHistory(history)) return sym;
+      }
+    }
+    return null;
+  }, [checkPatternMatchForHistory, checkDigitConditionForHistory, strategyMode]);
+
+  // Main trading loop
   const startBot = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
     if (balance < initialStake) { toast.error('Insufficient balance'); return; }
     if (!m1Active && !m2Active) { toast.error('Enable at least one market'); return; }
-    if (strategyActive && strategyMode === 'pattern') {
-      if (!/^[EO]{2,}$/i.test(patternText)) {
-        toast.error('Enter a valid pattern (2+ chars, E or O only)');
-        return;
-      }
+    if (strategyActive && strategyMode === 'pattern' && !/^[EO]{2,}$/i.test(patternText)) {
+      toast.error('Enter a valid pattern (2+ chars, E or O only)'); return;
     }
 
     setIsRunning(true);
@@ -204,6 +241,7 @@ export default function AdvancedRamzBot() {
     setCurrentMarket(1);
     setBotStatus('Running');
     setWaitingForPattern(false);
+    setScannerMatchedMarket(null);
 
     let stake = initialStake;
     setCurrentStake(stake);
@@ -212,19 +250,11 @@ export default function AdvancedRamzBot() {
     let onMarket: 1 | 2 = 1;
     let inRecoveryMode = false;
     let patternMatched = false;
-    let isWaitingForPattern = false;
-    let consecutiveLosses = 0;
 
     while (runningRef.current) {
-      if (balance < stake) {
-        toast.error('Insufficient balance — Bot halted');
-        break;
-      }
+      if (balance < stake) { toast.error('Insufficient balance — Bot halted'); break; }
 
       try {
-        // Wait for fresh tick
-        await waitForNextTick(symbol);
-
         // Ensure current market is enabled
         if (!((onMarket === 1 && m1Active) || (onMarket === 2 && m2Active))) {
           if (onMarket === 2 && m1Active) { onMarket = 1; inRecoveryMode = false; }
@@ -233,39 +263,72 @@ export default function AdvancedRamzBot() {
           setCurrentMarket(onMarket);
         }
 
-        // ─── Strategy gate for M2 ───
+        // Strategy gate for M2
+        let tradeSymbol = symbol;
+
         if (inRecoveryMode && strategyActive) {
           if (strategyMode === 'pattern') {
             if (!patternMatched) {
-              if (!checkPatternMatch()) {
-                isWaitingForPattern = true;
-                setWaitingForPattern(true);
-                setBotStatus(`M2: Waiting for pattern: ${patternText}`);
-                continue; // Wait for next tick
+              // Scanner mode: check all markets
+              if (scannerActive) {
+                const matched = findScannerMatch();
+                if (!matched) {
+                  // Also check primary symbol
+                  if (!checkPatternMatch()) {
+                    setWaitingForPattern(true);
+                    setBotStatus(`M2: Scanner scanning for pattern: ${patternText}`);
+                    setScannerMatchedMarket(null);
+                    await waitForNextTick(symbol);
+                    continue;
+                  }
+                  tradeSymbol = symbol;
+                } else {
+                  tradeSymbol = matched;
+                  setScannerMatchedMarket(matched);
+                }
+              } else {
+                await waitForNextTick(symbol);
+                if (!checkPatternMatch()) {
+                  setWaitingForPattern(true);
+                  setBotStatus(`M2: Waiting for pattern: ${patternText}`);
+                  continue;
+                }
               }
-              // Pattern matched!
               patternMatched = true;
-              isWaitingForPattern = false;
               setWaitingForPattern(false);
-
-              if (patternAction === 'tradeOnce') {
-                // Will trade once then reset patternMatched on next loss check
+              if (patternAction === 'tradeOnce') { /* will trade once */ }
+            }
+          } else if (strategyMode === 'digit') {
+            if (scannerActive) {
+              const matched = findScannerMatch();
+              if (!matched) {
+                await waitForNextTick(symbol);
+                if (!checkDigitCondition()) {
+                  setWaitingForPattern(true);
+                  setBotStatus(`M2: Scanner scanning for digit condition`);
+                  setScannerMatchedMarket(null);
+                  continue;
+                }
+                tradeSymbol = symbol;
+              } else {
+                tradeSymbol = matched;
+                setScannerMatchedMarket(matched);
+              }
+            } else {
+              await waitForNextTick(symbol);
+              if (!checkDigitCondition()) {
+                setWaitingForPattern(true);
+                setBotStatus(`M2: Waiting for digit condition: ${digitCompareValue}`);
+                continue;
               }
             }
-            // If patternAction === 'tradeUntilWin', patternMatched stays true
-          } else if (strategyMode === 'digit') {
-            if (!checkDigitCondition()) {
-              isWaitingForPattern = true;
-              setWaitingForPattern(true);
-              setBotStatus(`M2: Waiting for digit condition: ${digitCompareValue}`);
-              continue;
-            }
-            isWaitingForPattern = false;
             setWaitingForPattern(false);
           }
+        } else {
+          await waitForNextTick(symbol);
         }
 
-        // ─── Determine contract params ───
+        // Determine contract params
         let contractType: string;
         let barrier: string | undefined;
 
@@ -276,16 +339,16 @@ export default function AdvancedRamzBot() {
         } else {
           contractType = m2Contract;
           barrier = needsBarrier(m2Contract) ? String(m2Barrier) : undefined;
-          setBotStatus(`M2 Recovery: ${contractType}${barrier ? ` (${barrier})` : ''}`);
+          const scanLabel = scannerActive && tradeSymbol !== symbol ? ` [Scanner: ${tradeSymbol}]` : '';
+          setBotStatus(`M2 Recovery: ${contractType}${barrier ? ` (${barrier})` : ''}${scanLabel}`);
         }
 
         const params: any = {
-          contract_type: contractType, symbol,
+          contract_type: contractType, symbol: tradeSymbol,
           duration: 1, duration_unit: 't', basis: 'stake', amount: stake,
         };
         if (barrier !== undefined) params.barrier = barrier;
 
-        // Log pending entry
         const id = ++tradeIdRef.current;
         const now = new Date().toLocaleTimeString();
         const marketLabel = onMarket === 1 ? 'M1' : 'M2';
@@ -295,21 +358,14 @@ export default function AdvancedRamzBot() {
         }
 
         const newEntry: TradeEntry = {
-          id, time: now,
-          market: `${marketLabel}${strategyNote}`,
-          contractType, stake,
-          exitDigit: '...',
-          result: 'Pending' as const,
-          pnl: 0,
-          balance,
-          switchInfo: '',
-          isMartingale: mStep > 0 && martingaleEnabled,
-          martingaleStep: mStep,
+          id, time: now, market: `${marketLabel}${strategyNote}`,
+          symbol: tradeSymbol, contractType, stake,
+          exitDigit: '...', result: 'Pending', pnl: 0, balance,
+          switchInfo: '', isMartingale: mStep > 0 && martingaleEnabled, martingaleStep: mStep,
         };
         setTrades(prev => [newEntry, ...prev].slice(0, 200));
         setTotalStaked(prev => prev + stake);
 
-        // Execute trade
         const { contractId } = await derivApi.buyContract(params);
         const result = await derivApi.waitForContractResult(contractId);
         const won = result.status === 'won';
@@ -319,10 +375,9 @@ export default function AdvancedRamzBot() {
         let switchInfo = '';
 
         if (won) {
-          consecutiveLosses = 0;
           patternMatched = false;
-          isWaitingForPattern = false;
           setWaitingForPattern(false);
+          setScannerMatchedMarket(null);
 
           if (inRecoveryMode) {
             inRecoveryMode = false;
@@ -332,21 +387,15 @@ export default function AdvancedRamzBot() {
           } else {
             switchInfo = '→ Continue on M1';
           }
-
-          // Reset stake & martingale
           stake = initialStake;
           mStep = 0;
           setWins(prev => prev + 1);
         } else {
-          consecutiveLosses++;
-
           if (!inRecoveryMode && m2Active) {
             inRecoveryMode = true;
             onMarket = 2;
             setCurrentMarket(2);
-
             if (strategyActive) {
-              isWaitingForPattern = true;
               patternMatched = false;
               setWaitingForPattern(true);
               switchInfo = '✗ Loss → M2 Recovery (checking strategy...)';
@@ -354,16 +403,13 @@ export default function AdvancedRamzBot() {
               switchInfo = '✗ Loss → M2 Recovery';
             }
           } else if (inRecoveryMode) {
-            // Already in recovery
             if (strategyActive && strategyMode === 'pattern' && patternAction === 'tradeOnce') {
-              isWaitingForPattern = true;
               patternMatched = false;
               setWaitingForPattern(true);
               switchInfo = '→ M2: Loss, waiting for next pattern match';
             } else if (strategyActive && strategyMode === 'pattern' && patternAction === 'tradeUntilWin') {
               switchInfo = '→ M2: Continuing until win';
             } else if (strategyActive && strategyMode === 'digit') {
-              isWaitingForPattern = true;
               setWaitingForPattern(true);
               switchInfo = '→ M2: Loss, checking digit condition';
             } else {
@@ -373,51 +419,31 @@ export default function AdvancedRamzBot() {
             switchInfo = '→ Continue (no M2 available)';
           }
 
-          // Martingale
           if (martingaleEnabled) {
             if (mStep < martingaleMaxSteps) {
               stake = parseFloat((stake * martingaleMultiplier).toFixed(2));
               mStep++;
-            } else {
-              stake = initialStake;
-              mStep = 0;
-            }
+            } else { stake = initialStake; mStep = 0; }
           }
-
           setLosses(prev => prev + 1);
         }
 
         setCurrentStake(stake);
         setNetProfit(totalPnl);
 
-        // Update trade entry with result
         setTrades(prev => prev.map(t =>
-          t.id === id ? {
-            ...t,
-            result: won ? 'Win' as const : 'Loss' as const,
-            pnl,
+          t.id === id ? { ...t, result: won ? 'Win' : 'Loss', pnl,
             exitDigit: String(tickHistoryRef.current[tickHistoryRef.current.length - 1]?.digit ?? '-'),
-            balance: balance + totalPnl,
-            switchInfo,
+            balance: balance + totalPnl, switchInfo,
           } : t
         ));
 
-        // TP/SL check
-        if (totalPnl >= takeProfit) {
-          toast.success(`🎊 Take Profit reached: +$${totalPnl.toFixed(2)}`);
-          break;
-        }
-        if (totalPnl <= -stopLoss) {
-          toast.error(`🛑 Stop Loss reached: $${totalPnl.toFixed(2)}`);
-          break;
-        }
+        if (totalPnl >= takeProfit) { toast.success(`🎊 Take Profit: +$${totalPnl.toFixed(2)}`); break; }
+        if (totalPnl <= -stopLoss) { toast.error(`🛑 Stop Loss: $${totalPnl.toFixed(2)}`); break; }
 
         await new Promise(r => setTimeout(r, 500));
       } catch (err: any) {
-        if (err.message?.includes('Insufficient balance')) {
-          toast.error('Insufficient balance — Bot halted');
-          break;
-        }
+        if (err.message?.includes('Insufficient balance')) { toast.error('Insufficient balance'); break; }
         console.error('Ramz Bot error:', err);
         await new Promise(r => setTimeout(r, 2000));
       }
@@ -427,10 +453,11 @@ export default function AdvancedRamzBot() {
     runningRef.current = false;
     setBotStatus('Stopped');
     setWaitingForPattern(false);
+    setScannerMatchedMarket(null);
   }, [isAuthorized, isRunning, balance, initialStake, symbol, m1Active, m1Contract, m1Barrier,
-      m2Active, m2Contract, m2Barrier, strategyActive, strategyMode, patternText, patternAction,
-      checkPatternMatch, checkDigitCondition, digitCompareValue,
-      martingaleEnabled, martingaleMultiplier, martingaleMaxSteps, stopLoss, takeProfit]);
+    m2Active, m2Contract, m2Barrier, strategyActive, strategyMode, patternText, patternAction,
+    checkPatternMatch, checkDigitCondition, digitCompareValue, findScannerMatch, scannerActive,
+    martingaleEnabled, martingaleMultiplier, martingaleMaxSteps, stopLoss, takeProfit]);
 
   const stopBot = () => {
     runningRef.current = false;
@@ -438,34 +465,31 @@ export default function AdvancedRamzBot() {
     setBotStatus('Stopped');
     setWaitingForPattern(false);
     setCurrentMarket(1);
+    setScannerMatchedMarket(null);
   };
 
   const clearData = () => {
     setTrades([]);
-    setWins(0);
-    setLosses(0);
-    setTotalStaked(0);
-    setNetProfit(0);
-    setCurrentStake(initialStake);
+    setWins(0); setLosses(0); setTotalStaked(0); setNetProfit(0); setCurrentStake(initialStake);
   };
 
-  // Derived
   const last8 = liveDigits.slice(-8);
   const patternValid = /^[EOeo]{2,}$/.test(patternText);
   const patternMatchNow = patternValid && checkPatternMatch();
   const needsBarrierFn = (ct: string) => ['DIGITOVER', 'DIGITUNDER', 'DIGITMATCH', 'DIGITDIFF'].includes(ct);
 
+  // Scanner market count with data
+  const scannerMarketsWithData = Object.keys(scannerTickHistory).filter(k => (scannerTickHistory[k]?.length || 0) > 5).length;
+
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="text-center">
         <h1 className="text-2xl font-bold bg-gradient-to-r from-primary to-profit bg-clip-text text-transparent">
           ⚡ Advanced Ramz Bot
         </h1>
-        <p className="text-xs text-muted-foreground">Pattern-Based Strategy with M1/M2 Recovery (Digits 0-24)</p>
+        <p className="text-xs text-muted-foreground">Pattern-Based Strategy with M1/M2 Recovery & Multi-Market Scanner</p>
       </div>
 
-      {/* Main Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Connection Card */}
         <div className="bg-card border border-border rounded-xl p-4 space-y-3">
@@ -496,6 +520,63 @@ export default function AdvancedRamzBot() {
               Balance: ${balance.toFixed(2)} {activeAccount?.currency}
             </span>
           </div>
+        </div>
+
+        {/* Scanner Card */}
+        <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between pb-3 border-b border-border">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-accent/50 flex items-center justify-center">
+                <Radar className="w-4 h-4 text-primary" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-foreground">Multi-Market Scanner</h3>
+                <p className="text-[10px] text-muted-foreground">Scans all markets for strategy match in M2</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant={scannerActive ? 'default' : 'secondary'} className="text-[9px]">
+                {scannerActive ? 'ACTIVE' : 'INACTIVE'}
+              </Badge>
+              <Switch checked={scannerActive} onCheckedChange={setScannerActive} disabled={isRunning} />
+            </div>
+          </div>
+
+          {scannerActive && (
+            <>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs text-muted-foreground">Scanner Tick Window</label>
+                  <span className="text-xs font-mono text-primary">{scannerTickCount} ticks</span>
+                </div>
+                <Slider min={50} max={1000} step={10} value={[scannerTickCount]}
+                  onValueChange={([v]) => setScannerTickCount(v)} disabled={isRunning} />
+                <div className="flex justify-between text-[9px] text-muted-foreground mt-1">
+                  <span>50</span><span>500</span><span>1000</span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-1">
+                {MARKETS.map(m => {
+                  const hasData = (scannerTickHistory[m.symbol]?.length || 0) > 5;
+                  return (
+                    <Badge key={m.symbol} variant={hasData ? 'outline' : 'secondary'}
+                      className={`text-[8px] ${hasData ? 'border-primary/50 text-primary' : 'text-muted-foreground'}`}>
+                      {m.symbol}
+                    </Badge>
+                  );
+                })}
+              </div>
+
+              <div className="text-[10px] text-muted-foreground bg-muted rounded-lg p-2">
+                <Search className="w-3 h-3 inline mr-1" />
+                {scannerMarketsWithData}/{MARKETS.length} markets streaming.
+                {scannerMatchedMarket && isRunning && (
+                  <span className="text-profit font-bold ml-1">Match: {scannerMatchedMarket}</span>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Market 1 (Home) */}
@@ -585,7 +666,7 @@ export default function AdvancedRamzBot() {
           </div>
         </div>
 
-        {/* Pattern Strategy (M2 Only) */}
+        {/* Pattern Strategy */}
         <div className="bg-card border border-border rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between pb-3 border-b border-border">
             <div className="flex items-center gap-2">
@@ -601,10 +682,9 @@ export default function AdvancedRamzBot() {
           {strategyActive && (
             <>
               <p className="text-[10px] text-muted-foreground">
-                ONLY applies on Market 2 (Recovery). Bot waits for pattern/condition before executing trades on M2.
+                ONLY applies on Market 2 (Recovery). {scannerActive ? 'Scanner checks ALL markets.' : 'Checks primary symbol only.'}
               </p>
 
-              {/* Mode selector */}
               <div className="flex gap-2">
                 <button onClick={() => setStrategyMode('pattern')} disabled={isRunning}
                   className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
@@ -619,13 +699,12 @@ export default function AdvancedRamzBot() {
               {strategyMode === 'pattern' ? (
                 <div className="space-y-3">
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Pattern (E=Even, O=Odd) — e.g. EEEOE</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Pattern (E=Even, O=Odd)</label>
                     <input value={patternText}
                       onChange={(e) => setPatternText(e.target.value.toUpperCase().replace(/[^EO]/g, ''))}
                       disabled={isRunning} placeholder="EEEOE"
                       className="w-full px-3 py-2 bg-muted border border-border rounded-lg text-xs font-mono uppercase tracking-widest text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
                   </div>
-
                   <div className={`font-mono text-center py-2 rounded-lg border text-sm tracking-[4px] ${
                     !patternValid ? 'border-loss/50 text-loss bg-loss/5' :
                     patternMatchNow ? 'border-profit/50 text-profit bg-profit/5' :
@@ -633,22 +712,21 @@ export default function AdvancedRamzBot() {
                   }`}>
                     {patternText || '...'}
                     <div className="text-[9px] mt-1 tracking-normal">
-                      {!patternValid ? 'Invalid (need 2+ E/O chars)' : patternMatchNow ? '✅ Pattern matched!' : '⏳ Waiting for pattern...'}
+                      {!patternValid ? 'Invalid' : patternMatchNow ? '✅ Matched!' : '⏳ Waiting...'}
                     </div>
                   </div>
-
                   <div>
-                    <label className="text-xs text-muted-foreground mb-2 block">Action When Pattern Matches</label>
+                    <label className="text-xs text-muted-foreground mb-2 block">Action When Matched</label>
                     <div className="space-y-1.5">
                       {([
-                        { val: 'tradeOnce' as const, label: 'Trade Once', desc: 'Execute one contract when pattern matches' },
-                        { val: 'tradeUntilWin' as const, label: 'Trade Until Win', desc: 'Keep trading on pattern match until a win is achieved' },
+                        { val: 'tradeOnce' as const, label: 'Trade Once', desc: 'Execute one contract' },
+                        { val: 'tradeUntilWin' as const, label: 'Trade Until Win', desc: 'Keep trading until win' },
                       ]).map(opt => (
                         <label key={opt.val}
                           className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer transition-all ${
                             patternAction === opt.val ? 'border-primary bg-primary/5' : 'border-border bg-muted/30'
                           }`}>
-                          <input type="radio" name="patternAction" checked={patternAction === opt.val}
+                          <input type="radio" checked={patternAction === opt.val}
                             onChange={() => setPatternAction(opt.val)} disabled={isRunning} className="mt-0.5" />
                           <div>
                             <div className="text-xs font-medium text-foreground">{opt.label}</div>
@@ -663,7 +741,7 @@ export default function AdvancedRamzBot() {
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="text-xs text-muted-foreground mb-1 block">Last Digit Condition</label>
+                      <label className="text-xs text-muted-foreground mb-1 block">Condition</label>
                       <Select value={digitCondition} onValueChange={(v) => setDigitCondition(v as DigitCondition)} disabled={isRunning}>
                         <SelectTrigger className="h-9 text-xs"><SelectValue /></SelectTrigger>
                         <SelectContent>
@@ -676,31 +754,25 @@ export default function AdvancedRamzBot() {
                       </Select>
                     </div>
                     <div>
-                      <label className="text-xs text-muted-foreground mb-1 block">Compare Value (0-24)</label>
+                      <label className="text-xs text-muted-foreground mb-1 block">Value (0-24)</label>
                       <Input type="number" min={0} max={24} value={digitCompareValue}
                         onChange={(e) => setDigitCompareValue(Math.max(0, Math.min(24, parseInt(e.target.value) || 0)))}
                         disabled={isRunning} className="h-9 text-xs" />
                     </div>
                   </div>
                   <div>
-                    <label className="text-xs text-muted-foreground mb-1 block">Analysis Window (Ticks)</label>
+                    <label className="text-xs text-muted-foreground mb-1 block">Analysis Window</label>
                     <Input type="number" min={5} max={100} value={digitAnalysisWindow}
                       onChange={(e) => setDigitAnalysisWindow(Math.max(5, Math.min(100, parseInt(e.target.value) || 20)))}
                       disabled={isRunning} className="h-9 text-xs" />
                   </div>
-                  <div className="text-[10px] text-muted-foreground bg-muted rounded-lg p-2">
-                    Valid Range: 0-24 — <span className="font-mono">0-9: Last digit | 10-24: Last two digits</span>
-                  </div>
                 </div>
               )}
 
-              {/* Waiting status */}
               {waitingForPattern && isRunning && (
                 <div className="text-center text-xs py-2 rounded-lg bg-warning/10 text-warning border border-warning/30 animate-pulse">
-                  ⏳ {strategyMode === 'pattern'
-                    ? `Waiting for pattern: ${patternText}`
-                    : `Waiting for digit condition: ${digitCompareValue}`
-                  }
+                  ⏳ {strategyMode === 'pattern' ? `Waiting: ${patternText}` : `Waiting: digit ${digitCondition} ${digitCompareValue}`}
+                  {scannerActive && ' (scanning all markets)'}
                 </div>
               )}
             </>
@@ -771,7 +843,6 @@ export default function AdvancedRamzBot() {
           </div>
           <Badge variant="outline" className="text-[9px]">Last 8 Ticks</Badge>
         </div>
-
         <div className="flex justify-center gap-2 flex-wrap">
           {last8.length === 0
             ? Array.from({ length: 8 }, (_, i) => (
@@ -799,7 +870,6 @@ export default function AdvancedRamzBot() {
               })
           }
         </div>
-
         <div className="flex justify-center gap-4 text-[10px] text-muted-foreground">
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-loss" /> Over (≥5)</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-profit" /> Under (&lt;5)</span>
@@ -822,16 +892,23 @@ export default function AdvancedRamzBot() {
             </Button>
           )}
         </div>
-        <div className="flex items-center justify-center gap-4 text-xs">
+        <div className="flex items-center justify-center gap-4 text-xs flex-wrap">
           <span className="text-muted-foreground">
             Current: <Badge variant={currentMarket === 1 ? 'default' : 'destructive'} className="text-[9px] ml-1">
               {currentMarket === 1 ? 'M1 (Home)' : 'M2 (Recovery)'}
             </Badge>
           </span>
           <span className="text-muted-foreground">Status: <span className="text-foreground font-medium">{botStatus}</span></span>
+          {scannerActive && (
+            <Badge variant="outline" className="text-[9px] text-primary">
+              <Radar className="w-3 h-3 mr-1" /> Scanner ON
+            </Badge>
+          )}
         </div>
         <p className="text-[10px] text-muted-foreground text-center">
-          Logic: M1 trades freely → Loss → Switch to M2 → Check Pattern/Digit Strategy → Trade → Win → Return to M1
+          {scannerActive
+            ? 'Logic: M1 → Loss → M2 → Scanner checks ALL markets for strategy → First match trades → Win → M1'
+            : 'Logic: M1 → Loss → M2 → Check Pattern/Digit → Trade → Win → M1'}
         </p>
       </div>
 
@@ -868,18 +945,19 @@ export default function AdvancedRamzBot() {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border">
-                {['Time', 'Market', 'Contract', 'Stake', 'Exit', 'Result', 'P/L', 'Balance'].map(h => (
+                {['Time', 'Market', 'Symbol', 'Contract', 'Stake', 'Exit', 'Result', 'P/L', 'Balance'].map(h => (
                   <th key={h} className="text-left py-2 px-2 text-primary font-semibold">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {trades.length === 0 ? (
-                <tr><td colSpan={8} className="text-center py-6 text-muted-foreground">System ready. Connect and start trading.</td></tr>
+                <tr><td colSpan={9} className="text-center py-6 text-muted-foreground">System ready. Connect and start trading.</td></tr>
               ) : trades.map(t => (
                 <tr key={t.id} className="border-b border-border/30 hover:bg-muted/30">
                   <td className="py-2 px-2 font-mono text-muted-foreground">{t.time}</td>
                   <td className={`py-2 px-2 font-semibold ${t.market.startsWith('M1') ? 'text-profit' : 'text-loss'}`}>{t.market}</td>
+                  <td className="py-2 px-2 font-mono text-xs text-primary">{t.symbol}</td>
                   <td className="py-2 px-2">{t.contractType}</td>
                   <td className="py-2 px-2 text-right font-mono">
                     {t.isMartingale ? (

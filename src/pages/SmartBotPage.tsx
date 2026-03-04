@@ -38,12 +38,8 @@ function speakMessage(text: string) {
   try { if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(text); u.rate = 1; u.pitch = 1; u.volume = 1; window.speechSynthesis.speak(u); } } catch {}
 }
 
-// Persist config to localStorage
 function loadConfig() {
-  try {
-    const raw = localStorage.getItem('smartbot_config');
-    if (raw) return JSON.parse(raw);
-  } catch {}
+  try { const raw = localStorage.getItem('smartbot_config'); if (raw) return JSON.parse(raw); } catch {}
   return null;
 }
 function saveConfig(cfg: any) {
@@ -67,12 +63,10 @@ export default function SmartBotPage() {
   const [soundEnabled, setSoundEnabled] = useState(false);
   const [editingConfig, setEditingConfig] = useState(false);
 
-  // Save config when it changes
   useEffect(() => {
     saveConfig({ stake, multiplier, martingaleEnabled, stopLoss, takeProfit, tickCount, maxRuns, stopCondition });
   }, [stake, multiplier, martingaleEnabled, stopLoss, takeProfit, tickCount, maxRuns, stopCondition]);
 
-  // Runtime
   const [isRunning, setIsRunning] = useState(false);
   const runningRef = useRef(false);
   const [trades, setTrades] = useState<TradeLog[]>([]);
@@ -85,12 +79,15 @@ export default function SmartBotPage() {
   const tradeIdRef = useRef(0);
   const [executingSignal, setExecutingSignal] = useState<string | null>(null);
 
+  // Continuous signal trading state
+  const [continuousSignal, setContinuousSignal] = useState<MarketSignal | null>(null);
+  const continuousRef = useRef(false);
+
   const addLog = useCallback((msg: string) => {
     const time = new Date().toLocaleTimeString();
     setStatusLog(prev => [`[${time}] ${msg}`, ...prev].slice(0, 200));
   }, []);
 
-  // Subscribe to ALL markets
   useEffect(() => {
     if (!derivApi.isConnected) return;
     let active = true;
@@ -126,7 +123,7 @@ export default function SmartBotPage() {
   /** Execute a single signal trade */
   const executeSignalTrade = useCallback(async (signal: MarketSignal) => {
     if (!isAuthorized || isRunning) return;
-    if (balance < parseFloat(stake)) { toast.error('Insufficient balance — cannot trade'); return; }
+    if (balance < parseFloat(stake)) { toast.error('Insufficient balance'); return; }
 
     setExecutingSignal(signal.symbol);
     addLog(`⚡ Instant execute: ${signal.marketName} ${signal.suggestedContract} ${signal.suggestedBarrier}`);
@@ -163,10 +160,105 @@ export default function SmartBotPage() {
     }
   }, [isAuthorized, isRunning, stake, balance, soundEnabled, addLog]);
 
-  // ─── MAIN SMART BOT LOOP ───
+  /** Start continuous trading on a signal until TP/SL/manual stop */
+  const startContinuousTrading = useCallback(async (signal: MarketSignal) => {
+    if (!isAuthorized || isRunning || continuousRef.current) return;
+    if (balance < parseFloat(stake)) { toast.error('Insufficient balance'); return; }
+
+    setContinuousSignal(signal);
+    continuousRef.current = true;
+    setIsRunning(true);
+    runningRef.current = true;
+    setRunCount(0);
+    addLog(`🟢 Continuous trade started: ${signal.marketName} ${signal.suggestedContract} ${signal.suggestedBarrier}`);
+
+    const baseStake = parseFloat(stake);
+    const mult = parseFloat(multiplier);
+    const sl = parseFloat(stopLoss);
+    const tp = parseFloat(takeProfit);
+    let localPnl = 0;
+    let localRuns = 0;
+    let currentStake = baseStake;
+
+    while (continuousRef.current) {
+      if (balance < currentStake) { addLog('🛑 Insufficient balance'); toast.error('Insufficient balance'); break; }
+
+      try {
+        const freshTick = await waitForNextTick(signal.symbol);
+        const id = ++tradeIdRef.current;
+        const now = new Date().toLocaleTimeString();
+        setTrades(prev => [{ id, time: now, market: signal.symbol, contract: signal.suggestedContract, stake: currentStake, result: 'Pending' as const, pnl: 0 }, ...prev].slice(0, 200));
+
+        const { contractId, buyPrice } = await derivApi.buyContract({
+          contract_type: signal.suggestedContract, symbol: signal.symbol,
+          duration: 1, duration_unit: 't', basis: 'stake', amount: currentStake,
+          barrier: signal.suggestedBarrier || undefined,
+        });
+
+        addLog(`⏳ Contract ${contractId} @ ${buyPrice}`);
+        const result = await derivApi.waitForContractResult(contractId);
+        const won = result.status === 'won';
+        const pnl = result.profit;
+        addLog(`${won ? '✅ WIN' : '❌ LOSS'} | P/L: ${pnl.toFixed(2)}`);
+
+        setTrades(prev => prev.map(t => t.id === id ? { ...t, result: won ? 'Win' : 'Loss', pnl } : t));
+        localPnl += pnl;
+        localRuns++;
+        setRunCount(localRuns);
+
+        // Martingale
+        if (martingaleEnabled) {
+          if (won) { currentStake = baseStake; }
+          else { currentStake = parseFloat((currentStake * mult).toFixed(2)); }
+        } else {
+          currentStake = baseStake;
+        }
+
+        if (soundEnabled) {
+          try { const ctx = new AudioContext(); const o = ctx.createOscillator(); o.frequency.value = won ? 880 : 440; o.connect(ctx.destination); o.start(); setTimeout(() => { o.stop(); ctx.close(); }, 200); } catch {}
+        }
+
+        // TP/SL
+        if (localPnl <= -sl) {
+          addLog(`🛑 STOP LOSS: ${localPnl.toFixed(2)}`);
+          toast.error(`🛑 Stop Loss! P/L: $${localPnl.toFixed(2)}`);
+          if (soundEnabled) speakMessage('Stop loss hit.');
+          break;
+        }
+        if (localPnl >= tp) {
+          addLog(`🎯 TAKE PROFIT: ${localPnl.toFixed(2)}`);
+          toast.success(`🎊 Take Profit! +$${localPnl.toFixed(2)}`);
+          if (soundEnabled) speakMessage('Take profit hit!');
+          break;
+        }
+
+        await new Promise(r => setTimeout(r, 500));
+      } catch (err: any) {
+        if (err.message?.includes('Insufficient balance')) { toast.error('Insufficient balance'); break; }
+        addLog(`⚠️ Error: ${err.message}`);
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+
+    addLog(`🏁 Continuous trade ended. Runs: ${localRuns}, P/L: ${localPnl.toFixed(2)}`);
+    continuousRef.current = false;
+    setContinuousSignal(null);
+    setIsRunning(false);
+    runningRef.current = false;
+  }, [isAuthorized, isRunning, stake, multiplier, martingaleEnabled, stopLoss, takeProfit, balance, soundEnabled, addLog]);
+
+  const stopContinuousTrading = useCallback(() => {
+    continuousRef.current = false;
+    runningRef.current = false;
+    setIsRunning(false);
+    setContinuousSignal(null);
+    addLog('🔴 Continuous trade STOPPED by user');
+  }, [addLog]);
+
+  // Main smart bot loop
   const startSmartBot = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
-    if (balance < parseFloat(stake)) { toast.error('Insufficient balance — Bot halted'); return; }
+    if (balance < parseFloat(stake)) { toast.error('Insufficient balance'); return; }
 
     setIsRunning(true);
     runningRef.current = true;
@@ -184,20 +276,9 @@ export default function SmartBotPage() {
     const recoveryStates: Record<string, RecoveryState> = {};
 
     while (runningRef.current) {
-      // Balance guard
       const currentStake = recoveryStates[Object.keys(recoveryStates)[0]]?.currentStake || baseStake;
-      if (balance < currentStake) {
-        addLog('🛑 Insufficient balance — Bot stopped');
-        toast.error('Insufficient balance — Bot halted');
-        break;
-      }
-
-      // Run limit checks
-      if (localRuns >= maxRunsNum) {
-        addLog(`🏁 Max runs (${maxRunsNum}) reached`);
-        toast.info(`Bot stopped: Max ${maxRunsNum} runs reached`);
-        break;
-      }
+      if (balance < currentStake) { addLog('🛑 Insufficient balance'); toast.error('Insufficient balance'); break; }
+      if (localRuns >= maxRunsNum) { addLog(`🏁 Max runs (${maxRunsNum})`); toast.info(`Max ${maxRunsNum} runs reached`); break; }
 
       try {
         const count = parseInt(tickCount) || 100;
@@ -236,7 +317,7 @@ export default function SmartBotPage() {
           continue;
         }
 
-        const freshTick = await waitForNextTick(signal.symbol);
+        await waitForNextTick(signal.symbol);
         const tradeStake = martingaleEnabled ? rState.currentStake : baseStake;
 
         const id = ++tradeIdRef.current;
@@ -249,7 +330,7 @@ export default function SmartBotPage() {
           barrier: barrier || undefined,
         });
 
-        addLog(`⏳ Contract ${contractId} @ ${buyPrice} — waiting...`);
+        addLog(`⏳ Contract ${contractId} @ ${buyPrice}`);
         const result = await derivApi.waitForContractResult(contractId);
         const won = result.status === 'won';
         const pnl = result.profit;
@@ -264,7 +345,6 @@ export default function SmartBotPage() {
           try { const ctx = new AudioContext(); const o = ctx.createOscillator(); o.frequency.value = won ? 880 : 440; o.connect(ctx.destination); o.start(); setTimeout(() => { o.stop(); ctx.close(); }, 200); } catch {}
         }
 
-        // Martingale: LOSS → multiply, WIN → reset
         const lastResult = won ? 'won' as const : 'lost' as const;
         if (martingaleEnabled) {
           const recovery = getRecoveryAction(rState, mult, lastResult);
@@ -273,43 +353,16 @@ export default function SmartBotPage() {
           recoveryStates[signal.symbol] = { ...rState, currentStake: baseStake, lastWasLoss: !won, inRecovery: !won, consecutiveLosses: won ? 0 : rState.consecutiveLosses + 1 };
         }
 
-        // Stop condition checks
-        if (stopCondition === 'on_loss' && !won) {
-          addLog('🏁 Stopped: On Loss condition');
-          toast.info('Bot stopped: Loss occurred');
-          break;
-        }
-        if (stopCondition === 'on_profit' && won) {
-          addLog('🏁 Stopped: On Profit condition');
-          toast.info('Bot stopped: Profit occurred');
-          break;
-        }
-        if (stopCondition === 'even_runs' && localRuns % 2 === 0) {
-          addLog(`🏁 Stopped: Even run count (${localRuns})`);
-          toast.info(`Bot stopped: ${localRuns} runs (even)`);
-          break;
-        }
+        if (stopCondition === 'on_loss' && !won) { addLog('🏁 Stopped: On Loss'); toast.info('Stopped: Loss'); break; }
+        if (stopCondition === 'on_profit' && won) { addLog('🏁 Stopped: On Profit'); toast.info('Stopped: Profit'); break; }
+        if (stopCondition === 'even_runs' && localRuns % 2 === 0) { addLog(`🏁 Stopped: Even runs (${localRuns})`); toast.info(`Stopped: ${localRuns} runs`); break; }
 
-        // SL/TP
-        if (localPnl <= -sl) {
-          addLog(`🛑 STOP LOSS hit: ${localPnl.toFixed(2)}`);
-          toast.error(`🛑 Stop Loss Hit! P/L: $${localPnl.toFixed(2)}`, { duration: 10000 });
-          if (soundEnabled) speakMessage('Stop loss hit. Bot stopped.');
-          break;
-        }
-        if (localPnl >= tp) {
-          addLog(`🎯 TAKE PROFIT hit: ${localPnl.toFixed(2)}`);
-          toast.success(`🎊 Congratulations! Take Profit Hit! +$${localPnl.toFixed(2)}`, { duration: 15000 });
-          if (soundEnabled) speakMessage('Congratulations! Your take profit has been hit! Well done!');
-          break;
-        }
+        if (localPnl <= -sl) { addLog(`🛑 STOP LOSS: ${localPnl.toFixed(2)}`); toast.error(`🛑 Stop Loss! $${localPnl.toFixed(2)}`); if (soundEnabled) speakMessage('Stop loss hit.'); break; }
+        if (localPnl >= tp) { addLog(`🎯 TAKE PROFIT: ${localPnl.toFixed(2)}`); toast.success(`🎊 Take Profit! +$${localPnl.toFixed(2)}`); if (soundEnabled) speakMessage('Take profit hit!'); break; }
 
         await new Promise(r => setTimeout(r, 500));
       } catch (err: any) {
-        if (err.message?.includes('Insufficient balance')) {
-          toast.error('Insufficient balance — Bot halted');
-          break;
-        }
+        if (err.message?.includes('Insufficient balance')) { toast.error('Insufficient balance'); break; }
         addLog(`⚠️ Error: ${err.message}`);
         await new Promise(r => setTimeout(r, 3000));
       }
@@ -322,7 +375,9 @@ export default function SmartBotPage() {
 
   const stopSmartBot = useCallback(() => {
     runningRef.current = false;
+    continuousRef.current = false;
     setIsRunning(false);
+    setContinuousSignal(null);
     addLog('🔴 Smart Bot STOPPED by user');
   }, [addLog]);
 
@@ -342,7 +397,7 @@ export default function SmartBotPage() {
         <div className="flex items-center gap-2">
           {isRunning && (
             <Badge variant="outline" className="text-[10px] text-warning animate-pulse">
-              Scanning... | Signals: {validSignals.length} | P/L: ${totalPnl.toFixed(2)} | Run {runCount}/{maxRuns}
+              {continuousSignal ? `Trading ${continuousSignal.marketName}` : 'Scanning...'} | P/L: ${totalPnl.toFixed(2)} | Run {runCount}
             </Badge>
           )}
           <Button variant="outline" size="sm" onClick={() => setSoundEnabled(!soundEnabled)} className="h-8">
@@ -351,7 +406,7 @@ export default function SmartBotPage() {
         </div>
       </div>
 
-      {/* Persistent Config Bar */}
+      {/* Config Bar */}
       <div className="bg-card border border-border rounded-xl p-3 flex flex-wrap items-center gap-4 text-xs">
         <span className="font-mono">Stake: <strong className="text-foreground">${stake}</strong></span>
         <span className="font-mono">TP: <strong className="text-profit">${takeProfit}</strong></span>
@@ -462,8 +517,8 @@ export default function SmartBotPage() {
                 {validSignals.length}/{MARKETS.length} valid
               </Badge>
             </h3>
-            <div className="space-y-1.5 max-h-[300px] overflow-y-auto">
-              {signals.slice(0, 10).map(s => (
+            <div className="space-y-1.5 max-h-[400px] overflow-y-auto">
+              {signals.slice(0, 14).map(s => (
                 <div key={s.symbol} className={`flex items-center justify-between p-2 rounded-lg text-xs ${s.isValid ? 'bg-profit/10 border border-profit/30' : 'bg-muted'}`}>
                   <div className="flex items-center gap-2">
                     {s.isValid ? <CheckCircle className="w-3.5 h-3.5 text-profit" /> : <XCircle className="w-3.5 h-3.5 text-muted-foreground" />}
@@ -474,12 +529,28 @@ export default function SmartBotPage() {
                     {s.isValid && (
                       <>
                         <span className="font-mono text-profit">{s.suggestedContract.replace('DIGIT', '')} {s.suggestedBarrier}</span>
-                        <Button size="sm" variant="outline"
-                          className="h-6 px-2 text-[10px] font-bold border-profit text-profit hover:bg-profit hover:text-profit-foreground"
-                          disabled={isRunning || executingSignal !== null || balance < parseFloat(stake)}
-                          onClick={() => executeSignalTrade(s)}>
-                          {executingSignal === s.symbol ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Play className="w-3 h-3 mr-1" /> TRADE</>}
-                        </Button>
+                        {continuousSignal?.symbol === s.symbol ? (
+                          <Button size="sm" variant="destructive"
+                            className="h-6 px-2 text-[10px] font-bold"
+                            onClick={stopContinuousTrading}>
+                            <StopCircle className="w-3 h-3 mr-1" /> STOP
+                          </Button>
+                        ) : (
+                          <div className="flex gap-1">
+                            <Button size="sm" variant="outline"
+                              className="h-6 px-2 text-[10px] font-bold border-profit text-profit hover:bg-profit hover:text-profit-foreground"
+                              disabled={isRunning || executingSignal !== null || balance < parseFloat(stake)}
+                              onClick={() => executeSignalTrade(s)}>
+                              {executingSignal === s.symbol ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Play className="w-3 h-3 mr-1" /> 1x</>}
+                            </Button>
+                            <Button size="sm" variant="outline"
+                              className="h-6 px-2 text-[10px] font-bold border-warning text-warning hover:bg-warning hover:text-warning-foreground"
+                              disabled={isRunning || executingSignal !== null || balance < parseFloat(stake)}
+                              onClick={() => startContinuousTrading(s)}>
+                              <Play className="w-3 h-3 mr-1" /> AUTO
+                            </Button>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -508,7 +579,7 @@ export default function SmartBotPage() {
                 { label: 'Losses', value: lossCount, color: 'text-loss' },
                 { label: 'P/L', value: `$${totalPnl.toFixed(2)}`, color: totalPnl >= 0 ? 'text-profit' : 'text-loss' },
                 { label: 'Runs', value: `${runCount}/${maxRuns}`, color: 'text-foreground' },
-                { label: 'Active', value: activeMarket || '—', color: 'text-primary' },
+                { label: 'Active', value: continuousSignal?.marketName || activeMarket || '—', color: 'text-primary' },
               ].map(s => (
                 <div key={s.label} className="bg-muted rounded-lg p-2 text-center">
                   <div className="text-[9px] text-muted-foreground">{s.label}</div>

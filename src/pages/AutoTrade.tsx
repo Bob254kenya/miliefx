@@ -16,6 +16,8 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, Play, StopCircle, Pause } from 'lucide-react';
 
 function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number }> {
@@ -33,6 +35,45 @@ function speakMessage(text: string) {
   try { if ('speechSynthesis' in window) { window.speechSynthesis.speak(new SpeechSynthesisUtterance(text)); } } catch {}
 }
 
+type RecoveryBotType = 'over' | 'under' | 'even_odd' | 'matches_differs' | 'rise_fall';
+
+interface RecoveryBotConfig {
+  type: RecoveryBotType;
+  label: string;
+  description: string;
+  primaryContract: string;
+  recoveryContracts: string[];
+  needsBarrier: boolean;
+}
+
+const RECOVERY_BOTS: RecoveryBotConfig[] = [
+  {
+    type: 'over', label: 'Over + Recovery',
+    description: 'OVER → On loss, recover with EVEN or ODD',
+    primaryContract: 'DIGITOVER', recoveryContracts: ['DIGITEVEN', 'DIGITODD'], needsBarrier: true,
+  },
+  {
+    type: 'under', label: 'Under + Recovery',
+    description: 'UNDER → On loss, recover with EVEN or ODD',
+    primaryContract: 'DIGITUNDER', recoveryContracts: ['DIGITEVEN', 'DIGITODD'], needsBarrier: true,
+  },
+  {
+    type: 'even_odd', label: 'Even/Odd Bot',
+    description: 'EVEN → On loss, switch to ODD and vice versa',
+    primaryContract: 'DIGITEVEN', recoveryContracts: ['DIGITODD'], needsBarrier: false,
+  },
+  {
+    type: 'matches_differs', label: 'Match/Differs Bot',
+    description: 'MATCH → On loss, switch to DIFFERS and vice versa',
+    primaryContract: 'DIGITMATCH', recoveryContracts: ['DIGITDIFF'], needsBarrier: true,
+  },
+  {
+    type: 'rise_fall', label: 'Rise/Fall Bot',
+    description: 'RISE → On loss, switch to FALL and vice versa',
+    primaryContract: 'CALL', recoveryContracts: ['PUT'], needsBarrier: false,
+  },
+];
+
 export default function AutoTrade() {
   const { isAuthorized, activeAccount, balance } = useAuth();
 
@@ -48,16 +89,17 @@ export default function AutoTrade() {
   const [currentStake, setCurrentStake] = useState(1);
   const [soundEnabled, setSoundEnabled] = useState(false);
 
-  // Over + Even/Odd Recovery Bot state
+  // Recovery bots state
+  const [activeBotType, setActiveBotType] = useState<RecoveryBotType>('over');
   const [recoveryEnabled, setRecoveryEnabled] = useState(false);
   const [recoveryRunning, setRecoveryRunning] = useState(false);
   const recoveryRunningRef = useRef(false);
   const recoveryPausedRef = useRef(false);
   const [recoveryPaused, setRecoveryPaused] = useState(false);
   const [recoveryDigit, setRecoveryDigit] = useState(4);
-  const [recoveryMode, setRecoveryMode] = useState<'DIGITEVEN' | 'DIGITODD'>('DIGITEVEN');
+  const [recoveryMode, setRecoveryMode] = useState<string>('DIGITEVEN');
   const recoveryDigitRef = useRef(4);
-  const recoveryModeRef = useRef<'DIGITEVEN' | 'DIGITODD'>('DIGITEVEN');
+  const recoveryModeRef = useRef<string>('DIGITEVEN');
 
   const runningRef = useRef(false);
   const pausedRef = useRef(false);
@@ -68,6 +110,8 @@ export default function AutoTrade() {
   const analysisDigits = digits.slice(-tickRange);
   const barrier = parseInt(config.digit);
 
+  const activeBotConfig = RECOVERY_BOTS.find(b => b.type === activeBotType)!;
+
   const handleConfigChange = useCallback(<K extends keyof TradeConfigState>(key: K, val: TradeConfigState[K]) => {
     setConfig(prev => ({ ...prev, [key]: val }));
   }, []);
@@ -76,7 +120,7 @@ export default function AutoTrade() {
   const startTrading = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
     const stakeNum = parseFloat(config.stake);
-    if (balance < stakeNum) { toast.error('Insufficient balance — Bot halted'); return; }
+    if (balance < stakeNum) { toast.error('Insufficient balance'); return; }
 
     setIsRunning(true);
     runningRef.current = true;
@@ -94,13 +138,11 @@ export default function AutoTrade() {
 
     while (runningRef.current && tradeCount < maxTradeCount) {
       if (pausedRef.current) { await new Promise(r => setTimeout(r, 500)); continue; }
-      if (balance < stake) { toast.error('Insufficient balance — Bot halted'); runningRef.current = false; break; }
+      if (balance < stake) { toast.error('Insufficient balance'); runningRef.current = false; break; }
 
       try {
         const mkt = config.market;
-        const freshTick = await waitForNextTick(mkt);
-        const extractedDigit = getLastDigit(freshTick.quote);
-        if (extractedDigit < 0 || extractedDigit > 9 || Number.isNaN(extractedDigit)) continue;
+        await waitForNextTick(mkt);
 
         const contractType = config.contractType;
         const tradeBarrier = config.digit;
@@ -133,32 +175,19 @@ export default function AutoTrade() {
         } else { stake = parseFloat(config.stake); }
         setCurrentStake(stake);
 
-        if (totalPnl <= -sl) {
-          toast.error(`🛑 Stop Loss Hit! P/L: $${totalPnl.toFixed(2)}`, { duration: 10000 });
-          speakMessage('Stop loss hit. Bot stopped.');
-          runningRef.current = false;
-        }
-        if (totalPnl >= tp) {
-          toast.success(`🎊 Take Profit Hit! +$${totalPnl.toFixed(2)}`, { duration: 15000 });
-          speakMessage('Congratulations! Your take profit has been hit!');
-          runningRef.current = false;
-        }
+        if (totalPnl <= -sl) { toast.error(`🛑 Stop Loss! $${totalPnl.toFixed(2)}`); speakMessage('Stop loss hit.'); runningRef.current = false; }
+        if (totalPnl >= tp) { toast.success(`🎊 Take Profit! +$${totalPnl.toFixed(2)}`); speakMessage('Take profit hit!'); runningRef.current = false; }
         await new Promise(r => setTimeout(r, 500));
       } catch (err: any) {
-        if (err.message?.includes('Insufficient balance')) {
-          toast.error('Insufficient balance — Bot halted');
-          runningRef.current = false;
-        } else {
-          console.error('Trade error:', err);
-          await new Promise(r => setTimeout(r, 2000));
-        }
+        if (err.message?.includes('Insufficient balance')) { toast.error('Insufficient balance'); runningRef.current = false; }
+        else { console.error('Trade error:', err); await new Promise(r => setTimeout(r, 2000)); }
       }
     }
     setIsRunning(false);
     runningRef.current = false;
   }, [isAuthorized, isRunning, config, balance]);
 
-  // ─── OVER + EVEN/ODD RECOVERY BOT ───
+  // Generic recovery bot loop
   const startRecoveryBot = useCallback(async () => {
     if (!isAuthorized || recoveryRunning) return;
     const stakeNum = parseFloat(config.stake);
@@ -176,34 +205,56 @@ export default function AutoTrade() {
     const sl = parseFloat(config.stopLoss);
     const tp = parseFloat(config.takeProfit);
     const mult = parseFloat(config.multiplier);
-    let inRecovery = false; // After Over loss, switch to Even/Odd recovery
+    let inRecovery = false;
+    let alternateToggle = false; // for even_odd and matches_differs alternating
 
     while (recoveryRunningRef.current && tradeCount < maxTradeCount) {
       if (recoveryPausedRef.current) { await new Promise(r => setTimeout(r, 500)); continue; }
-      if (balance < stake) { toast.error('Insufficient balance — Recovery Bot halted'); recoveryRunningRef.current = false; break; }
+      if (balance < stake) { toast.error('Insufficient balance'); recoveryRunningRef.current = false; break; }
 
       try {
         const mkt = config.market;
         await waitForNextTick(mkt);
 
-        // Primary: Trade OVER with selected barrier
-        // Recovery: Trade EVEN or ODD (alternating on consecutive losses)
         let contractType: string;
-        let barrier: string | undefined;
+        let tradeBarrier: string | undefined;
 
-        if (!inRecovery) {
-          contractType = 'DIGITOVER';
-          barrier = String(recoveryDigitRef.current);
+        if (activeBotType === 'over' || activeBotType === 'under') {
+          // Over/Under + Even/Odd recovery
+          if (!inRecovery) {
+            contractType = activeBotConfig.primaryContract;
+            tradeBarrier = String(recoveryDigitRef.current);
+          } else {
+            contractType = recoveryModeRef.current;
+            tradeBarrier = undefined;
+          }
+        } else if (activeBotType === 'even_odd') {
+          // Alternate Even/Odd
+          contractType = alternateToggle ? 'DIGITODD' : 'DIGITEVEN';
+          tradeBarrier = undefined;
+        } else if (activeBotType === 'matches_differs') {
+          // Alternate Match/Differs
+          if (!inRecovery) {
+            contractType = alternateToggle ? 'DIGITDIFF' : 'DIGITMATCH';
+            tradeBarrier = String(recoveryDigitRef.current);
+          } else {
+            contractType = alternateToggle ? 'DIGITMATCH' : 'DIGITDIFF';
+            tradeBarrier = String(recoveryDigitRef.current);
+          }
+        } else if (activeBotType === 'rise_fall') {
+          contractType = alternateToggle ? 'PUT' : 'CALL';
+          tradeBarrier = undefined;
         } else {
-          contractType = recoveryModeRef.current;
-          barrier = undefined;
+          contractType = activeBotConfig.primaryContract;
+          tradeBarrier = activeBotConfig.needsBarrier ? String(recoveryDigitRef.current) : undefined;
         }
 
         const params: any = {
           contract_type: contractType, symbol: mkt,
-          duration: 1, duration_unit: 't', basis: 'stake', amount: stake,
+          duration: activeBotType === 'rise_fall' ? 5 : 1,
+          duration_unit: 't', basis: 'stake', amount: stake,
         };
-        if (barrier !== undefined) params.barrier = barrier;
+        if (tradeBarrier !== undefined) params.barrier = tradeBarrier;
 
         const id = ++tradeIdRef.current;
         const now = new Date().toLocaleTimeString();
@@ -220,40 +271,29 @@ export default function AutoTrade() {
         tradeCount++;
 
         if (won) {
-          // WIN → reset to base stake, go back to primary Over
           stake = stakeNum;
           inRecovery = false;
+          if (activeBotType === 'even_odd' || activeBotType === 'rise_fall') alternateToggle = false;
         } else {
-          // LOSS → switch to recovery (Even/Odd), apply martingale if enabled
           inRecovery = true;
+          if (activeBotType === 'even_odd' || activeBotType === 'matches_differs' || activeBotType === 'rise_fall') {
+            alternateToggle = !alternateToggle;
+          }
           if (config.martingale) stake *= mult;
         }
         setCurrentStake(stake);
 
-        if (totalPnl <= -sl) {
-          toast.error(`🛑 Recovery Bot Stop Loss! P/L: $${totalPnl.toFixed(2)}`, { duration: 10000 });
-          speakMessage('Stop loss hit. Recovery bot stopped.');
-          recoveryRunningRef.current = false;
-        }
-        if (totalPnl >= tp) {
-          toast.success(`🎊 Recovery Bot Take Profit! +$${totalPnl.toFixed(2)}`, { duration: 15000 });
-          speakMessage('Congratulations! Your take profit has been hit!');
-          recoveryRunningRef.current = false;
-        }
+        if (totalPnl <= -sl) { toast.error(`🛑 Stop Loss! $${totalPnl.toFixed(2)}`); speakMessage('Stop loss hit.'); recoveryRunningRef.current = false; }
+        if (totalPnl >= tp) { toast.success(`🎊 Take Profit! +$${totalPnl.toFixed(2)}`); speakMessage('Take profit hit!'); recoveryRunningRef.current = false; }
         await new Promise(r => setTimeout(r, 500));
       } catch (err: any) {
-        if (err.message?.includes('Insufficient balance')) {
-          toast.error('Insufficient balance — Recovery Bot halted');
-          recoveryRunningRef.current = false;
-        } else {
-          console.error('Recovery bot error:', err);
-          await new Promise(r => setTimeout(r, 2000));
-        }
+        if (err.message?.includes('Insufficient balance')) { toast.error('Insufficient balance'); recoveryRunningRef.current = false; }
+        else { console.error('Recovery bot error:', err); await new Promise(r => setTimeout(r, 2000)); }
       }
     }
     setRecoveryRunning(false);
     recoveryRunningRef.current = false;
-  }, [isAuthorized, recoveryRunning, config, balance]);
+  }, [isAuthorized, recoveryRunning, config, balance, activeBotType, activeBotConfig]);
 
   const pauseTrading = () => { pausedRef.current = !pausedRef.current; setIsPaused(!isPaused); };
   const stopTrading = () => { runningRef.current = false; setIsRunning(false); setIsPaused(false); };
@@ -269,8 +309,7 @@ export default function AutoTrade() {
         </div>
         {isLoading ? (
           <div className="flex items-center gap-2 text-xs text-warning">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            Fetching 1000 ticks...
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Fetching 1000 ticks...
           </div>
         ) : (
           <Badge variant="outline" className="text-[10px]">{tickCount} ticks loaded</Badge>
@@ -302,68 +341,83 @@ export default function AutoTrade() {
             </div>
           </div>
 
-          {/* Over + Even/Odd Recovery Bot */}
+          {/* Recovery Bot Selector */}
           <div className="bg-card border border-border rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-foreground">Over + Recovery Bot</h3>
+              <h3 className="text-sm font-semibold text-foreground">Recovery Bots</h3>
               <Switch checked={recoveryEnabled} onCheckedChange={setRecoveryEnabled} disabled={recoveryRunning} />
             </div>
+
             {recoveryEnabled && (
               <>
-                {/* Over Digit Selector */}
+                {/* Bot Type Selector */}
                 <div>
-                  <label className="text-[10px] text-muted-foreground">Over Digit (Barrier)</label>
-                  <div className="grid grid-cols-5 gap-1 mt-1">
-                    {Array.from({ length: 10 }, (_, i) => (
-                      <button
-                        key={i}
-                        onClick={() => { setRecoveryDigit(i); recoveryDigitRef.current = i; }}
-                        disabled={recoveryRunning}
-                        className={`h-7 rounded text-xs font-mono font-bold transition-all ${
-                          recoveryDigit === i
-                            ? 'bg-primary text-primary-foreground'
-                            : 'bg-muted text-foreground hover:bg-secondary'
-                        }`}
-                      >
-                        {i}
-                      </button>
-                    ))}
-                  </div>
+                  <label className="text-[10px] text-muted-foreground mb-1 block">Bot Type</label>
+                  <Select value={activeBotType} onValueChange={(v) => setActiveBotType(v as RecoveryBotType)} disabled={recoveryRunning}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {RECOVERY_BOTS.map(b => (
+                        <SelectItem key={b.type} value={b.type}>{b.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] text-muted-foreground mt-1">{activeBotConfig.description}</p>
                 </div>
 
-                {/* Recovery Mode */}
-                <div>
-                  <label className="text-[10px] text-muted-foreground">Recovery Mode</label>
-                  <div className="flex gap-1 mt-1">
-                    <button
-                      onClick={() => { setRecoveryMode('DIGITEVEN'); recoveryModeRef.current = 'DIGITEVEN'; }}
-                      disabled={recoveryRunning}
-                      className={`flex-1 h-7 rounded text-xs font-bold transition-all ${
-                        recoveryMode === 'DIGITEVEN'
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted text-foreground hover:bg-secondary'
-                      }`}
-                    >
-                      Even
-                    </button>
-                    <button
-                      onClick={() => { setRecoveryMode('DIGITODD'); recoveryModeRef.current = 'DIGITODD'; }}
-                      disabled={recoveryRunning}
-                      className={`flex-1 h-7 rounded text-xs font-bold transition-all ${
-                        recoveryMode === 'DIGITODD'
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-muted text-foreground hover:bg-secondary'
-                      }`}
-                    >
-                      Odd
-                    </button>
+                {/* Barrier selector for bots that need it */}
+                {activeBotConfig.needsBarrier && (
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">Digit (Barrier)</label>
+                    <div className="grid grid-cols-5 gap-1 mt-1">
+                      {Array.from({ length: 10 }, (_, i) => (
+                        <button key={i}
+                          onClick={() => { setRecoveryDigit(i); recoveryDigitRef.current = i; }}
+                          disabled={recoveryRunning}
+                          className={`h-7 rounded text-xs font-mono font-bold transition-all ${
+                            recoveryDigit === i ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground hover:bg-secondary'
+                          }`}>
+                          {i}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* Recovery mode selector for over/under bots */}
+                {(activeBotType === 'over' || activeBotType === 'under') && (
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">Recovery Mode</label>
+                    <div className="flex gap-1 mt-1">
+                      {['DIGITEVEN', 'DIGITODD'].map(mode => (
+                        <button key={mode}
+                          onClick={() => { setRecoveryMode(mode); recoveryModeRef.current = mode; }}
+                          disabled={recoveryRunning}
+                          className={`flex-1 h-7 rounded text-xs font-bold transition-all ${
+                            recoveryMode === mode ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground hover:bg-secondary'
+                          }`}>
+                          {mode === 'DIGITEVEN' ? 'Even' : 'Odd'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
-                  Starts with <span className="text-profit font-bold">OVER {recoveryDigit}</span>.
-                  On loss → recovers with <span className="text-primary font-bold">{recoveryMode === 'DIGITEVEN' ? 'EVEN' : 'ODD'}</span>.
-                  On win → resets to OVER. Martingale applies on losses only.
+                  {activeBotType === 'over' && (
+                    <>Starts with <span className="text-profit font-bold">OVER {recoveryDigit}</span>. On loss → <span className="text-primary font-bold">{recoveryMode === 'DIGITEVEN' ? 'EVEN' : 'ODD'}</span>. Win → resets.</>
+                  )}
+                  {activeBotType === 'under' && (
+                    <>Starts with <span className="text-profit font-bold">UNDER {recoveryDigit}</span>. On loss → <span className="text-primary font-bold">{recoveryMode === 'DIGITEVEN' ? 'EVEN' : 'ODD'}</span>. Win → resets.</>
+                  )}
+                  {activeBotType === 'even_odd' && (
+                    <>Starts with <span className="text-primary font-bold">EVEN</span>. On loss → switches to <span className="text-warning font-bold">ODD</span> and vice versa. Win → resets to EVEN.</>
+                  )}
+                  {activeBotType === 'matches_differs' && (
+                    <>Starts with <span className="text-primary font-bold">MATCH {recoveryDigit}</span>. On loss → <span className="text-warning font-bold">DIFFERS</span>. Win → resets.</>
+                  )}
+                  {activeBotType === 'rise_fall' && (
+                    <>Starts with <span className="text-profit font-bold">RISE</span>. On loss → <span className="text-loss font-bold">FALL</span>. Win → resets. Uses 5-tick duration.</>
+                  )}
                 </p>
 
                 <div className="flex gap-2">
@@ -371,7 +425,7 @@ export default function AutoTrade() {
                     <Button onClick={startRecoveryBot}
                       disabled={!isAuthorized || isRunning || balance < parseFloat(config.stake || '0')}
                       className="flex-1 h-8 bg-profit hover:bg-profit/90 text-profit-foreground text-xs">
-                      <Play className="w-3 h-3 mr-1" /> Start Recovery Bot
+                      <Play className="w-3 h-3 mr-1" /> Start {activeBotConfig.label}
                     </Button>
                   ) : (
                     <>
