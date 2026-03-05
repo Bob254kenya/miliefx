@@ -182,8 +182,7 @@ export default function ProScannerBot() {
   }, [checkCondition]);
 
   /* ── Add log entry ── */
-  const addLog = useCallback((entry: Omit<LogEntry, 'id'>) => {
-    const id = ++logIdRef.current;
+  const addLog = useCallback((id: number, entry: Omit<LogEntry, 'id'>) => {
     setLogEntries(prev => [{ ...entry, id }, ...prev].slice(0, 100));
   }, []);
 
@@ -271,7 +270,7 @@ export default function ProScannerBot() {
       setTotalStaked(prev => prev + cStake);
       setCurrentStakeState(cStake);
 
-      addLog({
+      addLog(logId, {
         time: now, market: mkt === 1 ? 'M1' : 'M2', symbol: tradeSymbol,
         contract: cfg.contract, stake: cStake, martingaleStep: mStep,
         exitDigit: '...', result: 'Pending', pnl: 0, balance: localBalance,
@@ -688,11 +687,12 @@ export default function ProScannerBot() {
                     <th className="text-center p-1.5">Result</th>
                     <th className="text-right p-1.5">P/L</th>
                     <th className="text-right p-1.5">Bal</th>
+                    <th className="text-center p-1.5">Action</th>
                   </tr>
                 </thead>
                 <tbody>
                   {logEntries.length === 0 ? (
-                    <tr><td colSpan={9} className="text-center text-muted-foreground py-6">No trades yet</td></tr>
+                    <tr><td colSpan={10} className="text-center text-muted-foreground py-6">No trades yet</td></tr>
                   ) : logEntries.map(e => (
                     <tr key={e.id} className={`border-t border-border/30 hover:bg-muted/20 ${
                       e.market === 'M1' ? 'border-l-2 border-l-profit' : 'border-l-2 border-l-purple-500'
@@ -717,6 +717,13 @@ export default function ProScannerBot() {
                         {e.result === 'Pending' ? '...' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
                       </td>
                       <td className="p-1.5 font-mono text-right">${e.balance.toFixed(2)}</td>
+                      <td className="p-1.5 text-center">
+                        {isRunning && (
+                          <button onClick={stopBot} className="px-1.5 py-0.5 rounded bg-destructive/80 hover:bg-destructive text-destructive-foreground text-[9px] font-bold transition-colors" title="Stop Bot">
+                            ■
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
