@@ -13,6 +13,7 @@ import AutoTrade from "@/pages/AutoTrade";
 import BotsPage from "@/pages/BotsPage";
 import SmartBotPage from "@/pages/SmartBotPage";
 import AdvancedRamzBot from "@/pages/AdvancedRamzBot";
+import ProScannerBot from "@/pages/ProScannerBot";
 import TradeHistory from "@/pages/TradeHistory";
 import SettingsPage from "@/pages/SettingsPage";
 import NotFound from "./pages/NotFound";
@@ -40,7 +41,9 @@ function AppRoutes() {
   return (
     <Routes>
       <Route element={<AppLayout />}>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<ProScannerBot />} />
+        <Route path="/pro-bot" element={<ProScannerBot />} />
+        <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/markets" element={<Markets />} />
         <Route path="/analyzer" element={<Analyzer />} />
         <Route path="/auto-trade" element={<AutoTrade />} />
