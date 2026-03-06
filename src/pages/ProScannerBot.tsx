@@ -311,6 +311,7 @@ export default function ProScannerBot() {
     let cStake = baseStake;
     let mStep = 0;
     let inRecovery = false;
+    let tuwLocked = false; // TUW: after pattern loss, skip pattern until win
     let localPnl = 0;
     let localBalance = balance;
 
@@ -325,7 +326,7 @@ export default function ProScannerBot() {
       setCurrentMarket(mkt);
 
       if (mkt === 1 && !m1Enabled) { if (m2Enabled) { inRecovery = true; continue; } else break; }
-      if (mkt === 2 && !m2Enabled) { inRecovery = false; continue; }
+      if (mkt === 2 && !m2Enabled) { inRecovery = false; tuwLocked = false; continue; }
 
       let tradeSymbol: string;
       const cfg = getConfig(mkt);
@@ -333,8 +334,14 @@ export default function ProScannerBot() {
       const fakeCount = parseInt(mkt === 1 ? m1FakeCount : m2FakeCount) || 3;
       const realCount = parseInt(mkt === 1 ? m1RealCount : m2RealCount) || 2;
 
-      /* ── TRADE UNTIL WIN RECOVERY (STATE 2) ── */
-      if (inRecovery && patternAction === 'tradeUntilWin' && !strategyEnabled) {
+      /* ── TUW LOCKED: after pattern-matched loss, trade every tick until win ── */
+      if (tuwLocked) {
+        setBotStatus('recovery_tuw');
+        tradeSymbol = cfg.symbol;
+        // No pattern check, just trade immediately on next tick
+      }
+      /* ── TRADE UNTIL WIN RECOVERY (no strategy) ── */
+      else if (inRecovery && patternAction === 'tradeUntilWin' && !strategyEnabled) {
         setBotStatus('recovery_tuw');
         tradeSymbol = cfg.symbol;
         // Trade every tick until win
@@ -424,6 +431,8 @@ export default function ProScannerBot() {
           cStake = result.cStake;
           mStep = result.mStep;
           inRecovery = result.inRecovery;
+          if (!result.inRecovery) tuwLocked = false;
+          else if (patternAction === 'tradeUntilWin' && strategyEnabled) tuwLocked = true;
 
           if (result.shouldBreak) { runningRef.current = false; break; }
         }
@@ -444,9 +453,17 @@ export default function ProScannerBot() {
       mStep = result.mStep;
       inRecovery = result.inRecovery;
 
+      /* TUW: after pattern-matched loss, lock to trade every tick until win */
+      if (!result.inRecovery) {
+        tuwLocked = false; // Won & recovered → clear lock
+      } else if (patternAction === 'tradeUntilWin' && strategyEnabled && inRecovery && !tuwLocked) {
+        tuwLocked = true; // First loss after pattern match → lock
+      }
+
       if (result.shouldBreak) break;
 
-      if (!turboMode) await new Promise(r => setTimeout(r, 400));
+      // Turbo: no delay between trades; normal: small delay
+      if (!turboMode && !tuwLocked) await new Promise(r => setTimeout(r, 400));
     }
 
     setIsRunning(false);
