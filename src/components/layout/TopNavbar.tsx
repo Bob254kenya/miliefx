@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { NavLink } from '@/components/NavLink';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLossRequirement } from '@/hooks/useLossRequirement';
 import {
   LayoutDashboard, BarChart3, Activity, Bot, Cpu, Zap,
   History, Settings, LogOut, ChevronDown, Menu, X, RefreshCw,
@@ -28,6 +29,7 @@ const navItems = [
 
 export default function TopNavbar() {
   const { activeAccount, accounts, balance, logout, switchAccount } = useAuth();
+  const { isUnlocked, remaining } = useLossRequirement();
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleResetBalance = async () => {
@@ -118,16 +120,26 @@ export default function TopNavbar() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56">
-                  {accounts.map(acc => (
-                    <DropdownMenuItem
-                      key={acc.loginid}
-                      onClick={() => switchAccount(acc.loginid)}
-                      className={acc.loginid === activeAccount.loginid ? 'bg-accent' : ''}
-                    >
-                      <span className="mr-2">{acc.is_virtual ? '🎮' : '💰'}</span>
-                      {acc.loginid} ({acc.currency})
-                    </DropdownMenuItem>
-                  ))}
+                  {accounts.map(acc => {
+                    const isRealLocked = !acc.is_virtual && !isUnlocked;
+                    return (
+                      <DropdownMenuItem
+                        key={acc.loginid}
+                        onClick={() => {
+                          if (isRealLocked) {
+                            toast.error(`Real trading locked. ${remaining} more virtual losses required.`);
+                            return;
+                          }
+                          switchAccount(acc.loginid);
+                        }}
+                        className={`${acc.loginid === activeAccount.loginid ? 'bg-accent' : ''} ${isRealLocked ? 'opacity-50' : ''}`}
+                      >
+                        <span className="mr-2">{acc.is_virtual ? '🎮' : isRealLocked ? '🔒' : '💰'}</span>
+                        {acc.loginid} ({acc.currency})
+                        {isRealLocked && <span className="ml-auto text-[9px] text-warning">Locked</span>}
+                      </DropdownMenuItem>
+                    );
+                  })}
                   <DropdownMenuItem onClick={logout} className="text-destructive">
                     <LogOut className="mr-2 h-3.5 w-3.5" /> Logout
                   </DropdownMenuItem>
