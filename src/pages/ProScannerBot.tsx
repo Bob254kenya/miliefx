@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { getLastDigit } from '@/services/analysis';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLossRequirement } from '@/hooks/useLossRequirement';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -108,7 +109,8 @@ function simulateVirtualContract(
 }
 
 export default function ProScannerBot() {
-  const { isAuthorized, balance } = useAuth();
+  const { isAuthorized, balance, activeAccount } = useAuth();
+  const { recordLoss } = useLossRequirement();
 
   /* ── Market 1 config ── */
   const [m1Enabled, setM1Enabled] = useState(true);
