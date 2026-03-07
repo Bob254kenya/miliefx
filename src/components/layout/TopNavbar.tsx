@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { derivApi } from '@/services/deriv-api';
 import { toast } from 'sonner';
+import SocialIcons from './SocialIcons';
 
 const navItems = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
@@ -53,6 +54,9 @@ export default function TopNavbar() {
           <span className="font-bold text-foreground text-sm hidden sm:inline">
             Ceoramz<span className="text-primary">Traders</span>
           </span>
+          <div className="hidden sm:block ml-1">
+            <SocialIcons />
+          </div>
         </div>
 
         {/* Desktop Nav */}
