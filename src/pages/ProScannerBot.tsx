@@ -607,7 +607,6 @@ export default function ProScannerBot() {
     waiting_pattern: { icon: '🟡', label: 'WAITING PATTERN', color: 'text-warning' },
     pattern_matched: { icon: '✅', label: 'PATTERN MATCHED', color: 'text-profit' },
     virtual_hook: { icon: '🎣', label: 'VIRTUAL HOOK', color: 'text-primary' },
-    recovery_tuw: { icon: '🔴', label: 'TRADE UNTIL WIN', color: 'text-loss' },
   };
 
   const status = statusConfig[botStatus];
