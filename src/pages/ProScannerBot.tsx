@@ -891,14 +891,20 @@ export default function ProScannerBot() {
                 <Input type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunning} className="h-8 text-xs" />
               </div>
             </div>
-            <div className="flex items-center gap-2 pt-1">
-              <input type="checkbox" id="enableStrategy" checked={strategyEnabled} onChange={e => setStrategyEnabled(e.target.checked)} disabled={isRunning} className="rounded" />
-              <label htmlFor="enableStrategy" className="text-xs text-foreground">Enable Strategy (M2 only)</label>
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="enableStrategyM2" checked={strategyEnabled} onChange={e => setStrategyEnabled(e.target.checked)} disabled={isRunning} className="rounded" />
+                <label htmlFor="enableStrategyM2" className="text-xs text-foreground">Enable Strategy (M2)</label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="enableStrategyM1" checked={strategyM1Enabled} onChange={e => setStrategyM1Enabled(e.target.checked)} disabled={isRunning} className="rounded" />
+                <label htmlFor="enableStrategyM1" className="text-xs text-foreground">Enable Strategy (M1)</label>
+              </div>
             </div>
           </div>
 
           {/* Strategy Card */}
-          {strategyEnabled && (
+          {(strategyEnabled || strategyM1Enabled) && (
             <div className="bg-card border border-warning/30 rounded-xl p-3 space-y-2">
               <h3 className="text-sm font-semibold text-warning flex items-center gap-1"><Zap className="w-4 h-4" /> Pattern Strategy</h3>
               <div className="flex gap-1">
