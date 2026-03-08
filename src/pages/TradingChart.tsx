@@ -59,7 +59,7 @@ const GROUPS = [
 
 const TIMEFRAMES = ['1m','3m','5m','15m','30m','1h','4h','12h','1d'];
 const TF_TICKS: Record<string,number> = {
-  '1m':60,'3m':180,'5m':300,'15m':450,'30m':600,'1h':800,'4h':900,'12h':950,'1d':1000,
+  '1m':1000,'3m':2000,'5m':3000,'15m':4000,'30m':4500,'1h':5000,'4h':5000,'12h':5000,'1d':5000,
 };
 
 const CONTRACT_TYPES = [
