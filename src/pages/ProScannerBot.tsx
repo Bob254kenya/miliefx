@@ -1025,6 +1025,25 @@ export default function ProScannerBot() {
             </div>
           </div>
 
+          {/* Start / Stop Buttons */}
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              onClick={startBot}
+              disabled={isRunning || !isAuthorized || balance < parseFloat(stake)}
+              className="h-14 text-base font-bold bg-profit hover:bg-profit/90 text-profit-foreground rounded-xl"
+            >
+              <Play className="w-5 h-5 mr-2" /> START M1
+            </Button>
+            <Button
+              onClick={stopBot}
+              disabled={!isRunning}
+              variant="destructive"
+              className="h-14 text-base font-bold rounded-xl"
+            >
+              <StopCircle className="w-5 h-5 mr-2" /> STOP
+            </Button>
+          </div>
+
           {/* Activity Log */}
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="px-2.5 py-2 border-b border-border flex items-center justify-between gap-2">
