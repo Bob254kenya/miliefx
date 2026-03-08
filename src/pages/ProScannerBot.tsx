@@ -724,15 +724,21 @@ export default function ProScannerBot() {
                 <Switch checked={m1HookEnabled} onCheckedChange={setM1HookEnabled} disabled={isRunning} />
               </div>
               {m1HookEnabled && (
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-[9px] text-muted-foreground">Fake Contracts</label>
-                    <Input type="number" min="1" max="10" value={m1FakeCount} onChange={e => setM1FakeCount(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[9px] text-muted-foreground">Virtual Loss Count</label>
+                      <Input type="number" min="1" max="20" value={m1VirtualLossCount} onChange={e => setM1VirtualLossCount(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
+                    </div>
+                    <div>
+                      <label className="text-[9px] text-muted-foreground">Real After Hook</label>
+                      <Input type="number" min="1" max="10" value={m1RealCount} onChange={e => setM1RealCount(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
+                    </div>
                   </div>
-                  <div>
-                    <label className="text-[9px] text-muted-foreground">Real After Hook</label>
-                    <Input type="number" min="1" max="10" value={m1RealCount} onChange={e => setM1RealCount(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
+                  <div className="text-[8px] text-muted-foreground bg-muted/30 rounded p-1.5">
+                    Bot will simulate virtual trades until {m1VirtualLossCount} consecutive losses occur, then execute real trades.
                   </div>
+                </div>
                 </div>
               )}
             </div>
