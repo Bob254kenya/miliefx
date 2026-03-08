@@ -2,7 +2,7 @@ import { NavLink } from '@/components/NavLink';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLossRequirement } from '@/hooks/useLossRequirement';
 import {
-  LayoutDashboard, BarChart3, Activity, Bot, Cpu, Zap,
+  LayoutDashboard, BarChart3, Activity, Bot, Cpu, Zap, Users,
   History, Settings, LogOut, ChevronDown, RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
