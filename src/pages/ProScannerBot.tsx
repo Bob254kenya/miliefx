@@ -302,7 +302,7 @@ export default function ProScannerBot() {
     const baseStake = parseFloat(stake);
     if (baseStake < 0.35) { toast.error('Min stake $0.35'); return; }
     if (!m1Enabled && !m2Enabled) { toast.error('Enable at least one market'); return; }
-    if (strategyEnabled && strategyMode === 'pattern' && !patternValid) { toast.error('Invalid pattern (min 2 E/O)'); return; }
+    if ((strategyEnabled || strategyM1Enabled) && strategyMode === 'pattern' && !patternValid) { toast.error('Invalid pattern (min 2 E/O)'); return; }
 
     setIsRunning(true);
     runningRef.current = true;
