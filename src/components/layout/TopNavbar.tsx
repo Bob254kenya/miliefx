@@ -62,14 +62,14 @@ export default function TopNavbar() {
           </div>
         </div>
 
-        {/* Desktop Nav */}
-        <nav className="hidden md:flex items-center gap-1 flex-1">
+        {/* Nav - always visible with horizontal scroll */}
+        <nav className="flex items-center gap-1 flex-1 overflow-x-auto min-w-0 no-scrollbar">
           {navItems.map(item => (
             <NavLink
               key={item.url}
               to={item.url}
               end={item.url === '/'}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted transition-all whitespace-nowrap shrink-0"
               activeClassName="!text-primary !bg-primary/10 font-semibold"
             >
               <item.icon className="w-3.5 h-3.5" />
