@@ -14,6 +14,7 @@ import BotsPage from "@/pages/BotsPage";
 import SmartBotPage from "@/pages/SmartBotPage";
 import AdvancedRamzBot from "@/pages/AdvancedRamzBot";
 import ProScannerBot from "@/pages/ProScannerBot";
+import TradingChart from "@/pages/TradingChart";
 import TradeHistory from "@/pages/TradeHistory";
 import SettingsPage from "@/pages/SettingsPage";
 import NotFound from "./pages/NotFound";
