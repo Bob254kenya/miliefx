@@ -15,6 +15,7 @@ import {
   Play, StopCircle, Trash2, Scan,
   Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload,
 } from 'lucide-react';
+import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
 /* ───── CONSTANTS ───── */
 const SCANNER_MARKETS: { symbol: string; name: string }[] = [
