@@ -1235,11 +1235,23 @@ export default function TradingChart() {
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
                 <Zap className="w-3.5 h-3.5 text-primary" /> Auto Trading Bot
               </h3>
-              {botRunning && (
-                <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ repeat: Infinity, duration: 1.5 }}>
-                  <Badge className="text-[8px] bg-profit text-profit-foreground">RUNNING</Badge>
-                </motion.div>
-              )}
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant={turboMode ? 'default' : 'outline'}
+                  className={`h-6 text-[9px] px-2 ${turboMode ? 'bg-profit hover:bg-profit/90 text-profit-foreground animate-pulse' : ''}`}
+                  onClick={() => setTurboMode(!turboMode)}
+                  disabled={botRunning}
+                >
+                  <Zap className="w-3 h-3 mr-0.5" />
+                  {turboMode ? '⚡ TURBO' : 'Turbo'}
+                </Button>
+                {botRunning && (
+                  <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ repeat: Infinity, duration: 1.5 }}>
+                    <Badge className="text-[8px] bg-profit text-profit-foreground">RUNNING</Badge>
+                  </motion.div>
+                )}
+              </div>
             </div>
 
             <Select value={botConfig.contractType} onValueChange={v => setBotConfig(p => ({ ...p, contractType: v }))} disabled={botRunning}>
