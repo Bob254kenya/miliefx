@@ -692,7 +692,7 @@ export default function ProScannerBot() {
     }
     if (cfg.scanner?.active !== undefined) setScannerActive(cfg.scanner.active);
     if (cfg.turbo?.enabled !== undefined) setTurboMode(cfg.turbo.enabled);
-    if (cfg.botName) setBotName(cfg.botName);
+    if ((cfg as any).botName) setBotName((cfg as any).botName);
   }, []);
 
   const activeSymbol = currentMarket === 1 ? m1Symbol : m2Symbol;
