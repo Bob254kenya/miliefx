@@ -489,7 +489,7 @@ export default function ProScannerBot() {
       /* TUW: after pattern-matched loss, lock to trade every tick until win */
       if (!result.inRecovery) {
         tuwLocked = false; // Won & recovered → clear lock
-      } else if (patternAction === 'tradeUntilWin' && strategyEnabled && inRecovery && !tuwLocked) {
+      } else if (patternAction === 'tradeUntilWin' && (strategyEnabled || strategyM1Enabled) && inRecovery && !tuwLocked) {
         tuwLocked = true; // First loss after pattern match → lock
       }
 
