@@ -114,6 +114,7 @@ function simulateVirtualContract(
 export default function ProScannerBot() {
   const { isAuthorized, balance, activeAccount } = useAuth();
   const { recordLoss } = useLossRequirement();
+  const location = useLocation();
 
   /* ── Market 1 config ── */
   const [m1Enabled, setM1Enabled] = useState(true);

@@ -15,6 +15,7 @@ import {
 
 const navItems = [
   { title: 'Pro Scanner Bot', url: '/', icon: Scan },
+  { title: 'Free Bots', url: '/free-bots', icon: Gift },
   { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
   { title: 'Markets', url: '/markets', icon: BarChart3 },
   { title: 'Analyzer', url: '/analyzer', icon: Activity },

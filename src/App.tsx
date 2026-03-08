@@ -155,6 +155,7 @@ function AppRoutes() {
         <Route path="/history" element={<TradeHistory />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/copy-trading" element={<CopyTradingManager />} />
+        <Route path="/free-bots" element={<FreeBots />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>
