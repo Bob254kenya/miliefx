@@ -529,7 +529,10 @@ export default function TradingChart() {
     drawLine(bbSeries.lower, '#BC8CFF', 1.2, [5, 3]);
 
     // EMA 50 line
-    drawLine(emaSeries, '#2F81F7', 2);
+    drawLine(emaSeries, '#2F81F7', 1.5);
+
+    // SMA 20 (Moving Average) line
+    drawLine(smaSeries, '#E6B422', 1.5);
 
     // Support line
     ctx.setLineDash([6, 4]);
