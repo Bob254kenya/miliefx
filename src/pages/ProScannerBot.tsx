@@ -383,14 +383,8 @@ export default function ProScannerBot() {
         setBotStatus('waiting_pattern');
 
         let matched = false;
-        let matchedSymbol = '';
         while (runningRef.current && !matched) {
-          if (scannerActive) {
-            const found = findScannerMatchForMarket(1);
-            if (found) { matched = true; matchedSymbol = found; }
-          } else {
-            if (checkStrategyForMarket(cfg.symbol, 1)) { matched = true; matchedSymbol = cfg.symbol; }
-          }
+          if (checkStrategyForMarket(cfg.symbol, 1)) { matched = true; }
           if (!matched) {
             await new Promise<void>(r => {
               if (turboMode) requestAnimationFrame(() => r());
@@ -401,7 +395,7 @@ export default function ProScannerBot() {
         if (!runningRef.current) break;
 
         setBotStatus('pattern_matched');
-        tradeSymbol = matchedSymbol;
+        tradeSymbol = cfg.symbol;
         if (!turboMode) await new Promise(r => setTimeout(r, 300));
       } else {
         setBotStatus(mkt === 1 ? 'trading_m1' : 'recovery');

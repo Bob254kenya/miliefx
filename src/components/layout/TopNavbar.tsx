@@ -57,7 +57,7 @@ export default function TopNavbar() {
           <span className="font-bold text-foreground text-sm">
             Ceoramz<span className="text-primary">Traders</span>
           </span>
-          <div className="hidden sm:block ml-1">
+          <div className="ml-1">
             <SocialIcons />
           </div>
         </div>
