@@ -173,6 +173,7 @@ export default function ProScannerBot() {
 
   /* ── Turbo ── */
   const [turboMode, setTurboMode] = useState(false);
+  const [botName, setBotName] = useState('');
   const [turboLatency, setTurboLatency] = useState(0);
   const [ticksCaptured, setTicksCaptured] = useState(0);
   const [ticksMissed, setTicksMissed] = useState(0);
