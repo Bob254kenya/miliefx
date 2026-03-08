@@ -17,6 +17,7 @@ import {
 import { derivApi } from '@/services/deriv-api';
 import { toast } from 'sonner';
 import SocialIcons from './SocialIcons';
+import ThemeToggle from './ThemeToggle';
 
 const navItems = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
@@ -46,7 +47,7 @@ export default function TopNavbar() {
 
   return (
     <header className="sticky top-0 z-50 bg-card/95 backdrop-blur border-b border-border">
-      {/* Row 1: Logo + Balance + Account */}
+      {/* Row 1: Logo + Theme Toggle + Balance + Account */}
       <div className="flex items-center h-12 px-4 max-w-[1920px] mx-auto">
         {/* Logo */}
         <div className="flex items-center gap-2 shrink-0">
@@ -61,8 +62,10 @@ export default function TopNavbar() {
           </div>
         </div>
 
-        {/* Balance + Account (right-aligned) */}
+        {/* Theme Toggle + Balance + Account (right-aligned) */}
         <div className="flex items-center gap-2 ml-auto">
+          <ThemeToggle />
+          
           {activeAccount && (
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-1.5 bg-muted rounded-lg px-3 py-1.5">
