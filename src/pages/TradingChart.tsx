@@ -672,7 +672,7 @@ export default function TradingChart() {
     ctx.fillStyle = 'rgba(63, 185, 80, 0.04)';
     ctx.fillRect(0, rsiToY(30), chartW, rsiTop + rsiH - rsiToY(30));
 
-  }, [candles, bb, ema50, support, resistance, currentPrice, candleEndIndices, emaSeries, bbSeries, rsiSeries, rsi, candleWidth, scrollOffset]);
+  }, [candles, bb, ema50, support, resistance, currentPrice, candleEndIndices, emaSeries, smaSeries, bbSeries, rsiSeries, rsi, candleWidth, scrollOffset]);
 
   const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
   const marketName = ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol;
