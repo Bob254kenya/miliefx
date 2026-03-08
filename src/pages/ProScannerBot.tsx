@@ -150,6 +150,7 @@ export default function ProScannerBot() {
 
   /* ── Strategy ── */
   const [strategyEnabled, setStrategyEnabled] = useState(false);
+  const [strategyM1Enabled, setStrategyM1Enabled] = useState(false);
   const [strategyMode, setStrategyMode] = useState<'pattern' | 'digit'>('pattern');
   const [pattern, setPattern] = useState('');
   const [patternAction, setPatternAction] = useState<'tradeOnce' | 'tradeUntilWin'>('tradeUntilWin');
