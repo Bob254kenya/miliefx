@@ -337,20 +337,8 @@ export default function ProScannerBot() {
       const requiredLosses = parseInt(mkt === 1 ? m1VirtualLossCount : m2VirtualLossCount) || 3;
       const realCount = parseInt(mkt === 1 ? m1RealCount : m2RealCount) || 2;
 
-      /* ── TUW LOCKED: after pattern-matched loss, trade every tick until win ── */
-      if (tuwLocked) {
-        setBotStatus('recovery_tuw');
-        tradeSymbol = cfg.symbol;
-        // No pattern check, just trade immediately on next tick
-      }
-      /* ── TRADE UNTIL WIN RECOVERY (no strategy) ── */
-      else if (inRecovery && patternAction === 'tradeUntilWin' && !strategyEnabled) {
-        setBotStatus('recovery_tuw');
-        tradeSymbol = cfg.symbol;
-        // Trade every tick until win
-      }
       /* ── Strategy gating for M2 (recovery) ── */
-      else if (inRecovery && strategyEnabled) {
+      if (inRecovery && strategyEnabled) {
         setBotStatus('waiting_pattern');
 
         let matched = false;
