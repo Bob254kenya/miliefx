@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { copyTradingService } from '@/services/copy-trading-service';
 import { getLastDigit } from '@/services/analysis';
@@ -15,6 +15,7 @@ import {
   Play, StopCircle, Trash2, Scan,
   Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload,
 } from 'lucide-react';
+import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
 /* ───── CONSTANTS ───── */
 const SCANNER_MARKETS: { symbol: string; name: string }[] = [
@@ -635,6 +636,62 @@ export default function ProScannerBot() {
 
   const status = statusConfig[botStatus];
   const winRate = wins + losses > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '0.0';
+
+  /* ── Build config object for preview ── */
+  const currentConfig = useMemo<BotConfig>(() => ({
+    version: 1,
+    m1: { enabled: m1Enabled, symbol: m1Symbol, contract: m1Contract, barrier: m1Barrier, hookEnabled: m1HookEnabled, virtualLossCount: m1VirtualLossCount, realCount: m1RealCount },
+    m2: { enabled: m2Enabled, symbol: m2Symbol, contract: m2Contract, barrier: m2Barrier, hookEnabled: m2HookEnabled, virtualLossCount: m2VirtualLossCount, realCount: m2RealCount },
+    risk: { stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss },
+    strategy: { m1Enabled: strategyM1Enabled, m2Enabled: strategyEnabled, m1Mode: m1StrategyMode, m2Mode: m2StrategyMode, m1Pattern, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2Pattern, m2DigitCondition, m2DigitCompare, m2DigitWindow },
+    scanner: { active: scannerActive },
+    turbo: { enabled: turboMode },
+  }), [m1Enabled, m1Symbol, m1Contract, m1Barrier, m1HookEnabled, m1VirtualLossCount, m1RealCount, m2Enabled, m2Symbol, m2Contract, m2Barrier, m2HookEnabled, m2VirtualLossCount, m2RealCount, stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, strategyM1Enabled, strategyEnabled, m1StrategyMode, m2StrategyMode, m1Pattern, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2Pattern, m2DigitCondition, m2DigitCompare, m2DigitWindow, scannerActive, turboMode]);
+
+  const handleLoadConfig = useCallback((cfg: BotConfig) => {
+    if (cfg.m1) {
+      if (cfg.m1.enabled !== undefined) setM1Enabled(cfg.m1.enabled);
+      if (cfg.m1.symbol) setM1Symbol(cfg.m1.symbol);
+      if (cfg.m1.contract) setM1Contract(cfg.m1.contract);
+      if (cfg.m1.barrier) setM1Barrier(cfg.m1.barrier);
+      if (cfg.m1.hookEnabled !== undefined) setM1HookEnabled(cfg.m1.hookEnabled);
+      if (cfg.m1.virtualLossCount) setM1VirtualLossCount(cfg.m1.virtualLossCount);
+      if (cfg.m1.realCount) setM1RealCount(cfg.m1.realCount);
+    }
+    if (cfg.m2) {
+      if (cfg.m2.enabled !== undefined) setM2Enabled(cfg.m2.enabled);
+      if (cfg.m2.symbol) setM2Symbol(cfg.m2.symbol);
+      if (cfg.m2.contract) setM2Contract(cfg.m2.contract);
+      if (cfg.m2.barrier) setM2Barrier(cfg.m2.barrier);
+      if (cfg.m2.hookEnabled !== undefined) setM2HookEnabled(cfg.m2.hookEnabled);
+      if (cfg.m2.virtualLossCount) setM2VirtualLossCount(cfg.m2.virtualLossCount);
+      if (cfg.m2.realCount) setM2RealCount(cfg.m2.realCount);
+    }
+    if (cfg.risk) {
+      if (cfg.risk.stake) setStake(cfg.risk.stake);
+      if (cfg.risk.martingaleOn !== undefined) setMartingaleOn(cfg.risk.martingaleOn);
+      if (cfg.risk.martingaleMultiplier) setMartingaleMultiplier(cfg.risk.martingaleMultiplier);
+      if (cfg.risk.martingaleMaxSteps) setMartingaleMaxSteps(cfg.risk.martingaleMaxSteps);
+      if (cfg.risk.takeProfit) setTakeProfit(cfg.risk.takeProfit);
+      if (cfg.risk.stopLoss) setStopLoss(cfg.risk.stopLoss);
+    }
+    if (cfg.strategy) {
+      if (cfg.strategy.m1Enabled !== undefined) setStrategyM1Enabled(cfg.strategy.m1Enabled);
+      if (cfg.strategy.m2Enabled !== undefined) setStrategyEnabled(cfg.strategy.m2Enabled);
+      if (cfg.strategy.m1Mode) setM1StrategyMode(cfg.strategy.m1Mode);
+      if (cfg.strategy.m2Mode) setM2StrategyMode(cfg.strategy.m2Mode);
+      if (cfg.strategy.m1Pattern !== undefined) setM1Pattern(cfg.strategy.m1Pattern);
+      if (cfg.strategy.m1DigitCondition) setM1DigitCondition(cfg.strategy.m1DigitCondition);
+      if (cfg.strategy.m1DigitCompare) setM1DigitCompare(cfg.strategy.m1DigitCompare);
+      if (cfg.strategy.m1DigitWindow) setM1DigitWindow(cfg.strategy.m1DigitWindow);
+      if (cfg.strategy.m2Pattern !== undefined) setM2Pattern(cfg.strategy.m2Pattern);
+      if (cfg.strategy.m2DigitCondition) setM2DigitCondition(cfg.strategy.m2DigitCondition);
+      if (cfg.strategy.m2DigitCompare) setM2DigitCompare(cfg.strategy.m2DigitCompare);
+      if (cfg.strategy.m2DigitWindow) setM2DigitWindow(cfg.strategy.m2DigitWindow);
+    }
+    if (cfg.scanner?.active !== undefined) setScannerActive(cfg.scanner.active);
+    if (cfg.turbo?.enabled !== undefined) setTurboMode(cfg.turbo.enabled);
+  }, []);
 
   const activeSymbol = currentMarket === 1 ? m1Symbol : m2Symbol;
   const activeDigits = (tickMapRef.current.get(activeSymbol) || []).slice(-8);
@@ -1301,6 +1358,8 @@ export default function ProScannerBot() {
               </table>
             </div>
           </div>
+          {/* Bot Configuration Preview */}
+          <ConfigPreview config={currentConfig} onLoadConfig={handleLoadConfig} disabled={isRunning} />
         </div>
       </div>
     </div>
