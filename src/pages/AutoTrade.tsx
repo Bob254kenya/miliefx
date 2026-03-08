@@ -277,7 +277,7 @@ export default function AutoTrade() {
           if (activeBotType === 'even_odd' || activeBotType === 'matches_differs' || activeBotType === 'rise_fall') {
             alternateToggle = !alternateToggle;
           }
-          if (config.martingale) stake *= mult;
+          if (config.martingale) stake = Math.round(stake * mult * 100) / 100;
         }
         setCurrentStake(stake);
 
