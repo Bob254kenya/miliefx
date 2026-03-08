@@ -14,7 +14,7 @@ export default function LoginPage() {
       {/* Background image */}
       <div className="absolute inset-0 z-0">
         <img src={bgHero} alt="" className="w-full h-full object-cover" />
-        <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" />
+        <div className="absolute inset-0 bg-background/40" />
       </div>
 
       <motion.div
