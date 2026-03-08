@@ -220,7 +220,18 @@ function calcMACDFull(prices: number[]) {
   return { macd, signal, histogram: macd - signal };
 }
 
+interface TradeRecord {
+  id: string;
+  time: number;
+  type: string;
+  stake: number;
+  profit: number;
+  status: 'won' | 'lost' | 'open';
+  symbol: string;
+}
+
 export default function TradingChart() {
+  const { isAuthorized } = useAuth();
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
   const [timeframe, setTimeframe] = useState('1m');
@@ -236,7 +247,6 @@ export default function TradingChart() {
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
   const dragStartOffset = useRef(0);
-  // Price axis drag for candle size
   const isPriceAxisDragging = useRef(false);
   const priceAxisStartY = useRef(0);
   const priceAxisStartWidth = useRef(7);
@@ -248,6 +258,12 @@ export default function TradingChart() {
   const [durationUnit, setDurationUnit] = useState('t');
   const [tradeStake, setTradeStake] = useState('1.00');
   const [selectedDigit, setSelectedDigit] = useState<number | null>(null);
+  const [isTrading, setIsTrading] = useState(false);
+
+  // Bot progress
+  const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const lastSpokenSignal = useRef('');
 
   /* ── Load history + subscribe ── */
   useEffect(() => {
