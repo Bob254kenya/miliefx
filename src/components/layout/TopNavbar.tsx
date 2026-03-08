@@ -31,7 +31,7 @@ const navItems = [
 export default function TopNavbar() {
   const { activeAccount, accounts, balance, logout, switchAccount } = useAuth();
   const { isUnlocked, remaining } = useLossRequirement();
-  const [mobileOpen, setMobileOpen] = useState(false);
+  
 
   const handleResetBalance = async () => {
     try {
