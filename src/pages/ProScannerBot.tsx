@@ -262,20 +262,25 @@ export default function ProScannerBot() {
     });
   }, [digitCondition, digitCompare, digitWindow]);
 
-  /* ── Check strategy condition ── */
-  const checkCondition = useCallback((symbol: string): boolean => {
-    if (!strategyEnabled) return true;
+  /* ── Check strategy condition (raw — ignores enabled flags) ── */
+  const checkStrategyCondition = useCallback((symbol: string): boolean => {
     if (strategyMode === 'pattern') return checkPatternMatch(symbol);
     return checkDigitCondition(symbol);
-  }, [strategyEnabled, strategyMode, checkPatternMatch, checkDigitCondition]);
+  }, [strategyMode, checkPatternMatch, checkDigitCondition]);
+
+  /* ── Check condition with M2 flag (legacy compat) ── */
+  const checkCondition = useCallback((symbol: string): boolean => {
+    if (!strategyEnabled) return true;
+    return checkStrategyCondition(symbol);
+  }, [strategyEnabled, checkStrategyCondition]);
 
   /* ── Find scanner match across all markets ── */
   const findScannerMatch = useCallback((): string | null => {
     for (const m of SCANNER_MARKETS) {
-      if (checkCondition(m.symbol)) return m.symbol;
+      if (checkStrategyCondition(m.symbol)) return m.symbol;
     }
     return null;
-  }, [checkCondition]);
+  }, [checkStrategyCondition]);
 
   /* ── Add log entry ── */
   const addLog = useCallback((id: number, entry: Omit<LogEntry, 'id'>) => {
@@ -374,7 +379,7 @@ export default function ProScannerBot() {
             const found = findScannerMatch();
             if (found) { matched = true; matchedSymbol = found; }
           } else {
-            if (checkCondition(cfg.symbol)) { matched = true; matchedSymbol = cfg.symbol; }
+            if (checkStrategyCondition(cfg.symbol)) { matched = true; matchedSymbol = cfg.symbol; }
           }
           if (!matched) {
             await new Promise<void>(r => {
