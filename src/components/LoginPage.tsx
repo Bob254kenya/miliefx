@@ -11,10 +11,12 @@ export default function LoginPage() {
   const affiliateUrl = 'https://partners.deriv.com/rx?sidc=12B9BBE9-886B-4B0A-A906-B5FC911F276A&utm_campaign=dynamicworks&utm_medium=affiliate&utm_source=CU15839';
 
   return (
-    <div className="min-h-screen bg-background trading-grid flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Background glow effects */}
-      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-primary/5 blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-primary/5 blur-[120px] pointer-events-none" />
+    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+      {/* Background image */}
+      <div className="absolute inset-0 z-0">
+        <img src={bgHero} alt="" className="w-full h-full object-cover" />
+        <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" />
+      </div>
 
       <motion.div
         initial={{ opacity: 0, y: 30 }}
