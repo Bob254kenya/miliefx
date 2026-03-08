@@ -328,7 +328,7 @@ export default function TradingChart() {
   const currentPrice = prices[prices.length - 1] || 0;
   const lastDigit = getLastDigit(currentPrice);
   const digits = useMemo(() => tfPrices.map(getLastDigit), [tfPrices]);
-  const last18 = useMemo(() => digits.slice(-18), [digits]);
+  const last26 = useMemo(() => digits.slice(-26), [digits]);
   const { frequency, percentages, mostCommon, leastCommon } = useMemo(() => analyzeDigits(tfPrices), [tfPrices]);
 
   // Indicators
