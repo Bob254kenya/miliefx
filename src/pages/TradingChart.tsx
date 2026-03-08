@@ -715,9 +715,129 @@ export default function TradingChart() {
   const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
   const marketName = ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol;
 
-  const handleBuy = (side: 'buy' | 'sell') => {
-    toast.info(`${side === 'buy' ? '📈 BUY' : '📉 SELL'} order — ${CONTRACT_TYPES.find(c => c.value === contractType)?.label} — Stake $${tradeStake}`);
+  // Multi-timeframe Rise/Fall predictions
+  const multiTfPredictions = useMemo(() => {
+    const tfList = ['1m', '3m', '5m', '15m', '30m', '1h', '4h'];
+    return tfList.map(tf => {
+      const n = TF_TICKS[tf] || 1000;
+      const p = prices.slice(-n);
+      if (p.length < 30) return { tf, direction: 'N/A' as const, confidence: 0, rsi: 50, trend: 0 };
+      const tfRsi = calculateRSI(p, 14);
+      const ema12 = calcEMA(p, 12);
+      const ema26 = calcEMA(p, 26);
+      const trend = ema12 - ema26;
+      const last = p[p.length - 1];
+      const sma = p.slice(-20).reduce((a, b) => a + b, 0) / Math.min(20, p.length);
+      const aboveSma = last > sma;
+      
+      // Score: RSI + trend + SMA position
+      let score = 50;
+      if (tfRsi < 30) score += 25; else if (tfRsi < 45) score += 10;
+      else if (tfRsi > 70) score -= 25; else if (tfRsi > 55) score -= 10;
+      if (trend > 0) score += 15; else score -= 15;
+      if (aboveSma) score += 10; else score -= 10;
+      
+      const direction = score >= 50 ? 'Rise' : 'Fall';
+      const confidence = Math.min(95, Math.max(15, Math.round(Math.abs(score - 50) * 2 + 40)));
+      return { tf, direction, confidence, rsi: tfRsi, trend };
+    });
+  }, [prices]);
+
+  // Voice AI announcements
+  const speak = useCallback((text: string) => {
+    if (!voiceEnabled || !window.speechSynthesis) return;
+    if (lastSpokenSignal.current === text) return;
+    lastSpokenSignal.current = text;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.1;
+    utterance.pitch = 1;
+    utterance.volume = 0.8;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  }, [voiceEnabled]);
+
+  // Announce strong signals
+  useEffect(() => {
+    if (!voiceEnabled) return;
+    const strongSignals = multiTfPredictions.filter(p => p.confidence >= 75);
+    if (strongSignals.length >= 3) {
+      const direction = strongSignals[0].direction;
+      const tfs = strongSignals.map(s => s.tf).join(', ');
+      speak(`Strong ${direction} signal detected across ${tfs} timeframes with over 75% confidence`);
+    }
+  }, [multiTfPredictions, voiceEnabled, speak]);
+
+  // Trade execution
+  const handleBuy = async (side: 'buy' | 'sell') => {
+    if (!isAuthorized) {
+      toast.error('Please login to your Deriv account first');
+      return;
+    }
+    if (isTrading) return;
+    setIsTrading(true);
+
+    const ct = side === 'buy' ? contractType : 
+      (contractType === 'CALL' ? 'PUT' : contractType === 'PUT' ? 'CALL' : contractType);
+
+    const params: any = {
+      contract_type: ct,
+      symbol,
+      duration: parseInt(duration),
+      duration_unit: durationUnit,
+      basis: 'stake',
+      amount: parseFloat(tradeStake),
+    };
+
+    // Add barrier for digit contracts
+    if (['DIGITMATCH', 'DIGITDIFF'].includes(ct)) {
+      params.barrier = prediction;
+    } else if (ct === 'DIGITOVER') {
+      params.barrier = prediction;
+    } else if (ct === 'DIGITUNDER') {
+      params.barrier = prediction;
+    }
+
+    try {
+      toast.info(`⏳ Placing ${ct} trade... $${tradeStake}`);
+      const { contractId, buyPrice } = await derivApi.buyContract(params);
+      
+      const newTrade: TradeRecord = {
+        id: contractId,
+        time: Date.now(),
+        type: ct,
+        stake: parseFloat(tradeStake),
+        profit: 0,
+        status: 'open',
+        symbol,
+      };
+      setTradeHistory(prev => [newTrade, ...prev].slice(0, 50));
+
+      // Wait for result
+      const result = await derivApi.waitForContractResult(contractId);
+      setTradeHistory(prev => prev.map(t => 
+        t.id === contractId ? { ...t, profit: result.profit, status: result.status } : t
+      ));
+
+      if (result.status === 'won') {
+        toast.success(`✅ WON +$${result.profit.toFixed(2)}`);
+        if (voiceEnabled) speak(`Trade won. Profit ${result.profit.toFixed(2)} dollars`);
+      } else {
+        toast.error(`❌ LOST -$${Math.abs(result.profit).toFixed(2)}`);
+        if (voiceEnabled) speak(`Trade lost. Loss ${Math.abs(result.profit).toFixed(2)} dollars`);
+      }
+    } catch (err: any) {
+      toast.error(`Trade failed: ${err.message}`);
+    } finally {
+      setIsTrading(false);
+    }
   };
+
+  // Bot stats
+  const totalTrades = tradeHistory.filter(t => t.status !== 'open').length;
+  const wins = tradeHistory.filter(t => t.status === 'won').length;
+  const losses = tradeHistory.filter(t => t.status === 'lost').length;
+  const totalProfit = tradeHistory.reduce((s, t) => s + t.profit, 0);
+  const winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
 
   return (
     <div className="space-y-4 max-w-[1920px] mx-auto">
