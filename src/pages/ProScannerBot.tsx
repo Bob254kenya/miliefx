@@ -1092,15 +1092,24 @@ export default function ProScannerBot() {
           {/* Save / Load Config */}
           <div className="bg-card border border-border rounded-xl p-2.5 space-y-1.5">
             <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">💾 Bot Config</h3>
+            <Input
+              placeholder="Enter bot name before saving..."
+              value={botName}
+              onChange={e => setBotName(e.target.value)}
+              disabled={isRunning}
+              className="h-7 text-xs"
+            />
             <div className="grid grid-cols-2 gap-1.5">
               <Button
                 size="sm"
                 variant="outline"
                 className="h-8 text-[10px] gap-1"
-                disabled={isRunning}
+                disabled={isRunning || !botName.trim()}
                 onClick={() => {
+                  const safeName = botName.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
                   const config = {
                     version: 1,
+                    botName: botName.trim(),
                     m1: { enabled: m1Enabled, symbol: m1Symbol, contract: m1Contract, barrier: m1Barrier, hookEnabled: m1HookEnabled, virtualLossCount: m1VirtualLossCount, realCount: m1RealCount },
                     m2: { enabled: m2Enabled, symbol: m2Symbol, contract: m2Contract, barrier: m2Barrier, hookEnabled: m2HookEnabled, virtualLossCount: m2VirtualLossCount, realCount: m2RealCount },
                     risk: { stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss },
@@ -1118,9 +1127,9 @@ export default function ProScannerBot() {
                   const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement('a');
-                  a.href = url; a.download = `bot_config_${ts}.json`; a.click();
+                  a.href = url; a.download = `${safeName}_${ts}.json`; a.click();
                   URL.revokeObjectURL(url);
-                  toast.success('Config saved!');
+                  toast.success(`Config "${botName.trim()}" saved!`);
                 }}
               >
                 <Download className="w-3 h-3" /> Save Config
