@@ -219,6 +219,13 @@ export default function TradingChart() {
   const subscribedRef = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Zoom & pan state
+  const [candleWidth, setCandleWidth] = useState(7); // px per candle (zoom)
+  const [scrollOffset, setScrollOffset] = useState(0); // candles from right edge
+  const isDragging = useRef(false);
+  const dragStartX = useRef(0);
+  const dragStartOffset = useRef(0);
+
   // Trade panel
   const [contractType, setContractType] = useState('CALL');
   const [prediction, setPrediction] = useState('5');
