@@ -138,7 +138,6 @@ export default function AutoTrade() {
 
     while (runningRef.current && tradeCount < maxTradeCount) {
       if (pausedRef.current) { await new Promise(r => setTimeout(r, 500)); continue; }
-      if (balance < stake) { toast.error('Insufficient balance'); runningRef.current = false; break; }
 
       try {
         const mkt = config.market;
