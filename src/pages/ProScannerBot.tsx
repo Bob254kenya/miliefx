@@ -360,10 +360,10 @@ export default function ProScannerBot() {
         let matchedSymbol = '';
         while (runningRef.current && !matched) {
           if (scannerActive) {
-            const found = findScannerMatch();
+            const found = findScannerMatchForMarket(2);
             if (found) { matched = true; matchedSymbol = found; }
           } else {
-            if (checkCondition(cfg.symbol)) { matched = true; matchedSymbol = cfg.symbol; }
+            if (checkStrategyForMarket(cfg.symbol, 2)) { matched = true; matchedSymbol = cfg.symbol; }
           }
           if (!matched) {
             await new Promise<void>(r => {
@@ -386,10 +386,10 @@ export default function ProScannerBot() {
         let matchedSymbol = '';
         while (runningRef.current && !matched) {
           if (scannerActive) {
-            const found = findScannerMatch();
+            const found = findScannerMatchForMarket(1);
             if (found) { matched = true; matchedSymbol = found; }
           } else {
-            if (checkStrategyCondition(cfg.symbol)) { matched = true; matchedSymbol = cfg.symbol; }
+            if (checkStrategyForMarket(cfg.symbol, 1)) { matched = true; matchedSymbol = cfg.symbol; }
           }
           if (!matched) {
             await new Promise<void>(r => {
