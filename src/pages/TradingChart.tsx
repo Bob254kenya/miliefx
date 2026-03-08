@@ -850,7 +850,7 @@ export default function TradingChart() {
           if (voiceEnabled && trades % 5 === 0) speak(`Trade ${trades} won. Total profit ${pnl.toFixed(2)}`);
         } else {
           losses++; consLosses++;
-          stake = mart ? stake * mult : baseStake;
+          stake = mart ? Math.round(stake * mult * 100) / 100 : baseStake;
           if (voiceEnabled) speak(`Loss ${consLosses}. ${mart ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
         }
         setBotStats({ trades, wins, losses, pnl, currentStake: stake, consecutiveLosses: consLosses });
