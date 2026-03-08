@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { NavLink } from '@/components/NavLink';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLossRequirement } from '@/hooks/useLossRequirement';
@@ -31,7 +30,6 @@ const navItems = [
 export default function TopNavbar() {
   const { activeAccount, accounts, balance, logout, switchAccount } = useAuth();
   const { isUnlocked, remaining } = useLossRequirement();
-  
 
   const handleResetBalance = async () => {
     try {
@@ -48,13 +46,14 @@ export default function TopNavbar() {
 
   return (
     <header className="sticky top-0 z-50 bg-card/95 backdrop-blur border-b border-border">
-      <div className="flex items-center h-14 px-4 max-w-[1920px] mx-auto">
+      {/* Row 1: Logo + Balance + Account */}
+      <div className="flex items-center h-12 px-4 max-w-[1920px] mx-auto">
         {/* Logo */}
-        <div className="flex items-center gap-2 mr-6 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <div className="w-7 h-7 rounded-lg gradient-primary flex items-center justify-center">
             <Cpu className="w-3.5 h-3.5 text-primary-foreground" />
           </div>
-          <span className="font-bold text-foreground text-sm hidden sm:inline">
+          <span className="font-bold text-foreground text-sm">
             Ceoramz<span className="text-primary">Traders</span>
           </span>
           <div className="hidden sm:block ml-1">
@@ -62,23 +61,7 @@ export default function TopNavbar() {
           </div>
         </div>
 
-        {/* Nav - always visible with horizontal scroll */}
-        <nav className="flex items-center gap-1 flex-1 overflow-x-auto min-w-0 no-scrollbar">
-          {navItems.map(item => (
-            <NavLink
-              key={item.url}
-              to={item.url}
-              end={item.url === '/'}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted transition-all whitespace-nowrap shrink-0"
-              activeClassName="!text-primary !bg-primary/10 font-semibold"
-            >
-              <item.icon className="w-3.5 h-3.5" />
-              <span>{item.title}</span>
-            </NavLink>
-          ))}
-        </nav>
-
-        {/* Balance + Account (always visible, right-aligned) */}
+        {/* Balance + Account (right-aligned) */}
         <div className="flex items-center gap-2 ml-auto">
           {activeAccount && (
             <div className="flex items-center gap-2">
@@ -148,9 +131,24 @@ export default function TopNavbar() {
               </DropdownMenu>
             </div>
           )}
-
         </div>
       </div>
+
+      {/* Row 2: Navigation links */}
+      <nav className="flex items-center gap-1 px-4 pb-2 overflow-x-auto no-scrollbar max-w-[1920px] mx-auto">
+        {navItems.map(item => (
+          <NavLink
+            key={item.url}
+            to={item.url}
+            end={item.url === '/'}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted transition-all whitespace-nowrap shrink-0"
+            activeClassName="!text-primary !bg-primary/10 font-semibold"
+          >
+            <item.icon className="w-3.5 h-3.5" />
+            <span>{item.title}</span>
+          </NavLink>
+        ))}
+      </nav>
     </header>
   );
 }
