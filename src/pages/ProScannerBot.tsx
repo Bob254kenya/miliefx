@@ -126,17 +126,18 @@ export default function ProScannerBot() {
 
   /* ── Virtual Hook M1 ── */
   const [m1HookEnabled, setM1HookEnabled] = useState(false);
-  const [m1FakeCount, setM1FakeCount] = useState('3');
+  const [m1VirtualLossCount, setM1VirtualLossCount] = useState('3');
   const [m1RealCount, setM1RealCount] = useState('2');
 
   /* ── Virtual Hook M2 ── */
   const [m2HookEnabled, setM2HookEnabled] = useState(false);
-  const [m2FakeCount, setM2FakeCount] = useState('3');
+  const [m2VirtualLossCount, setM2VirtualLossCount] = useState('3');
   const [m2RealCount, setM2RealCount] = useState('2');
 
   /* ── Virtual Hook stats ── */
   const [vhFakeWins, setVhFakeWins] = useState(0);
   const [vhFakeLosses, setVhFakeLosses] = useState(0);
+  const [vhConsecLosses, setVhConsecLosses] = useState(0);
   const [vhStatus, setVhStatus] = useState<'idle' | 'waiting' | 'confirmed' | 'failed'>('idle');
 
   /* ── Risk ── */
