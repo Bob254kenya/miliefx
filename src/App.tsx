@@ -35,7 +35,7 @@ function AppRoutes() {
           <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" />
         </div>
         <motion.div
-          className="text-center flex flex-col items-center gap-6"
+          className="text-center flex flex-col items-center gap-6 relative z-10"
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5 }}
