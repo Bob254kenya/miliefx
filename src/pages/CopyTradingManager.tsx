@@ -3,7 +3,8 @@ import { motion } from 'framer-motion';
 import {
   Users, Plus, Play, Square, Trash2, Settings2, AlertTriangle,
   CheckCircle2, XCircle, Pause, RefreshCw, Upload, Download,
-  Shield, Zap, TrendingUp, DollarSign, Activity, Eye, EyeOff
+  Shield, Zap, TrendingUp, DollarSign, Activity, Eye, EyeOff,
+  Wifi, WifiOff
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,43 +30,11 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from '@/components/ui/table';
 import { toast } from 'sonner';
-
-interface Follower {
-  id: string;
-  nickname: string;
-  token: string;
-  status: 'active' | 'paused' | 'error' | 'pending';
-  balance: number;
-  currency: string;
-  landingCompany: string;
-  totalTrades: number;
-  lastError?: string;
-  createdAt: Date;
-  minBalance: number;
-  maxStakePercent: number;
-  pauseOnLosses: number;
-}
-
-interface MasterConfig {
-  adminToken: string;
-  readOnlyToken: string;
-  appId: string;
-  accountId: string;
-  copyTradingEnabled: boolean;
-}
-
-interface CopyLog {
-  id: string;
-  followerId: string;
-  followerNickname: string;
-  masterTradeId: string;
-  status: 'success' | 'failed';
-  errorMessage?: string;
-  stakeAmount: number;
-  contractType: string;
-  symbol: string;
-  timestamp: Date;
-}
+import { 
+  copyTradingService, 
+  type FollowerAccount, 
+  type CopyTradeLog 
+} from '@/services/copy-trading-service';
 
 interface RiskSettings {
   globalMinBalance: number;
@@ -76,32 +45,69 @@ interface RiskSettings {
 }
 
 export default function CopyTradingManager() {
-  const [followers, setFollowers] = useState<Follower[]>([]);
-  const [masterConfig, setMasterConfig] = useState<MasterConfig>({
-    adminToken: '',
-    readOnlyToken: '',
-    appId: '117223',
-    accountId: '',
-    copyTradingEnabled: false,
-  });
+  const [followers, setFollowers] = useState<FollowerAccount[]>([]);
+  const [copyLogs, setCopyLogs] = useState<CopyTradeLog[]>([]);
   const [riskSettings, setRiskSettings] = useState<RiskSettings>({
     globalMinBalance: 10,
-    globalMaxStakePercent: 10,
+    globalMaxStakePercent: 100,
     maxDrawdownPercent: 20,
     pauseOnConsecutiveLosses: 3,
     autoPauseOnError: true,
   });
-  const [copyLogs, setCopyLogs] = useState<CopyLog[]>([]);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [newFollower, setNewFollower] = useState({ nickname: '', token: '' });
   const [bulkTokens, setBulkTokens] = useState('');
-  const [showMasterTokens, setShowMasterTokens] = useState(false);
   const [selectedFollowers, setSelectedFollowers] = useState<Set<string>>(new Set());
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isCopyingActive, setIsCopyingActive] = useState(false);
+  const [isCopyingEnabled, setIsCopyingEnabled] = useState(copyTradingService.enabled);
+  const [isAddingFollower, setIsAddingFollower] = useState(false);
+
+  // Load initial data and subscribe to updates
+  useEffect(() => {
+    setFollowers(copyTradingService.getFollowers());
+    setCopyLogs(copyTradingService.getLogs());
+
+    const unsubFollower = copyTradingService.onFollowerUpdate((follower) => {
+      setFollowers(prev => {
+        const idx = prev.findIndex(f => f.id === follower.id);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = follower;
+          return updated;
+        }
+        return [...prev, follower];
+      });
+    });
+
+    const unsubTrade = copyTradingService.onTradeUpdate((log) => {
+      setCopyLogs(prev => {
+        const idx = prev.findIndex(l => l.id === log.id);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = log;
+          return updated;
+        }
+        return [log, ...prev].slice(0, 500);
+      });
+    });
+
+    // Load saved risk settings
+    const savedRisk = localStorage.getItem('copyTrading_risk');
+    if (savedRisk) setRiskSettings(JSON.parse(savedRisk));
+
+    return () => {
+      unsubFollower();
+      unsubTrade();
+    };
+  }, []);
+
+  // Save risk settings
+  useEffect(() => {
+    localStorage.setItem('copyTrading_risk', JSON.stringify(riskSettings));
+  }, [riskSettings]);
 
   // Stats calculations
   const activeFollowers = followers.filter(f => f.status === 'active').length;
@@ -112,39 +118,7 @@ export default function CopyTradingManager() {
     ? Math.round((copyLogs.filter(l => l.status === 'success').length / copyLogs.length) * 100) 
     : 0;
   const totalVolume = copyLogs.reduce((sum, l) => sum + l.stakeAmount, 0);
-
-  // Load data from localStorage on mount
-  useEffect(() => {
-    const savedFollowers = localStorage.getItem('copyTrading_followers');
-    const savedMaster = localStorage.getItem('copyTrading_master');
-    const savedRisk = localStorage.getItem('copyTrading_risk');
-    const savedLogs = localStorage.getItem('copyTrading_logs');
-
-    if (savedFollowers) setFollowers(JSON.parse(savedFollowers));
-    if (savedMaster) setMasterConfig(JSON.parse(savedMaster));
-    if (savedRisk) setRiskSettings(JSON.parse(savedRisk));
-    if (savedLogs) setCopyLogs(JSON.parse(savedLogs));
-  }, []);
-
-  // Save data to localStorage
-  useEffect(() => {
-    localStorage.setItem('copyTrading_followers', JSON.stringify(followers));
-  }, [followers]);
-
-  useEffect(() => {
-    localStorage.setItem('copyTrading_master', JSON.stringify(masterConfig));
-  }, [masterConfig]);
-
-  useEffect(() => {
-    localStorage.setItem('copyTrading_risk', JSON.stringify(riskSettings));
-  }, [riskSettings]);
-
-  const validateToken = async (token: string): Promise<boolean> => {
-    // Basic token format validation
-    if (!token || token.length < 10) return false;
-    // In production, would call Deriv API to validate
-    return true;
-  };
+  const totalProfit = followers.reduce((sum, f) => sum + f.totalProfit, 0);
 
   const addFollower = async () => {
     if (!newFollower.nickname.trim() || !newFollower.token.trim()) {
@@ -157,31 +131,26 @@ export default function CopyTradingManager() {
       return;
     }
 
-    const isValid = await validateToken(newFollower.token);
-    if (!isValid) {
-      toast.error('Invalid API token format');
-      return;
+    setIsAddingFollower(true);
+    try {
+      const follower = await copyTradingService.addFollower(
+        newFollower.nickname.trim(),
+        newFollower.token.trim()
+      );
+      
+      if (follower.status === 'active') {
+        toast.success(`Connected: ${follower.nickname} (${follower.loginid})`);
+      } else if (follower.status === 'error') {
+        toast.error(`Failed to connect: ${follower.lastError}`);
+      }
+      
+      setNewFollower({ nickname: '', token: '' });
+      setIsAddDialogOpen(false);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setIsAddingFollower(false);
     }
-
-    const follower: Follower = {
-      id: crypto.randomUUID(),
-      nickname: newFollower.nickname.trim(),
-      token: newFollower.token.trim(),
-      status: 'pending',
-      balance: 0,
-      currency: 'USD',
-      landingCompany: '',
-      totalTrades: 0,
-      createdAt: new Date(),
-      minBalance: riskSettings.globalMinBalance,
-      maxStakePercent: riskSettings.globalMaxStakePercent,
-      pauseOnLosses: riskSettings.pauseOnConsecutiveLosses,
-    };
-
-    setFollowers(prev => [...prev, follower]);
-    setNewFollower({ nickname: '', token: '' });
-    setIsAddDialogOpen(false);
-    toast.success(`Follower "${follower.nickname}" added`);
   };
 
   const addBulkFollowers = async () => {
@@ -197,117 +166,96 @@ export default function CopyTradingManager() {
       return;
     }
 
-    const newFollowers: Follower[] = [];
+    setIsAddingFollower(true);
+    let added = 0;
+    
     for (let i = 0; i < lines.length; i++) {
       const token = lines[i].trim();
       if (token) {
-        newFollowers.push({
-          id: crypto.randomUUID(),
-          nickname: `Follower ${followers.length + i + 1}`,
-          token,
-          status: 'pending',
-          balance: 0,
-          currency: 'USD',
-          landingCompany: '',
-          totalTrades: 0,
-          createdAt: new Date(),
-          minBalance: riskSettings.globalMinBalance,
-          maxStakePercent: riskSettings.globalMaxStakePercent,
-          pauseOnLosses: riskSettings.pauseOnConsecutiveLosses,
-        });
+        try {
+          await copyTradingService.addFollower(`Follower ${followers.length + i + 1}`, token);
+          added++;
+        } catch {}
       }
     }
 
-    setFollowers(prev => [...prev, ...newFollowers]);
+    setIsAddingFollower(false);
     setBulkTokens('');
     setIsBulkDialogOpen(false);
-    toast.success(`${newFollowers.length} followers added`);
+    toast.success(`${added} followers added`);
   };
 
   const removeFollower = (id: string) => {
+    copyTradingService.removeFollower(id);
     setFollowers(prev => prev.filter(f => f.id !== id));
     setDeleteConfirmId(null);
     toast.success('Follower removed');
   };
 
   const toggleFollowerStatus = (id: string) => {
-    setFollowers(prev => prev.map(f => {
-      if (f.id === id) {
-        const newStatus = f.status === 'active' ? 'paused' : 'active';
-        return { ...f, status: newStatus };
-      }
-      return f;
-    }));
+    const follower = followers.find(f => f.id === id);
+    if (!follower) return;
+
+    if (follower.status === 'active') {
+      copyTradingService.pauseFollower(id);
+    } else {
+      copyTradingService.resumeFollower(id);
+    }
   };
 
-  const startAllFollowers = () => {
-    setFollowers(prev => prev.map(f => ({
-      ...f,
-      status: f.status === 'error' ? 'error' : 'active'
-    })));
-    setIsCopyingActive(true);
-    toast.success('All followers started');
+  const reconnectFollower = async (id: string) => {
+    const follower = followers.find(f => f.id === id);
+    if (!follower) return;
+
+    toast.info(`Reconnecting ${follower.nickname}...`);
+    await copyTradingService.reconnectFollower(id);
   };
 
-  const pauseAllFollowers = () => {
-    setFollowers(prev => prev.map(f => ({
-      ...f,
-      status: f.status === 'error' ? 'error' : 'paused'
-    })));
-    setIsCopyingActive(false);
-    toast.success('All followers paused');
+  const startAll = () => {
+    copyTradingService.startAll();
+    setIsCopyingEnabled(true);
+    toast.success('Copy trading started for all active followers');
+  };
+
+  const pauseAll = () => {
+    copyTradingService.pauseAll();
+    setIsCopyingEnabled(false);
+    toast.success('Copy trading paused');
   };
 
   const removeSelectedFollowers = () => {
+    selectedFollowers.forEach(id => copyTradingService.removeFollower(id));
     setFollowers(prev => prev.filter(f => !selectedFollowers.has(f.id)));
     setSelectedFollowers(new Set());
     toast.success('Selected followers removed');
   };
 
-  const enableCopyTrading = async () => {
-    if (!masterConfig.adminToken) {
-      toast.error('Master admin token required');
-      return;
-    }
-    // In production, would call Deriv API: set_settings with allow_copiers: 1
-    setMasterConfig(prev => ({ ...prev, copyTradingEnabled: true }));
-    toast.success('Copy trading enabled on master account');
-  };
-
-  const testConnection = async (followerId: string) => {
-    const follower = followers.find(f => f.id === followerId);
-    if (!follower) return;
-
-    // Simulate connection test
-    toast.info(`Testing connection for ${follower.nickname}...`);
-    setTimeout(() => {
-      setFollowers(prev => prev.map(f => {
-        if (f.id === followerId) {
-          return { ...f, status: 'active', balance: Math.random() * 1000 + 100 };
-        }
-        return f;
-      }));
-      toast.success(`${follower.nickname} connected successfully`);
-    }, 1500);
+  const toggleCopyTrading = (enabled: boolean) => {
+    copyTradingService.setEnabled(enabled);
+    setIsCopyingEnabled(enabled);
+    toast.success(enabled ? 'Copy trading enabled' : 'Copy trading disabled');
   };
 
   const filteredFollowers = followers.filter(f => {
     const matchesStatus = filterStatus === 'all' || f.status === filterStatus;
     const matchesSearch = f.nickname.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          f.loginid?.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           f.id.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesStatus && matchesSearch;
   });
 
-  const getStatusBadge = (status: Follower['status']) => {
+  const getStatusBadge = (status: FollowerAccount['status']) => {
     switch (status) {
       case 'active':
-        return <Badge className="bg-profit/20 text-profit border-profit/30"><CheckCircle2 className="w-3 h-3 mr-1" />Active</Badge>;
+        return <Badge className="bg-profit/20 text-profit border-profit/30"><Wifi className="w-3 h-3 mr-1" />Active</Badge>;
       case 'paused':
         return <Badge variant="secondary"><Pause className="w-3 h-3 mr-1" />Paused</Badge>;
       case 'error':
         return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" />Error</Badge>;
+      case 'connecting':
+        return <Badge variant="outline" className="animate-pulse"><RefreshCw className="w-3 h-3 mr-1 animate-spin" />Connecting</Badge>;
       default:
-        return <Badge variant="outline"><RefreshCw className="w-3 h-3 mr-1" />Pending</Badge>;
+        return <Badge variant="outline"><WifiOff className="w-3 h-3 mr-1" />Pending</Badge>;
     }
   };
 
@@ -324,17 +272,29 @@ export default function CopyTradingManager() {
             Manage up to 50 follower accounts with 1:1 copy trading
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-card rounded-lg px-3 py-2 border">
+            <span className="text-sm">Copy Trading</span>
+            <Switch 
+              checked={isCopyingEnabled} 
+              onCheckedChange={toggleCopyTrading}
+            />
+            {isCopyingEnabled ? (
+              <Badge className="bg-profit/20 text-profit">ON</Badge>
+            ) : (
+              <Badge variant="secondary">OFF</Badge>
+            )}
+          </div>
           <Button
-            onClick={startAllFollowers}
-            disabled={followers.length === 0 || !masterConfig.copyTradingEnabled}
+            onClick={startAll}
+            disabled={followers.length === 0}
             className="bg-profit hover:bg-profit/90"
           >
             <Play className="w-4 h-4 mr-2" />
             Start All
           </Button>
           <Button
-            onClick={pauseAllFollowers}
+            onClick={pauseAll}
             disabled={followers.length === 0}
             variant="secondary"
           >
@@ -345,7 +305,7 @@ export default function CopyTradingManager() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <Card className="bg-card/50">
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
@@ -353,7 +313,7 @@ export default function CopyTradingManager() {
                 <Users className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Active Followers</p>
+                <p className="text-xs text-muted-foreground">Active</p>
                 <p className="text-2xl font-bold">{activeFollowers}<span className="text-sm text-muted-foreground">/{followers.length}</span></p>
               </div>
             </div>
@@ -363,11 +323,11 @@ export default function CopyTradingManager() {
         <Card className="bg-card/50">
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-profit/10">
-                <Activity className="w-5 h-5 text-profit" />
+              <div className="p-2.5 rounded-xl bg-accent/50">
+                <Activity className="w-5 h-5 text-accent-foreground" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Trades Today</p>
+                <p className="text-xs text-muted-foreground">Today</p>
                 <p className="text-2xl font-bold">{totalTradesToday}</p>
               </div>
             </div>
@@ -377,11 +337,11 @@ export default function CopyTradingManager() {
         <Card className="bg-card/50">
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-accent/50">
-                <TrendingUp className="w-5 h-5 text-accent-foreground" />
+              <div className="p-2.5 rounded-xl bg-profit/10">
+                <TrendingUp className="w-5 h-5 text-profit" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Success Rate</p>
+                <p className="text-xs text-muted-foreground">Success</p>
                 <p className="text-2xl font-bold">{successRate}%</p>
               </div>
             </div>
@@ -395,8 +355,24 @@ export default function CopyTradingManager() {
                 <DollarSign className="w-5 h-5 text-secondary-foreground" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Total Volume</p>
-                <p className="text-2xl font-bold">${totalVolume.toFixed(2)}</p>
+                <p className="text-xs text-muted-foreground">Volume</p>
+                <p className="text-2xl font-bold">${totalVolume.toFixed(0)}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card/50">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className={`p-2.5 rounded-xl ${totalProfit >= 0 ? 'bg-profit/10' : 'bg-loss/10'}`}>
+                <Zap className={`w-5 h-5 ${totalProfit >= 0 ? 'text-profit' : 'text-loss'}`} />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Total P/L</p>
+                <p className={`text-2xl font-bold ${totalProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
+                  ${totalProfit.toFixed(2)}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -405,11 +381,10 @@ export default function CopyTradingManager() {
 
       {/* Main Tabs */}
       <Tabs defaultValue="followers" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
-          <TabsTrigger value="followers">Followers</TabsTrigger>
-          <TabsTrigger value="master">Master Config</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-3 lg:w-auto lg:inline-grid">
+          <TabsTrigger value="followers">Followers ({followers.length})</TabsTrigger>
           <TabsTrigger value="risk">Risk Settings</TabsTrigger>
-          <TabsTrigger value="logs">Activity Logs</TabsTrigger>
+          <TabsTrigger value="logs">Activity ({copyLogs.length})</TabsTrigger>
         </TabsList>
 
         {/* Followers Tab */}
@@ -428,7 +403,8 @@ export default function CopyTradingManager() {
                   <DialogHeader>
                     <DialogTitle>Add New Follower</DialogTitle>
                     <DialogDescription>
-                      Enter the follower's nickname and Deriv API token (Trade scope required)
+                      Enter the follower's nickname and Deriv API token (Trade scope required). 
+                      The token will be validated and connected immediately.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4 py-4">
@@ -455,7 +431,16 @@ export default function CopyTradingManager() {
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
-                    <Button onClick={addFollower}>Add Follower</Button>
+                    <Button onClick={addFollower} disabled={isAddingFollower}>
+                      {isAddingFollower ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          Connecting...
+                        </>
+                      ) : (
+                        'Add & Connect'
+                      )}
+                    </Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -484,7 +469,9 @@ export default function CopyTradingManager() {
                   </div>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setIsBulkDialogOpen(false)}>Cancel</Button>
-                    <Button onClick={addBulkFollowers}>Import All</Button>
+                    <Button onClick={addBulkFollowers} disabled={isAddingFollower}>
+                      {isAddingFollower ? 'Importing...' : 'Import All'}
+                    </Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -499,17 +486,17 @@ export default function CopyTradingManager() {
 
             <div className="flex gap-2 w-full sm:w-auto">
               <Input
-                placeholder="Search followers..."
-                className="w-full sm:w-48"
+                placeholder="Search..."
+                className="w-full sm:w-40"
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
               />
               <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger className="w-32">
+                <SelectTrigger className="w-28">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="all">All</SelectItem>
                   <SelectItem value="active">Active</SelectItem>
                   <SelectItem value="paused">Paused</SelectItem>
                   <SelectItem value="error">Error</SelectItem>
@@ -521,11 +508,11 @@ export default function CopyTradingManager() {
 
           {/* Followers Table */}
           <Card>
-            <ScrollArea className="h-[400px]">
+            <ScrollArea className="h-[450px]">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-12">
+                    <TableHead className="w-10">
                       <input
                         type="checkbox"
                         className="rounded"
@@ -539,83 +526,120 @@ export default function CopyTradingManager() {
                         }}
                       />
                     </TableHead>
-                    <TableHead>Nickname</TableHead>
+                    <TableHead>Account</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Balance</TableHead>
                     <TableHead>Trades</TableHead>
-                    <TableHead>Last Error</TableHead>
+                    <TableHead>P/L</TableHead>
+                    <TableHead>Win Rate</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredFollowers.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center py-12 text-muted-foreground">
+                      <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
                         {followers.length === 0 
                           ? "No followers added yet. Click 'Add Follower' to get started."
                           : "No followers match your filters."}
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredFollowers.map(follower => (
-                      <TableRow key={follower.id}>
-                        <TableCell>
-                          <input
-                            type="checkbox"
-                            className="rounded"
-                            checked={selectedFollowers.has(follower.id)}
-                            onChange={e => {
-                              const newSet = new Set(selectedFollowers);
-                              if (e.target.checked) {
-                                newSet.add(follower.id);
-                              } else {
-                                newSet.delete(follower.id);
-                              }
-                              setSelectedFollowers(newSet);
-                            }}
-                          />
-                        </TableCell>
-                        <TableCell className="font-medium">{follower.nickname}</TableCell>
-                        <TableCell>{getStatusBadge(follower.status)}</TableCell>
-                        <TableCell className="font-mono">
-                          ${follower.balance.toFixed(2)} {follower.currency}
-                        </TableCell>
-                        <TableCell>{follower.totalTrades}</TableCell>
-                        <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground">
-                          {follower.lastError || '—'}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => testConnection(follower.id)}
-                            >
-                              <RefreshCw className="w-3.5 h-3.5" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => toggleFollowerStatus(follower.id)}
-                            >
-                              {follower.status === 'active' ? (
-                                <Pause className="w-3.5 h-3.5" />
-                              ) : (
-                                <Play className="w-3.5 h-3.5" />
+                    filteredFollowers.map(follower => {
+                      const winRate = follower.totalTrades > 0 
+                        ? Math.round((follower.wins / follower.totalTrades) * 100) 
+                        : 0;
+                      return (
+                        <TableRow key={follower.id}>
+                          <TableCell>
+                            <input
+                              type="checkbox"
+                              className="rounded"
+                              checked={selectedFollowers.has(follower.id)}
+                              onChange={e => {
+                                const newSet = new Set(selectedFollowers);
+                                if (e.target.checked) {
+                                  newSet.add(follower.id);
+                                } else {
+                                  newSet.delete(follower.id);
+                                }
+                                setSelectedFollowers(newSet);
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{follower.nickname}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {follower.loginid || 'Not connected'} 
+                                {follower.isVirtual && <span className="ml-1">🎮</span>}
+                              </p>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div className="space-y-1">
+                              {getStatusBadge(follower.status)}
+                              {follower.lastError && (
+                                <p className="text-[10px] text-loss max-w-[120px] truncate">
+                                  {follower.lastError}
+                                </p>
                               )}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="text-destructive hover:text-destructive"
-                              onClick={() => setDeleteConfirmId(follower.id)}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-mono font-medium">
+                            ${follower.balance.toFixed(2)}
+                          </TableCell>
+                          <TableCell>{follower.totalTrades}</TableCell>
+                          <TableCell className={`font-mono font-medium ${follower.totalProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
+                            {follower.totalProfit >= 0 ? '+' : ''}${follower.totalProfit.toFixed(2)}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <div className="w-12 h-1.5 rounded-full bg-muted overflow-hidden">
+                                <div 
+                                  className="h-full bg-profit rounded-full" 
+                                  style={{ width: `${winRate}%` }}
+                                />
+                              </div>
+                              <span className="text-xs">{winRate}%</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-1">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => reconnectFollower(follower.id)}
+                                title="Reconnect"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => toggleFollowerStatus(follower.id)}
+                                title={follower.status === 'active' ? 'Pause' : 'Resume'}
+                              >
+                                {follower.status === 'active' ? (
+                                  <Pause className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Play className="w-3.5 h-3.5" />
+                                )}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-destructive hover:text-destructive"
+                                onClick={() => setDeleteConfirmId(follower.id)}
+                                title="Remove"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
                   )}
                 </TableBody>
               </Table>
@@ -623,106 +647,9 @@ export default function CopyTradingManager() {
           </Card>
 
           <p className="text-xs text-muted-foreground text-center">
-            {followers.length}/50 follower slots used
+            {followers.length}/50 follower slots used • 
+            {isCopyingEnabled ? ' ✅ Copy trading is ENABLED - trades will be copied' : ' ⏸️ Copy trading is PAUSED'}
           </p>
-        </TabsContent>
-
-        {/* Master Config Tab */}
-        <TabsContent value="master" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Shield className="w-5 h-5 text-primary" />
-                Master Account Configuration
-              </CardTitle>
-              <CardDescription>
-                Configure your master trader account to enable copy trading
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Master Admin Token</Label>
-                  <div className="relative">
-                    <Input
-                      type={showMasterTokens ? 'text' : 'password'}
-                      placeholder="Admin scope token"
-                      value={masterConfig.adminToken}
-                      onChange={e => setMasterConfig(prev => ({ ...prev, adminToken: e.target.value }))}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="absolute right-1 top-1 h-8 w-8 p-0"
-                      onClick={() => setShowMasterTokens(!showMasterTokens)}
-                    >
-                      {showMasterTokens ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">Required to enable copy trading</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Master Read-Only Token</Label>
-                  <Input
-                    type={showMasterTokens ? 'text' : 'password'}
-                    placeholder="Read scope token"
-                    value={masterConfig.readOnlyToken}
-                    onChange={e => setMasterConfig(prev => ({ ...prev, readOnlyToken: e.target.value }))}
-                  />
-                  <p className="text-xs text-muted-foreground">Shared with followers for copying</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Deriv App ID</Label>
-                  <Input
-                    placeholder="App ID from developers.deriv.com"
-                    value={masterConfig.appId}
-                    onChange={e => setMasterConfig(prev => ({ ...prev, appId: e.target.value }))}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Master Account ID</Label>
-                  <Input
-                    placeholder="e.g., CR1234567"
-                    value={masterConfig.accountId}
-                    onChange={e => setMasterConfig(prev => ({ ...prev, accountId: e.target.value }))}
-                  />
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <Label className="text-base">Copy Trading Status</Label>
-                  <p className="text-sm text-muted-foreground">
-                    {masterConfig.copyTradingEnabled 
-                      ? 'Copy trading is enabled. Followers can attach to your account.'
-                      : 'Enable copy trading to allow followers to copy your trades.'}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3">
-                  {masterConfig.copyTradingEnabled ? (
-                    <Badge className="bg-profit/20 text-profit">
-                      <CheckCircle2 className="w-3 h-3 mr-1" />
-                      Enabled
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary">Disabled</Badge>
-                  )}
-                  <Button 
-                    onClick={enableCopyTrading}
-                    disabled={masterConfig.copyTradingEnabled || !masterConfig.adminToken}
-                  >
-                    <Zap className="w-4 h-4 mr-2" />
-                    Enable Copy Trading
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
 
         {/* Risk Settings Tab */}
@@ -740,7 +667,7 @@ export default function CopyTradingManager() {
             <CardContent className="space-y-6">
               <div className="grid gap-6 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label>Minimum Balance Requirement ($)</Label>
+                  <Label>Minimum Balance ($)</Label>
                   <Input
                     type="number"
                     value={riskSettings.globalMinBalance}
@@ -750,12 +677,12 @@ export default function CopyTradingManager() {
                     }))}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Followers below this balance will be auto-paused
+                    Followers below this won't copy trades
                   </p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Maximum Stake (% of balance)</Label>
+                  <Label>Max Stake (% of balance)</Label>
                   <Input
                     type="number"
                     max={100}
@@ -766,7 +693,7 @@ export default function CopyTradingManager() {
                     }))}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Maximum stake per trade as percentage of follower balance
+                    Cap stake as % of follower balance
                   </p>
                 </div>
 
@@ -782,12 +709,12 @@ export default function CopyTradingManager() {
                     }))}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Stop copying if follower drawdown exceeds this
+                    Auto-pause if drawdown exceeds this
                   </p>
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Pause After Consecutive Losses</Label>
+                  <Label>Pause After Losses</Label>
                   <Select 
                     value={String(riskSettings.pauseOnConsecutiveLosses)}
                     onValueChange={v => setRiskSettings(prev => ({ 
@@ -837,13 +764,12 @@ export default function CopyTradingManager() {
         {/* Logs Tab */}
         <TabsContent value="logs" className="space-y-4">
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
               <div>
-                <CardTitle className="flex items-center gap-2">
+                <CardTitle className="flex items-center gap-2 text-lg">
                   <Activity className="w-5 h-5 text-primary" />
-                  Activity Logs
+                  Live Activity
                 </CardTitle>
-                <CardDescription>Real-time copy trading activity</CardDescription>
               </div>
               <Button variant="outline" size="sm">
                 <Download className="w-4 h-4 mr-2" />
@@ -851,38 +777,53 @@ export default function CopyTradingManager() {
               </Button>
             </CardHeader>
             <CardContent>
-              <ScrollArea className="h-[400px]">
+              <ScrollArea className="h-[450px]">
                 {copyLogs.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                     <Activity className="w-12 h-12 mb-4 opacity-20" />
                     <p>No activity yet</p>
-                    <p className="text-xs">Logs will appear here when trades are copied</p>
+                    <p className="text-xs">Logs appear here when trades are copied</p>
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     {copyLogs.map(log => (
-                      <div 
+                      <motion.div 
                         key={log.id}
-                        className="flex items-center gap-3 p-3 rounded-lg bg-muted/50"
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="flex items-center gap-3 p-2.5 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
                       >
                         {log.status === 'success' ? (
                           <CheckCircle2 className="w-4 h-4 text-profit shrink-0" />
+                        ) : log.status === 'pending' ? (
+                          <RefreshCw className="w-4 h-4 text-muted-foreground shrink-0 animate-spin" />
                         ) : (
                           <XCircle className="w-4 h-4 text-loss shrink-0" />
                         )}
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">
-                            {log.followerNickname} → {log.contractType} on {log.symbol}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Stake: ${log.stakeAmount.toFixed(2)}
-                            {log.errorMessage && <span className="text-loss ml-2">• {log.errorMessage}</span>}
-                          </p>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-sm">{log.followerNickname}</span>
+                            <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                              {log.contractType}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">{log.symbol}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span>Stake: ${log.stakeAmount.toFixed(2)}</span>
+                            {log.profit !== undefined && (
+                              <span className={log.profit >= 0 ? 'text-profit' : 'text-loss'}>
+                                {log.profit >= 0 ? '+' : ''}${log.profit.toFixed(2)}
+                              </span>
+                            )}
+                            {log.errorMessage && (
+                              <span className="text-loss">• {log.errorMessage}</span>
+                            )}
+                          </div>
                         </div>
-                        <span className="text-xs text-muted-foreground shrink-0">
+                        <span className="text-[10px] text-muted-foreground shrink-0">
                           {new Date(log.timestamp).toLocaleTimeString()}
                         </span>
-                      </div>
+                      </motion.div>
                     ))}
                   </div>
                 )}
@@ -898,7 +839,7 @@ export default function CopyTradingManager() {
           <AlertDialogHeader>
             <AlertDialogTitle>Remove Follower?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will remove the follower and stop copy trading for their account. This action cannot be undone.
+              This will disconnect and remove the follower account. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
