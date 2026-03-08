@@ -598,6 +598,7 @@ export default function TradingChart() {
     ctx.font = '10px JetBrains Mono, monospace';
     const legends = [
       { label: 'BB(20,2)', color: '#BC8CFF' },
+      { label: 'SMA 20', color: '#E6B422' },
       { label: 'EMA 50', color: '#2F81F7' },
       { label: 'Support', color: '#3FB950' },
       { label: 'Resistance', color: '#F85149' },
