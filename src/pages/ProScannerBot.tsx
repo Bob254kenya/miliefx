@@ -379,49 +379,50 @@ export default function ProScannerBot() {
         tradeSymbol = cfg.symbol;
       }
 
-      /* ═══ VIRTUAL HOOK SEQUENCE ═══ */
+      /* ═══ VIRTUAL HOOK SEQUENCE — Loss-streak based ═══ */
       if (hookEnabled) {
         setBotStatus('virtual_hook');
         setVhStatus('waiting');
         setVhFakeWins(0);
         setVhFakeLosses(0);
-        let hookPassed = true;
+        setVhConsecLosses(0);
+        let consecLosses = 0;
+        let virtualTradeNum = 0;
 
-        for (let fi = 0; fi < fakeCount && runningRef.current; fi++) {
+        // Keep simulating virtual trades until we accumulate requiredLosses consecutive losses
+        while (consecLosses < requiredLosses && runningRef.current) {
+          virtualTradeNum++;
           const vLogId = ++logIdRef.current;
           const vNow = new Date().toLocaleTimeString();
           addLog(vLogId, {
             time: vNow, market: 'VH', symbol: tradeSymbol,
             contract: cfg.contract, stake: 0, martingaleStep: 0,
             exitDigit: '...', result: 'Pending', pnl: 0, balance: localBalance,
-            switchInfo: `Virtual ${fi + 1}/${fakeCount}`,
+            switchInfo: `Virtual #${virtualTradeNum} (losses: ${consecLosses}/${requiredLosses})`,
           });
 
           const vResult = await simulateVirtualContract(cfg.contract, cfg.barrier, tradeSymbol);
           if (!runningRef.current) break;
 
           if (vResult.won) {
+            // Win resets the consecutive loss counter
+            consecLosses = 0;
+            setVhConsecLosses(0);
             setVhFakeWins(prev => prev + 1);
-            updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Win', switchInfo: `Virtual WIN ${fi + 1}/${fakeCount}` });
+            updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Win', switchInfo: `Virtual WIN → Losses reset (0/${requiredLosses})` });
           } else {
+            consecLosses++;
+            setVhConsecLosses(consecLosses);
             setVhFakeLosses(prev => prev + 1);
-            updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Loss', switchInfo: `Virtual LOSS → Hook cancelled` });
-            hookPassed = false;
-            setVhStatus('failed');
-            break;
+            updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Loss', switchInfo: `Virtual LOSS (${consecLosses}/${requiredLosses})` });
           }
         }
 
         if (!runningRef.current) break;
-        if (!hookPassed) {
-          setVhStatus('failed');
-          // Return to pattern scanner
-          if (!turboMode) await new Promise(r => setTimeout(r, 500));
-          continue;
-        }
 
+        // Required consecutive losses reached → hook confirmed
         setVhStatus('confirmed');
-        toast.success(`🎣 Hook confirmed! Executing ${realCount} real trade(s)`);
+        toast.success(`🎣 Hook confirmed! ${requiredLosses} consecutive losses detected → Executing ${realCount} real trade(s)`);
 
         /* Execute real trades batch */
         for (let ri = 0; ri < realCount && runningRef.current; ri++) {
@@ -440,7 +441,9 @@ export default function ProScannerBot() {
           if (result.shouldBreak) { runningRef.current = false; break; }
         }
 
+        // Reset after real trades
         setVhStatus('idle');
+        setVhConsecLosses(0);
         if (!runningRef.current) break;
         continue;
       }
