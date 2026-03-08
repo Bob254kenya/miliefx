@@ -1064,11 +1064,23 @@ export default function ProScannerBot() {
         {/* ═══ RIGHT: Activity Log ═══ */}
         <div className="lg:col-span-4 space-y-3">
           <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="p-2.5 border-b border-border flex items-center justify-between">
+            <div className="p-2.5 border-b border-border flex items-center justify-between gap-2">
               <h3 className="text-sm font-semibold text-foreground">Activity Log</h3>
-              <Button variant="ghost" size="sm" onClick={clearLog} className="h-7 text-[10px] text-muted-foreground hover:text-loss">
-                <Trash2 className="w-3 h-3 mr-1" /> Clear
-              </Button>
+              <div className="flex items-center gap-1.5">
+                {!isRunning ? (
+                  <Button onClick={startBot} disabled={!isAuthorized || balance < parseFloat(stake)}
+                    size="sm" className="h-8 text-xs font-bold bg-profit hover:bg-profit/90 text-profit-foreground">
+                    <Play className="w-3.5 h-3.5 mr-1" /> START
+                  </Button>
+                ) : (
+                  <Button onClick={stopBot} variant="destructive" size="sm" className="h-8 text-xs font-bold">
+                    <StopCircle className="w-3.5 h-3.5 mr-1" /> STOP
+                  </Button>
+                )}
+                <Button variant="ghost" size="sm" onClick={clearLog} className="h-8 text-[10px] text-muted-foreground hover:text-loss">
+                  <Trash2 className="w-3 h-3" />
+                </Button>
+              </div>
             </div>
             <div className="max-h-[500px] overflow-auto">
               <table className="w-full text-[10px]">
