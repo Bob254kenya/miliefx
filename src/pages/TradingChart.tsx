@@ -230,11 +230,15 @@ export default function TradingChart() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Zoom & pan state
-  const [candleWidth, setCandleWidth] = useState(7); // px per candle (zoom)
-  const [scrollOffset, setScrollOffset] = useState(0); // candles from right edge
+  const [candleWidth, setCandleWidth] = useState(7);
+  const [scrollOffset, setScrollOffset] = useState(0);
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
   const dragStartOffset = useRef(0);
+  // Price axis drag for candle size
+  const isPriceAxisDragging = useRef(false);
+  const priceAxisStartY = useRef(0);
+  const priceAxisStartWidth = useRef(7);
 
   // Trade panel
   const [contractType, setContractType] = useState('CALL');
@@ -371,13 +375,29 @@ export default function TradingChart() {
     };
 
     const onMouseDown = (e: MouseEvent) => {
-      isDragging.current = true;
-      dragStartX.current = e.clientX;
-      dragStartOffset.current = scrollOffset;
-      canvas.style.cursor = 'grabbing';
+      const canvasRect = canvas.getBoundingClientRect();
+      const pAxisX = canvasRect.width - 70;
+      const localX = e.clientX - canvasRect.left;
+      if (localX >= pAxisX) {
+        isPriceAxisDragging.current = true;
+        priceAxisStartY.current = e.clientY;
+        priceAxisStartWidth.current = candleWidth;
+        canvas.style.cursor = 'ns-resize';
+      } else {
+        isDragging.current = true;
+        dragStartX.current = e.clientX;
+        dragStartOffset.current = scrollOffset;
+        canvas.style.cursor = 'grabbing';
+      }
     };
 
     const onMouseMove = (e: MouseEvent) => {
+      if (isPriceAxisDragging.current) {
+        const dy = priceAxisStartY.current - e.clientY;
+        const newWidth = Math.max(2, Math.min(24, priceAxisStartWidth.current + Math.round(dy / 8)));
+        setCandleWidth(newWidth);
+        return;
+      }
       if (!isDragging.current) return;
       const dx = dragStartX.current - e.clientX;
       const candlesPerPx = 1 / (candleWidth + 1);
@@ -387,6 +407,7 @@ export default function TradingChart() {
 
     const onMouseUp = () => {
       isDragging.current = false;
+      isPriceAxisDragging.current = false;
       canvas.style.cursor = 'crosshair';
     };
 
