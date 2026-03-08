@@ -152,7 +152,8 @@ export default function ProScannerBot() {
   /* ── Strategy ── */
   const [strategyEnabled, setStrategyEnabled] = useState(false);
   const [strategyM1Enabled, setStrategyM1Enabled] = useState(false);
-  const [strategyMode, setStrategyMode] = useState<'pattern' | 'digit'>('pattern');
+  const [m1StrategyMode, setM1StrategyMode] = useState<'pattern' | 'digit'>('pattern');
+  const [m2StrategyMode, setM2StrategyMode] = useState<'pattern' | 'digit'>('pattern');
 
   /* ── M1 pattern/digit config ── */
   const [m1Pattern, setM1Pattern] = useState('');
@@ -274,7 +275,8 @@ export default function ProScannerBot() {
 
   /* ── Check strategy condition for a specific market ── */
   const checkStrategyForMarket = useCallback((symbol: string, market: 1 | 2): boolean => {
-    if (strategyMode === 'pattern') {
+    const mode = market === 1 ? m1StrategyMode : m2StrategyMode;
+    if (mode === 'pattern') {
       const pat = market === 1 ? cleanM1Pattern : cleanM2Pattern;
       return checkPatternMatchWith(symbol, pat);
     }
@@ -282,7 +284,7 @@ export default function ProScannerBot() {
     const comp = market === 1 ? m1DigitCompare : m2DigitCompare;
     const win = market === 1 ? m1DigitWindow : m2DigitWindow;
     return checkDigitConditionWith(symbol, cond, comp, win);
-  }, [strategyMode, cleanM1Pattern, cleanM2Pattern, checkPatternMatchWith, checkDigitConditionWith, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2DigitCondition, m2DigitCompare, m2DigitWindow]);
+  }, [m1StrategyMode, m2StrategyMode, cleanM1Pattern, cleanM2Pattern, checkPatternMatchWith, checkDigitConditionWith, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2DigitCondition, m2DigitCompare, m2DigitWindow]);
 
   /* ── Find scanner match across all markets for a specific market ── */
   const findScannerMatchForMarket = useCallback((market: 1 | 2): string | null => {
@@ -317,8 +319,8 @@ export default function ProScannerBot() {
     const baseStake = parseFloat(stake);
     if (baseStake < 0.35) { toast.error('Min stake $0.35'); return; }
     if (!m1Enabled && !m2Enabled) { toast.error('Enable at least one market'); return; }
-    if (strategyM1Enabled && strategyMode === 'pattern' && !m1PatternValid) { toast.error('Invalid M1 pattern (min 2 E/O)'); return; }
-    if (strategyEnabled && strategyMode === 'pattern' && !m2PatternValid) { toast.error('Invalid M2 pattern (min 2 E/O)'); return; }
+    if (strategyM1Enabled && m1StrategyMode === 'pattern' && !m1PatternValid) { toast.error('Invalid M1 pattern (min 2 E/O)'); return; }
+    if (strategyEnabled && m2StrategyMode === 'pattern' && !m2PatternValid) { toast.error('Invalid M2 pattern (min 2 E/O)'); return; }
 
     setIsRunning(true);
     runningRef.current = true;
@@ -493,7 +495,7 @@ export default function ProScannerBot() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthorized, isRunning, balance, stake, m1Enabled, m2Enabled, m1Contract, m2Contract,
     m1Barrier, m2Barrier, m1Symbol, m2Symbol, martingaleOn, martingaleMultiplier, martingaleMaxSteps,
-    takeProfit, stopLoss, strategyEnabled, strategyM1Enabled, strategyMode, m1PatternValid, m2PatternValid,
+    takeProfit, stopLoss, strategyEnabled, strategyM1Enabled, m1StrategyMode, m2StrategyMode, m1PatternValid, m2PatternValid,
     scannerActive, findScannerMatchForMarket, checkStrategyForMarket, addLog, updateLog, turboMode,
     m1HookEnabled, m2HookEnabled, m1VirtualLossCount, m2VirtualLossCount, m1RealCount, m2RealCount]);
 
@@ -918,25 +920,26 @@ export default function ProScannerBot() {
           {/* Strategy Card */}
           {(strategyEnabled || strategyM1Enabled) && (
             <div className="bg-card border border-warning/30 rounded-xl p-2.5 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-warning flex items-center gap-1"><Zap className="w-3.5 h-3.5" /> Strategy</h3>
-                <div className="flex gap-0.5">
-                  <Button size="sm" variant={strategyMode === 'pattern' ? 'default' : 'outline'}
-                    className="text-[9px] h-6 px-2" onClick={() => setStrategyMode('pattern')} disabled={isRunning}>
-                    Pattern
-                  </Button>
-                  <Button size="sm" variant={strategyMode === 'digit' ? 'default' : 'outline'}
-                    className="text-[9px] h-6 px-2" onClick={() => setStrategyMode('digit')} disabled={isRunning}>
-                    Digit
-                  </Button>
-                </div>
-              </div>
+              <h3 className="text-xs font-semibold text-warning flex items-center gap-1"><Zap className="w-3.5 h-3.5" /> Strategy</h3>
 
-              {strategyMode === 'pattern' ? (
-                <div className="space-y-1.5">
-                  {strategyM1Enabled && (
-                    <div className="border border-profit/20 rounded-lg p-1.5 space-y-1">
-                      <label className="text-[9px] font-semibold text-profit">M1 Pattern</label>
+              {/* M1 Strategy */}
+              {strategyM1Enabled && (
+                <div className="border border-profit/20 rounded-lg p-1.5 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[9px] font-semibold text-profit">M1 Strategy</label>
+                    <div className="flex gap-0.5">
+                      <Button size="sm" variant={m1StrategyMode === 'pattern' ? 'default' : 'outline'}
+                        className="text-[9px] h-5 px-1.5" onClick={() => setM1StrategyMode('pattern')} disabled={isRunning}>
+                        Pattern
+                      </Button>
+                      <Button size="sm" variant={m1StrategyMode === 'digit' ? 'default' : 'outline'}
+                        className="text-[9px] h-5 px-1.5" onClick={() => setM1StrategyMode('digit')} disabled={isRunning}>
+                        Digit
+                      </Button>
+                    </div>
+                  </div>
+                  {m1StrategyMode === 'pattern' ? (
+                    <>
                       <Textarea placeholder="E=Even O=Odd e.g. EEEOE" value={m1Pattern}
                         onChange={e => setM1Pattern(e.target.value.toUpperCase().replace(/[^EO]/g, ''))}
                         disabled={isRunning} className="h-10 text-[10px] font-mono min-h-0" />
@@ -944,26 +947,9 @@ export default function ProScannerBot() {
                         {cleanM1Pattern.length === 0 ? 'Enter pattern...' :
                           m1PatternValid ? `✓ ${cleanM1Pattern}` : `✗ Need 2+`}
                       </div>
-                    </div>
-                  )}
-                  {strategyEnabled && (
-                    <div className="border border-destructive/20 rounded-lg p-1.5 space-y-1">
-                      <label className="text-[9px] font-semibold text-destructive">M2 Pattern</label>
-                      <Textarea placeholder="E=Even O=Odd e.g. OOEEO" value={m2Pattern}
-                        onChange={e => setM2Pattern(e.target.value.toUpperCase().replace(/[^EO]/g, ''))}
-                        disabled={isRunning} className="h-10 text-[10px] font-mono min-h-0" />
-                      <div className={`text-[9px] font-mono ${m2PatternValid ? 'text-profit' : 'text-loss'}`}>
-                        {cleanM2Pattern.length === 0 ? 'Enter pattern...' :
-                          m2PatternValid ? `✓ ${cleanM2Pattern}` : `✗ Need 2+`}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  {strategyM1Enabled && (
-                    <div className="border border-profit/20 rounded-lg p-1.5">
-                      <label className="text-[9px] font-semibold text-profit">M1 Digit</label>
+                    </>
+                  ) : (
+                    <>
                       <div className="grid grid-cols-3 gap-1 mt-0.5">
                         <label className="text-[8px] text-muted-foreground text-center">Condition</label>
                         <label className="text-[8px] text-muted-foreground text-center">Digit</label>
@@ -979,11 +965,39 @@ export default function ProScannerBot() {
                         <Input type="number" min="0" max="9" value={m1DigitCompare} onChange={e => setM1DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                         <Input type="number" min="1" max="50" value={m1DigitWindow} onChange={e => setM1DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                       </div>
-                    </div>
+                    </>
                   )}
-                  {strategyEnabled && (
-                    <div className="border border-destructive/20 rounded-lg p-1.5">
-                      <label className="text-[9px] font-semibold text-destructive">M2 Digit</label>
+                </div>
+              )}
+
+              {/* M2 Strategy */}
+              {strategyEnabled && (
+                <div className="border border-destructive/20 rounded-lg p-1.5 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[9px] font-semibold text-destructive">M2 Strategy</label>
+                    <div className="flex gap-0.5">
+                      <Button size="sm" variant={m2StrategyMode === 'pattern' ? 'default' : 'outline'}
+                        className="text-[9px] h-5 px-1.5" onClick={() => setM2StrategyMode('pattern')} disabled={isRunning}>
+                        Pattern
+                      </Button>
+                      <Button size="sm" variant={m2StrategyMode === 'digit' ? 'default' : 'outline'}
+                        className="text-[9px] h-5 px-1.5" onClick={() => setM2StrategyMode('digit')} disabled={isRunning}>
+                        Digit
+                      </Button>
+                    </div>
+                  </div>
+                  {m2StrategyMode === 'pattern' ? (
+                    <>
+                      <Textarea placeholder="E=Even O=Odd e.g. OOEEO" value={m2Pattern}
+                        onChange={e => setM2Pattern(e.target.value.toUpperCase().replace(/[^EO]/g, ''))}
+                        disabled={isRunning} className="h-10 text-[10px] font-mono min-h-0" />
+                      <div className={`text-[9px] font-mono ${m2PatternValid ? 'text-profit' : 'text-loss'}`}>
+                        {cleanM2Pattern.length === 0 ? 'Enter pattern...' :
+                          m2PatternValid ? `✓ ${cleanM2Pattern}` : `✗ Need 2+`}
+                      </div>
+                    </>
+                  ) : (
+                    <>
                       <div className="grid grid-cols-3 gap-1 mt-0.5">
                         <label className="text-[8px] text-muted-foreground text-center">Condition</label>
                         <label className="text-[8px] text-muted-foreground text-center">Digit</label>
@@ -999,7 +1013,7 @@ export default function ProScannerBot() {
                         <Input type="number" min="0" max="9" value={m2DigitCompare} onChange={e => setM2DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                         <Input type="number" min="1" max="50" value={m2DigitWindow} onChange={e => setM2DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                       </div>
-                    </div>
+                    </>
                   )}
                 </div>
               )}
