@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { copyTradingService } from '@/services/copy-trading-service';
 import { getLastDigit } from '@/services/analysis';
