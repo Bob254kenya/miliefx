@@ -12,7 +12,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   TrendingUp, TrendingDown, Activity, BarChart3, ArrowUp, ArrowDown, Minus,
-  Target, ShieldAlert, Gauge, Volume2, VolumeX, Clock, Zap, Trophy,
+  Target, ShieldAlert, Gauge, Volume2, VolumeX, Clock, Zap, Trophy, Play, Pause, StopCircle,
 } from 'lucide-react';
 
 /* ── Markets ── */
