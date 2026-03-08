@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { Activity } from "lucide-react";
+import bgHero from '@/assets/bg-hero.jpeg';
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
