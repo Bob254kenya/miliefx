@@ -131,6 +131,16 @@ function calcEMASeries(prices: number[], period: number): (number | null)[] {
   return result;
 }
 
+function calcSMASeries(prices: number[], period: number): (number | null)[] {
+  const result: (number | null)[] = [];
+  for (let i = 0; i < prices.length; i++) {
+    if (i < period - 1) { result.push(null); continue; }
+    const slice = prices.slice(i - period + 1, i + 1);
+    result.push(slice.reduce((a, b) => a + b, 0) / period);
+  }
+  return result;
+}
+
 function calcBBSeries(prices: number[], period: number, mult: number = 2) {
   const upper: (number | null)[] = [];
   const middle: (number | null)[] = [];
@@ -339,6 +349,7 @@ export default function TradingChart() {
   // Per-candle indicator series
   const candleEndIndices = useMemo(() => mapCandlesToPriceIndices(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
   const emaSeries = useMemo(() => calcEMASeries(tfPrices, 50), [tfPrices]);
+  const smaSeries = useMemo(() => calcSMASeries(tfPrices, 20), [tfPrices]);
   const bbSeries = useMemo(() => calcBBSeries(tfPrices, 20, 2), [tfPrices]);
   const rsiSeries = useMemo(() => calcRSISeries(tfPrices, 14), [tfPrices]);
 
@@ -425,15 +436,29 @@ export default function TradingChart() {
 
     if (visibleCandles.length < 1) return;
 
-    // ── Price scale ──
+    // ── Price scale — center candles in view ──
     const allPrices = visibleCandles.flatMap(c => [c.high, c.low]);
+    // Include BB bounds for proper centering
+    for (let i = 0; i < visibleCandles.length; i++) {
+      const idx = visibleEndIndices[i];
+      if (idx === undefined) continue;
+      const u = idx < bbSeries.upper.length ? bbSeries.upper[idx] : null;
+      const l = idx < bbSeries.lower.length ? bbSeries.lower[idx] : null;
+      if (u !== null) allPrices.push(u);
+      if (l !== null) allPrices.push(l);
+    }
     const rawMin = Math.min(...allPrices);
     const rawMax = Math.max(...allPrices);
-    const padding = (rawMax - rawMin) * 0.08 || 0.001;
+    const priceRange = rawMax - rawMin;
+    const padding = priceRange * 0.12 || 0.001;
     const minP = rawMin - padding;
     const maxP = rawMax + padding;
     const range = maxP - minP || 1;
-    const toY = (p: number) => 10 + ((maxP - p) / range) * (H - 20);
+    // Center the visible price range
+    const chartPadTop = 20;
+    const chartPadBot = 20;
+    const drawH = H - chartPadTop - chartPadBot;
+    const toY = (p: number) => chartPadTop + ((maxP - p) / range) * drawH;
 
     // ── Grid ──
     ctx.strokeStyle = '#21262D';
@@ -442,7 +467,7 @@ export default function TradingChart() {
     ctx.font = '9px JetBrains Mono, monospace';
     ctx.fillStyle = '#484F58';
     for (let i = 0; i <= gridSteps; i++) {
-      const y = 10 + (i / gridSteps) * (H - 20);
+      const y = chartPadTop + (i / gridSteps) * drawH;
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartW, y); ctx.stroke();
       const pLabel = maxP - (i / gridSteps) * range;
       ctx.fillText(pLabel.toFixed(4), chartW + 4, y + 3);
@@ -504,7 +529,10 @@ export default function TradingChart() {
     drawLine(bbSeries.lower, '#BC8CFF', 1.2, [5, 3]);
 
     // EMA 50 line
-    drawLine(emaSeries, '#2F81F7', 2);
+    drawLine(emaSeries, '#2F81F7', 1.5);
+
+    // SMA 20 (Moving Average) line
+    drawLine(smaSeries, '#E6B422', 1.5);
 
     // Support line
     ctx.setLineDash([6, 4]);
@@ -570,6 +598,7 @@ export default function TradingChart() {
     ctx.font = '10px JetBrains Mono, monospace';
     const legends = [
       { label: 'BB(20,2)', color: '#BC8CFF' },
+      { label: 'SMA 20', color: '#E6B422' },
       { label: 'EMA 50', color: '#2F81F7' },
       { label: 'Support', color: '#3FB950' },
       { label: 'Resistance', color: '#F85149' },
@@ -643,7 +672,7 @@ export default function TradingChart() {
     ctx.fillStyle = 'rgba(63, 185, 80, 0.04)';
     ctx.fillRect(0, rsiToY(30), chartW, rsiTop + rsiH - rsiToY(30));
 
-  }, [candles, bb, ema50, support, resistance, currentPrice, candleEndIndices, emaSeries, bbSeries, rsiSeries, rsi, candleWidth, scrollOffset]);
+  }, [candles, bb, ema50, support, resistance, currentPrice, candleEndIndices, emaSeries, smaSeries, bbSeries, rsiSeries, rsi, candleWidth, scrollOffset]);
 
   const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
   const marketName = ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol;

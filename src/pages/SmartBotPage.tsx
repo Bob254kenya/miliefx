@@ -5,7 +5,8 @@ import { getLastDigit } from '@/services/analysis';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   analyzeMarketDigits, validateDigitEligibility,
-  getRecoveryAction, type MarketSignal, type RecoveryState,
+  getRecoveryAction, createRecoveryState, checkConditionsStillValid,
+  type MarketSignal, type RecoveryState,
 } from '@/services/smart-signal-engine';
 import { digitFrequency, calculateConfidence } from '@/services/bot-engine';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -16,6 +17,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   Zap, Play, StopCircle, Shield, TrendingUp, AlertTriangle,
   CheckCircle, XCircle, Loader2, Volume2, VolumeX, Settings2,
+  BarChart3, Activity,
 } from 'lucide-react';
 import { type TradeLog } from '@/components/auto-trade/types';
 import TradeLogComponent from '@/components/auto-trade/TradeLog';
@@ -57,7 +59,7 @@ export default function SmartBotPage() {
   const [martingaleEnabled, setMartingaleEnabled] = useState(saved?.martingaleEnabled ?? true);
   const [stopLoss, setStopLoss] = useState(saved?.stopLoss || '20');
   const [takeProfit, setTakeProfit] = useState(saved?.takeProfit || '30');
-  const [tickCount, setTickCount] = useState(saved?.tickCount || '100');
+  const [tickCount, setTickCount] = useState(saved?.tickCount || '1000');
   const [maxRuns, setMaxRuns] = useState(saved?.maxRuns || '50');
   const [stopCondition, setStopCondition] = useState<StopCondition>(saved?.stopCondition || 'none');
   const [soundEnabled, setSoundEnabled] = useState(false);
@@ -103,7 +105,7 @@ export default function SmartBotPage() {
   }, []);
 
   const computedSignals = useMemo(() => {
-    const count = parseInt(tickCount) || 100;
+    const count = parseInt(tickCount) || 1000;
     return MARKETS.map(m => {
       const digs = (liveDigits[m.symbol] || []).slice(-count);
       return analyzeMarketDigits(digs, m.symbol, m.name);
@@ -160,7 +162,7 @@ export default function SmartBotPage() {
     }
   }, [isAuthorized, isRunning, stake, balance, soundEnabled, addLog]);
 
-  /** Start continuous trading on a signal until TP/SL/manual stop */
+  /** Start continuous trading on a signal until TP/SL/manual stop/condition change */
   const startContinuousTrading = useCallback(async (signal: MarketSignal) => {
     if (!isAuthorized || isRunning || continuousRef.current) return;
     if (balance < parseFloat(stake)) { toast.error('Insufficient balance'); return; }
@@ -170,18 +172,39 @@ export default function SmartBotPage() {
     setIsRunning(true);
     runningRef.current = true;
     setRunCount(0);
-    addLog(`🟢 Continuous trade started: ${signal.marketName} ${signal.suggestedContract} ${signal.suggestedBarrier}`);
 
     const baseStake = parseFloat(stake);
+    const recoveryStake = signal.entryDirection === 'OVER' ? signal.overRecoveryStake : signal.underRecoveryStake;
     const mult = parseFloat(multiplier);
     const sl = parseFloat(stopLoss);
     const tp = parseFloat(takeProfit);
     let localPnl = 0;
     let localRuns = 0;
     let currentStake = baseStake;
+    let consLosses = 0;
+    const originalFilter = signal.oddEvenFilter;
+
+    addLog(`🟢 AUTO: ${signal.marketName} ${signal.suggestedContract} ${signal.suggestedBarrier} | ${signal.entryDirection} | Filter: ${originalFilter || 'NONE'}`);
+    addLog(`📊 Most: digit ${signal.most.digit} (${signal.most.count}x) | Least: digit ${signal.least.digit} (${signal.least.count}x)`);
 
     while (continuousRef.current) {
       if (balance < currentStake) { addLog('🛑 Insufficient balance'); toast.error('Insufficient balance'); break; }
+
+      // Auto-stop: check conditions still valid
+      const currentDigits = (liveDigits[signal.symbol] || []).slice(-1000);
+      const condCheck = checkConditionsStillValid(signal, currentDigits, originalFilter);
+      if (!condCheck.valid) {
+        addLog(`🔄 AUTO-STOP: ${condCheck.reason}`);
+        toast.info(`Conditions changed: ${condCheck.reason}`);
+        break;
+      }
+
+      // Auto-stop: max 5 recovery exhausted
+      if (consLosses >= 5) {
+        addLog(`🛑 Max 5 recovery runs exhausted`);
+        toast.error('Recovery limit reached (5 runs)');
+        break;
+      }
 
       try {
         const freshTick = await waitForNextTick(signal.symbol);
@@ -195,23 +218,33 @@ export default function SmartBotPage() {
           barrier: signal.suggestedBarrier || undefined,
         });
 
-        addLog(`⏳ Contract ${contractId} @ ${buyPrice}`);
+        addLog(`⏳ Contract ${contractId} @ ${buyPrice} (stake: $${currentStake.toFixed(2)})`);
         const result = await derivApi.waitForContractResult(contractId);
         const won = result.status === 'won';
         const pnl = result.profit;
-        addLog(`${won ? '✅ WIN' : '❌ LOSS'} | P/L: ${pnl.toFixed(2)}`);
+        addLog(`${won ? '✅ WIN' : '❌ LOSS'} | P/L: ${pnl.toFixed(2)} | Recovery: ${consLosses}/5`);
 
         setTrades(prev => prev.map(t => t.id === id ? { ...t, result: won ? 'Win' : 'Loss', pnl } : t));
         localPnl += pnl;
         localRuns++;
         setRunCount(localRuns);
 
-        // Martingale
-        if (martingaleEnabled) {
-          if (won) { currentStake = baseStake; }
-          else { currentStake = parseFloat((currentStake * mult).toFixed(2)); }
-        } else {
+        // Martingale: LOSS → recovery stake then multiply, WIN → reset
+        if (won) {
+          consLosses = 0;
           currentStake = baseStake;
+          // Auto-stop on profit
+          if (localPnl > 0) {
+            addLog(`🎯 PROFIT LOCKED: +$${localPnl.toFixed(2)}`);
+            toast.success(`🎊 Profit locked! +$${localPnl.toFixed(2)}`);
+            if (soundEnabled) speakMessage('Profit locked!');
+            break;
+          }
+        } else {
+          consLosses++;
+          if (martingaleEnabled) {
+            currentStake = consLosses === 1 ? recoveryStake : currentStake * mult;
+          }
         }
 
         if (soundEnabled) {
@@ -245,7 +278,7 @@ export default function SmartBotPage() {
     setContinuousSignal(null);
     setIsRunning(false);
     runningRef.current = false;
-  }, [isAuthorized, isRunning, stake, multiplier, martingaleEnabled, stopLoss, takeProfit, balance, soundEnabled, addLog]);
+  }, [isAuthorized, isRunning, stake, multiplier, martingaleEnabled, stopLoss, takeProfit, balance, soundEnabled, addLog, liveDigits]);
 
   const stopContinuousTrading = useCallback(() => {
     continuousRef.current = false;
@@ -255,7 +288,7 @@ export default function SmartBotPage() {
     addLog('🔴 Continuous trade STOPPED by user');
   }, [addLog]);
 
-  // Main smart bot loop
+  // Main smart bot loop — scans all markets
   const startSmartBot = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
     if (balance < parseFloat(stake)) { toast.error('Insufficient balance'); return; }
@@ -263,7 +296,7 @@ export default function SmartBotPage() {
     setIsRunning(true);
     runningRef.current = true;
     setRunCount(0);
-    addLog('🟢 Smart Bot LOADED — Scanning all volatilities...');
+    addLog('🟢 Smart Bot LOADED — Scanning all volatilities (1000 ticks)...');
 
     const baseStake = parseFloat(stake);
     const mult = parseFloat(multiplier);
@@ -272,16 +305,18 @@ export default function SmartBotPage() {
     const maxRunsNum = parseInt(maxRuns) || 999999;
     let localPnl = 0;
     let localRuns = 0;
-
-    const recoveryStates: Record<string, RecoveryState> = {};
+    let consLosses = 0;
+    let currentStake = baseStake;
+    let activeSignal: MarketSignal | null = null;
+    let originalFilter: 'ODD' | 'EVEN' | null = null;
 
     while (runningRef.current) {
-      const currentStake = recoveryStates[Object.keys(recoveryStates)[0]]?.currentStake || baseStake;
       if (balance < currentStake) { addLog('🛑 Insufficient balance'); toast.error('Insufficient balance'); break; }
       if (localRuns >= maxRunsNum) { addLog(`🏁 Max runs (${maxRunsNum})`); toast.info(`Max ${maxRunsNum} runs reached`); break; }
+      if (consLosses >= 5) { addLog('🛑 Max 5 recovery runs exhausted'); toast.error('Recovery limit reached'); break; }
 
       try {
-        const count = parseInt(tickCount) || 100;
+        const count = parseInt(tickCount) || 1000;
         const freshSignals = MARKETS.map(m => {
           const digs = (liveDigits[m.symbol] || []).slice(-count);
           return analyzeMarketDigits(digs, m.symbol, m.name);
@@ -294,47 +329,52 @@ export default function SmartBotPage() {
         }
 
         const signal = freshSignals[0];
+        if (!activeSignal) {
+          activeSignal = signal;
+          originalFilter = signal.oddEvenFilter;
+          addLog(`📊 Locked signal: ${signal.marketName} | ${signal.entryDirection} | Filter: ${originalFilter || 'NONE'}`);
+          addLog(`   Most: digit ${signal.most.digit} (${signal.most.count}x) | Least: digit ${signal.least.digit} (${signal.least.count}x)`);
+        }
+
         setActiveMarket(signal.symbol);
-        addLog(`📊 Signal: ${signal.marketName} | STR ${signal.signalStrength} | ${signal.suggestedContract} ${signal.suggestedBarrier}`);
 
-        if (!recoveryStates[signal.symbol]) {
-          recoveryStates[signal.symbol] = { inRecovery: false, lastWasLoss: false, baseStake, currentStake: baseStake, consecutiveLosses: 0 };
+        // Check conditions still valid
+        const currentDigits = (liveDigits[signal.symbol] || []).slice(-count);
+        const condCheck = checkConditionsStillValid(activeSignal, currentDigits, originalFilter);
+        if (!condCheck.valid) {
+          addLog(`🔄 Conditions changed: ${condCheck.reason} — re-scanning`);
+          activeSignal = null;
+          originalFilter = null;
+          consLosses = 0;
+          currentStake = baseStake;
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
         }
-        const rState = recoveryStates[signal.symbol];
 
-        let contractType = signal.suggestedContract;
-        let barrier = signal.suggestedBarrier;
-
-        if (signal.signalStrength >= 4 && (contractType === 'DIGITOVER' || contractType === 'DIGITUNDER')) {
-          const recovery = getRecoveryAction(rState, mult, null);
-          barrier = recovery.barrier;
-        }
-
-        const eligibility = validateDigitEligibility((liveDigits[signal.symbol] || []).slice(-count), contractType, parseInt(barrier) || 0);
+        const eligibility = validateDigitEligibility(currentDigits, signal.suggestedContract, parseInt(signal.suggestedBarrier) || 0);
         if (!eligibility.eligible) {
-          addLog(`❌ Digit validation failed: ${eligibility.reason}`);
+          addLog(`❌ Digit validation: ${eligibility.reason}`);
           await new Promise(r => setTimeout(r, 2000));
           continue;
         }
 
         await waitForNextTick(signal.symbol);
-        const tradeStake = martingaleEnabled ? rState.currentStake : baseStake;
 
         const id = ++tradeIdRef.current;
         const now = new Date().toLocaleTimeString();
-        setTrades(prev => [{ id, time: now, market: signal.symbol, contract: contractType, stake: tradeStake, result: 'Pending' as const, pnl: 0 }, ...prev].slice(0, 200));
+        setTrades(prev => [{ id, time: now, market: signal.symbol, contract: signal.suggestedContract, stake: currentStake, result: 'Pending' as const, pnl: 0 }, ...prev].slice(0, 200));
 
         const { contractId, buyPrice } = await derivApi.buyContract({
-          contract_type: contractType, symbol: signal.symbol,
-          duration: 1, duration_unit: 't', basis: 'stake', amount: tradeStake,
-          barrier: barrier || undefined,
+          contract_type: signal.suggestedContract, symbol: signal.symbol,
+          duration: 1, duration_unit: 't', basis: 'stake', amount: currentStake,
+          barrier: signal.suggestedBarrier || undefined,
         });
 
-        addLog(`⏳ Contract ${contractId} @ ${buyPrice}`);
+        addLog(`⏳ Contract ${contractId} @ ${buyPrice} (stake: $${currentStake.toFixed(2)})`);
         const result = await derivApi.waitForContractResult(contractId);
         const won = result.status === 'won';
         const pnl = result.profit;
-        addLog(`${won ? '✅ WIN' : '❌ LOSS'} | Profit: ${pnl.toFixed(2)}`);
+        addLog(`${won ? '✅ WIN' : '❌ LOSS'} | P/L: ${pnl.toFixed(2)} | Recovery: ${consLosses}/5`);
 
         setTrades(prev => prev.map(t => t.id === id ? { ...t, result: won ? 'Win' : 'Loss', pnl } : t));
         localPnl += pnl;
@@ -345,20 +385,31 @@ export default function SmartBotPage() {
           try { const ctx = new AudioContext(); const o = ctx.createOscillator(); o.frequency.value = won ? 880 : 440; o.connect(ctx.destination); o.start(); setTimeout(() => { o.stop(); ctx.close(); }, 200); } catch {}
         }
 
-        const lastResult = won ? 'won' as const : 'lost' as const;
-        if (martingaleEnabled) {
-          const recovery = getRecoveryAction(rState, mult, lastResult);
-          recoveryStates[signal.symbol] = recovery.newState;
+        // Martingale with recovery stakes
+        const recoveryStake = signal.entryDirection === 'OVER' ? signal.overRecoveryStake : signal.underRecoveryStake;
+        if (won) {
+          consLosses = 0;
+          currentStake = baseStake;
+          // Auto-stop on profit
+          if (localPnl > 0) {
+            addLog(`🎯 PROFIT: +$${localPnl.toFixed(2)} — auto-stopping`);
+            toast.success(`🎊 Profit! +$${localPnl.toFixed(2)}`);
+            if (soundEnabled) speakMessage('Profit locked!');
+            break;
+          }
         } else {
-          recoveryStates[signal.symbol] = { ...rState, currentStake: baseStake, lastWasLoss: !won, inRecovery: !won, consecutiveLosses: won ? 0 : rState.consecutiveLosses + 1 };
+          consLosses++;
+          if (martingaleEnabled) {
+            currentStake = consLosses === 1 ? recoveryStake : currentStake * mult;
+          }
         }
 
-        if (stopCondition === 'on_loss' && !won) { addLog('🏁 Stopped: On Loss'); toast.info('Stopped: Loss'); break; }
-        if (stopCondition === 'on_profit' && won) { addLog('🏁 Stopped: On Profit'); toast.info('Stopped: Profit'); break; }
-        if (stopCondition === 'even_runs' && localRuns % 2 === 0) { addLog(`🏁 Stopped: Even runs (${localRuns})`); toast.info(`Stopped: ${localRuns} runs`); break; }
+        if (stopCondition === 'on_loss' && !won) { addLog('🏁 Stopped: On Loss'); break; }
+        if (stopCondition === 'on_profit' && won) { addLog('🏁 Stopped: On Profit'); break; }
+        if (stopCondition === 'even_runs' && localRuns % 2 === 0) { addLog(`🏁 Stopped: Even runs (${localRuns})`); break; }
 
-        if (localPnl <= -sl) { addLog(`🛑 STOP LOSS: ${localPnl.toFixed(2)}`); toast.error(`🛑 Stop Loss! $${localPnl.toFixed(2)}`); if (soundEnabled) speakMessage('Stop loss hit.'); break; }
-        if (localPnl >= tp) { addLog(`🎯 TAKE PROFIT: ${localPnl.toFixed(2)}`); toast.success(`🎊 Take Profit! +$${localPnl.toFixed(2)}`); if (soundEnabled) speakMessage('Take profit hit!'); break; }
+        if (localPnl <= -sl) { addLog(`🛑 STOP LOSS: ${localPnl.toFixed(2)}`); toast.error(`🛑 Stop Loss! $${localPnl.toFixed(2)}`); break; }
+        if (localPnl >= tp) { addLog(`🎯 TAKE PROFIT: ${localPnl.toFixed(2)}`); toast.success(`🎊 Take Profit! +$${localPnl.toFixed(2)}`); break; }
 
         await new Promise(r => setTimeout(r, 500));
       } catch (err: any) {
@@ -391,7 +442,7 @@ export default function SmartBotPage() {
             <Zap className="w-5 h-5 text-warning" /> Smart Signal Bot
           </h1>
           <p className="text-xs text-muted-foreground">
-            Scans all volatilities • API-verified • Continuous scanning
+            Frequency analysis • 1000 ticks • Auto-stop on profit/condition change • Max 5 recovery
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -412,8 +463,8 @@ export default function SmartBotPage() {
         <span className="font-mono">TP: <strong className="text-profit">${takeProfit}</strong></span>
         <span className="font-mono">SL: <strong className="text-loss">${stopLoss}</strong></span>
         <span className="font-mono">Martingale: <strong className={martingaleEnabled ? 'text-warning' : 'text-muted-foreground'}>{martingaleEnabled ? `${multiplier}x` : 'OFF'}</strong></span>
-        <span className="font-mono">Max Runs: <strong className="text-foreground">{maxRuns}</strong></span>
-        <span className="font-mono">Stop: <strong className="text-foreground">{stopCondition === 'none' ? 'Manual' : stopCondition.replace('_', ' ')}</strong></span>
+        <span className="font-mono">Recovery: <strong className="text-foreground">Max 5</strong></span>
+        <span className="font-mono">Ticks: <strong className="text-foreground">{tickCount}</strong></span>
         <Button variant="ghost" size="sm" className="h-6 px-2 ml-auto" onClick={() => setEditingConfig(!editingConfig)}>
           <Settings2 className="w-3 h-3 mr-1" /> {editingConfig ? 'Close' : 'Edit'}
         </Button>
@@ -472,7 +523,7 @@ export default function SmartBotPage() {
                 <Select value={tickCount} onValueChange={setTickCount} disabled={isRunning}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {['30', '50', '100', '200', '500', '1000'].map(n => (
+                    {['100', '200', '500', '1000'].map(n => (
                       <SelectItem key={n} value={n}>Last {n} ticks</SelectItem>
                     ))}
                   </SelectContent>
@@ -498,12 +549,22 @@ export default function SmartBotPage() {
             </div>
           )}
 
+          {/* Entry Rules */}
           <div className="bg-card border border-border rounded-xl p-4">
-            <h3 className="text-xs font-semibold text-foreground mb-2">📋 Martingale Rules</h3>
-            <div className="space-y-1 text-[10px] text-muted-foreground">
-              <div className="flex items-center gap-1"><XCircle className="w-3 h-3 text-loss" /> LOSS → Multiply stake</div>
-              <div className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-profit" /> WIN → Reset to base</div>
-              <div className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-warning" /> No stacking — wait for API result</div>
+            <h3 className="text-xs font-semibold text-foreground mb-2">📋 Entry Rules</h3>
+            <div className="space-y-1.5 text-[10px] text-muted-foreground">
+              <div className="font-semibold text-profit">OVER Entry:</div>
+              <div className="pl-2">Most freq &gt; 4 AND Least freq &gt; 4</div>
+              <div className="pl-2">Stake: $1 → Recovery: $3</div>
+              <div className="font-semibold text-loss mt-1">UNDER Entry:</div>
+              <div className="pl-2">Most freq &lt; 5 AND Least freq &lt; 8</div>
+              <div className="pl-2">Stake: $1 → Recovery: $6</div>
+              <div className="border-t border-border mt-2 pt-2">
+                <div className="flex items-center gap-1"><XCircle className="w-3 h-3 text-loss" /> LOSS → Recovery stake then multiply</div>
+                <div className="flex items-center gap-1"><CheckCircle className="w-3 h-3 text-profit" /> WIN → Reset + Auto-stop on profit</div>
+                <div className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-warning" /> Max 5 recovery runs</div>
+                <div className="flex items-center gap-1"><Activity className="w-3 h-3 text-primary" /> Odd/Even volatility filter</div>
+              </div>
             </div>
           </div>
         </div>
@@ -518,13 +579,20 @@ export default function SmartBotPage() {
               </Badge>
             </h3>
             <div className="space-y-1.5 max-h-[400px] overflow-y-auto">
-              {signals.slice(0, 14).map(s => (
+              {signals.slice(0, 17).map(s => (
                 <div key={s.symbol} className={`flex items-center justify-between p-2 rounded-lg text-xs ${s.isValid ? 'bg-profit/10 border border-profit/30' : 'bg-muted'}`}>
-                  <div className="flex items-center gap-2">
-                    {s.isValid ? <CheckCircle className="w-3.5 h-3.5 text-profit" /> : <XCircle className="w-3.5 h-3.5 text-muted-foreground" />}
-                    <span className="font-mono font-semibold">{s.marketName}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      {s.isValid ? <CheckCircle className="w-3.5 h-3.5 text-profit shrink-0" /> : <XCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
+                      <span className="font-mono font-semibold truncate">{s.marketName}</span>
+                    </div>
+                    {s.isValid && (
+                      <div className="text-[9px] text-muted-foreground ml-5 mt-0.5">
+                        {s.entryDirection} | Most:{s.most.count} Least:{s.least.count} | {s.oddEvenFilter || 'N/A'}
+                      </div>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <Badge variant={s.signalStrength >= 6 ? 'default' : 'secondary'} className="text-[9px]">STR: {s.signalStrength}</Badge>
                     {s.isValid && (
                       <>
@@ -568,10 +636,10 @@ export default function SmartBotPage() {
           )}
         </div>
 
-        {/* Right: Trade Log + Status */}
+        {/* Right: Trade Log + Status + Dashboard */}
         <div className="lg:col-span-4 space-y-4">
           <div className="bg-card border border-border rounded-xl p-4">
-            <h3 className="text-sm font-semibold text-foreground mb-2">Session</h3>
+            <h3 className="text-sm font-semibold text-foreground mb-2">Session Dashboard</h3>
             <div className="grid grid-cols-3 gap-2">
               {[
                 { label: 'Balance', value: `$${balance.toFixed(2)}`, color: 'text-foreground' },
@@ -579,7 +647,7 @@ export default function SmartBotPage() {
                 { label: 'Losses', value: lossCount, color: 'text-loss' },
                 { label: 'P/L', value: `$${totalPnl.toFixed(2)}`, color: totalPnl >= 0 ? 'text-profit' : 'text-loss' },
                 { label: 'Runs', value: `${runCount}/${maxRuns}`, color: 'text-foreground' },
-                { label: 'Active', value: continuousSignal?.marketName || activeMarket || '—', color: 'text-primary' },
+                { label: 'Status', value: isRunning ? (continuousSignal ? 'TRADING' : 'SCANNING') : 'STOPPED', color: isRunning ? 'text-profit' : 'text-muted-foreground' },
               ].map(s => (
                 <div key={s.label} className="bg-muted rounded-lg p-2 text-center">
                   <div className="text-[9px] text-muted-foreground">{s.label}</div>
@@ -588,6 +656,44 @@ export default function SmartBotPage() {
               ))}
             </div>
           </div>
+
+          {/* Live frequency counts */}
+          {activeMarket && (liveDigits[activeMarket] || []).length > 20 && (() => {
+            const digs = (liveDigits[activeMarket] || []).slice(-1000);
+            const freq = digitFrequency(digs);
+            const sorted = freq.map((c, i) => ({ digit: i, count: c })).sort((a, b) => b.count - a.count);
+            const evenC = digs.filter(d => d % 2 === 0).length;
+            const oddC = digs.length - evenC;
+            return (
+              <div className="bg-card border border-border rounded-xl p-4">
+                <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1">
+                  <BarChart3 className="w-4 h-4 text-primary" /> Live Frequency ({digs.length} ticks)
+                </h3>
+                <div className="grid grid-cols-5 gap-1 mb-2">
+                  {sorted.map(d => (
+                    <div key={d.digit} className={`text-center rounded-lg p-1.5 text-xs font-mono ${
+                      d === sorted[0] ? 'bg-profit/20 border border-profit/40 text-profit' :
+                      d === sorted[sorted.length - 1] ? 'bg-loss/20 border border-loss/40 text-loss' :
+                      'bg-muted text-foreground'
+                    }`}>
+                      <div className="font-bold text-sm">{d.digit}</div>
+                      <div className="text-[9px]">{d.count}x</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                  <div className="bg-muted rounded p-1.5 text-center">
+                    <span className="text-muted-foreground">Odd: </span>
+                    <span className={`font-mono font-bold ${oddC > evenC ? 'text-warning' : 'text-foreground'}`}>{(oddC / digs.length * 100).toFixed(1)}%</span>
+                  </div>
+                  <div className="bg-muted rounded p-1.5 text-center">
+                    <span className="text-muted-foreground">Even: </span>
+                    <span className={`font-mono font-bold ${evenC > oddC ? 'text-profit' : 'text-foreground'}`}>{(evenC / digs.length * 100).toFixed(1)}%</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           <TradeLogComponent trades={trades} />
 

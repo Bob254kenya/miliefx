@@ -1,7 +1,9 @@
 /**
- * Smart Signal Engine — Scans ALL volatilities for digit dominance.
- * DEFENSIVE: digit 0 always counted. Over=5-9, Under=0-4.
- * MARTINGALE: LOSS → multiply, WIN → reset (STANDARD).
+ * Smart Signal Engine — Frequency-based signal analysis.
+ * Analyzes last 1000 ticks for most/least appearing digits.
+ * Entry conditions based on frequency thresholds.
+ * Odd/Even volatility filtering.
+ * Martingale recovery with max 5 runs.
  */
 
 import { type MarketSymbol } from './deriv-api';
@@ -32,11 +34,20 @@ export interface MarketSignal {
   underPct: number;
   evenPct: number;
   oddPct: number;
+  // New: frequency-based entry conditions
+  entryDirection: 'OVER' | 'UNDER' | null;
+  overStake: number;
+  overRecoveryStake: number;
+  underStake: number;
+  underRecoveryStake: number;
+  oddEvenFilter: 'ODD' | 'EVEN' | null;
 }
 
 /**
- * Analyze a set of digits and produce ranked digit info + signal.
- * Over = digits 5-9, Under = digits 0-4. Zero is always Under + Even.
+ * Analyze digits with frequency-based entry logic:
+ * - OVER when most freq > 4 AND least freq > 4 (stake 1, recovery 3)
+ * - UNDER when most freq < 5 AND least freq < 8 (stake 1, recovery 6)
+ * - Odd/Even filter based on volatility parity dominance
  */
 export function analyzeMarketDigits(
   digits: number[],
@@ -57,10 +68,10 @@ export function analyzeMarketDigits(
   const third = rankings[2];
   const least = rankings[rankings.length - 1];
 
-  // Over=5-9, Under=0-4 (0 is Under), Even includes 0
+  // Over=5-9, Under=0-4
   const overCount = digits.filter(d => d >= 5).length;
   const underCount = digits.filter(d => d <= 4).length;
-  const evenCount = digits.filter(d => d % 2 === 0).length; // 0 is even
+  const evenCount = digits.filter(d => d % 2 === 0).length;
   const oddCount = digits.filter(d => d % 2 !== 0).length;
 
   const overPct = (overCount / len) * 100;
@@ -68,54 +79,61 @@ export function analyzeMarketDigits(
   const evenPct = (evenCount / len) * 100;
   const oddPct = (oddCount / len) * 100;
 
-  // Log digit 0 influence
-  if (freq[0] > 0) {
-    console.log(`[Signal] ${symbol}: digit 0 freq=${freq[0]}, contributes to Under(${underPct.toFixed(1)}%) & Even(${evenPct.toFixed(1)}%)`);
+  // ── Frequency-based entry conditions ──
+  let entryDirection: 'OVER' | 'UNDER' | null = null;
+
+  // OVER: most freq > 4 AND least freq > 4
+  const overCondition = most.count > 4 && least.count > 4;
+  // UNDER: most freq < 5 AND least freq < 8
+  const underCondition = most.count < 5 && least.count < 8;
+
+  if (overCondition && !underCondition) {
+    entryDirection = 'OVER';
+  } else if (underCondition && !overCondition) {
+    entryDirection = 'UNDER';
+  } else if (overCondition && underCondition) {
+    // Both met — pick by pct dominance
+    entryDirection = overPct >= underPct ? 'OVER' : 'UNDER';
   }
 
-  const topThreeTotal = most.pct + second.pct + third.pct;
-  const imbalance = most.pct - least.pct;
+  // ── Odd/Even volatility filter ──
+  const oddEvenFilter: 'ODD' | 'EVEN' | null = 
+    oddPct > evenPct ? 'ODD' : evenPct > oddPct ? 'EVEN' : null;
 
+  // ── Signal strength ──
+  const imbalance = most.pct - least.pct;
   let strength = 0;
   if (imbalance > 5) strength += 2;
   if (imbalance > 10) strength += 2;
   if (imbalance > 15) strength += 2;
   if (second.pct > 12) strength += 1;
   if (third.pct > 11) strength += 1;
-  if (topThreeTotal > 40) strength += 1;
+  if (most.pct + second.pct + third.pct > 40) strength += 1;
   if (least.pct < 5) strength += 1;
   strength = Math.min(10, strength);
 
-  const isValid = strength >= 4 && second.pct > 11 && third.pct > 10 && imbalance > 6;
+  const isValid = entryDirection !== null && strength >= 3 && digits.length >= 20;
 
   let validationReason = '';
   if (!isValid) {
-    if (strength < 4) validationReason = `Strength ${strength} < 4`;
-    else if (imbalance <= 6) validationReason = `Imbalance ${imbalance.toFixed(1)}% too low`;
-    else validationReason = 'Insufficient digit dominance';
+    if (!entryDirection) validationReason = 'No entry condition met';
+    else if (strength < 3) validationReason = `Strength ${strength} < 3`;
+    else validationReason = 'Insufficient data';
   } else {
-    validationReason = `Strength ${strength}, Imbalance ${imbalance.toFixed(1)}%, Top3 ${topThreeTotal.toFixed(1)}%`;
+    validationReason = `${entryDirection} | STR ${strength} | Most:${most.count} Least:${least.count} | ${oddEvenFilter || 'N/A'} filter`;
   }
 
-  let suggestedContract = 'DIGITOVER';
-  let suggestedBarrier = '1';
+  let suggestedContract = entryDirection === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER';
+  let suggestedBarrier = entryDirection === 'OVER' ? '1' : '6';
 
-  if (isValid) {
-    if (overPct > 55) {
-      suggestedContract = 'DIGITUNDER';
-      suggestedBarrier = '6';
-    } else if (underPct > 55) {
-      suggestedContract = 'DIGITOVER';
-      suggestedBarrier = '1';
-    } else if (evenPct > 55) {
+  // Apply odd/even filter override
+  if (isValid && oddEvenFilter) {
+    if (oddEvenFilter === 'ODD' && oddPct > 55) {
       suggestedContract = 'DIGITODD';
       suggestedBarrier = '';
-    } else if (oddPct > 55) {
+    } else if (oddEvenFilter === 'EVEN' && evenPct > 55) {
       suggestedContract = 'DIGITEVEN';
       suggestedBarrier = '';
-    } else {
-      suggestedContract = 'DIGITOVER';
-      suggestedBarrier = '1';
     }
   }
 
@@ -125,6 +143,10 @@ export function analyzeMarketDigits(
     signalStrength: strength, isValid, validationReason,
     suggestedContract, suggestedBarrier,
     overPct, underPct, evenPct, oddPct,
+    entryDirection,
+    overStake: 1, overRecoveryStake: 3,
+    underStake: 1, underRecoveryStake: 6,
+    oddEvenFilter,
   };
 }
 
@@ -176,7 +198,7 @@ export function validateDigitEligibility(
   }
 
   if (contractType === 'DIGITEVEN') {
-    const evenCount = digits.filter(d => d % 2 === 0).length; // 0 is even
+    const evenCount = digits.filter(d => d % 2 === 0).length;
     const evenPct = (evenCount / len) * 100;
     if (evenPct < 48) {
       return { eligible: false, reason: `Even at ${evenPct.toFixed(1)}% — weak`, dominantDigits: [0, 2, 4, 6, 8] };
@@ -197,15 +219,30 @@ export function validateDigitEligibility(
 }
 
 /**
- * STANDARD MARTINGALE recovery state.
- * LOSS → multiply stake. WIN → reset to base.
+ * Recovery state for martingale with max 5 recovery runs.
  */
 export interface RecoveryState {
   inRecovery: boolean;
   lastWasLoss: boolean;
   baseStake: number;
+  recoveryStake: number;
   currentStake: number;
   consecutiveLosses: number;
+  maxRecovery: number;
+  exhausted: boolean;
+}
+
+export function createRecoveryState(baseStake: number, recoveryStake: number, maxRecovery: number = 5): RecoveryState {
+  return {
+    inRecovery: false,
+    lastWasLoss: false,
+    baseStake,
+    recoveryStake,
+    currentStake: baseStake,
+    consecutiveLosses: 0,
+    maxRecovery,
+    exhausted: false,
+  };
 }
 
 export function getRecoveryAction(
@@ -216,22 +253,28 @@ export function getRecoveryAction(
   const newState = { ...state };
 
   if (lastResult === 'lost') {
-    // LOSS → apply martingale (increase stake)
     newState.inRecovery = true;
     newState.lastWasLoss = true;
     newState.consecutiveLosses = state.consecutiveLosses + 1;
-    newState.currentStake = state.currentStake * multiplier;
-    console.log(`[Martingale] LOSS → stake increased to ${newState.currentStake.toFixed(2)}`);
+    newState.currentStake = state.consecutiveLosses === 0 
+      ? state.recoveryStake 
+      : state.currentStake * multiplier;
+    
+    if (newState.consecutiveLosses >= state.maxRecovery) {
+      newState.exhausted = true;
+      console.log(`[Martingale] EXHAUSTED — ${state.maxRecovery} recovery attempts failed`);
+    } else {
+      console.log(`[Martingale] LOSS ${newState.consecutiveLosses}/${state.maxRecovery} → stake ${newState.currentStake.toFixed(2)}`);
+    }
   } else if (lastResult === 'won') {
-    // WIN → reset stake to base
     newState.currentStake = state.baseStake;
     newState.lastWasLoss = false;
     newState.inRecovery = false;
     newState.consecutiveLosses = 0;
+    newState.exhausted = false;
     console.log(`[Martingale] WIN → stake reset to base ${newState.currentStake.toFixed(2)}`);
   }
 
-  // Barrier: normal = OVER 1, recovery = OVER 3
   const barrier = newState.inRecovery ? '3' : '1';
 
   return {
@@ -239,4 +282,46 @@ export function getRecoveryAction(
     nextStake: newState.currentStake,
     newState,
   };
+}
+
+/**
+ * Check if conditions still valid for auto-stop.
+ */
+export function checkConditionsStillValid(
+  signal: MarketSignal,
+  currentDigits: number[],
+  originalOddEvenFilter: 'ODD' | 'EVEN' | null,
+): { valid: boolean; reason: string } {
+  const len = currentDigits.length || 1;
+  const freq = digitFrequency(currentDigits);
+  const rankings = [];
+  for (let i = 0; i <= 9; i++) {
+    rankings.push({ digit: i, count: freq[i] });
+  }
+  rankings.sort((a, b) => b.count - a.count);
+  const most = rankings[0];
+  const least = rankings[rankings.length - 1];
+
+  // Check if original entry conditions still hold
+  if (signal.entryDirection === 'OVER') {
+    if (most.count <= 4 || least.count <= 4) {
+      return { valid: false, reason: `OVER conditions lost: most=${most.count}, least=${least.count}` };
+    }
+  } else if (signal.entryDirection === 'UNDER') {
+    if (most.count >= 5 || least.count >= 8) {
+      return { valid: false, reason: `UNDER conditions lost: most=${most.count}, least=${least.count}` };
+    }
+  }
+
+  // Check odd/even shift
+  if (originalOddEvenFilter) {
+    const evenCount = currentDigits.filter(d => d % 2 === 0).length;
+    const oddCount = len - evenCount;
+    const currentFilter = oddCount > evenCount ? 'ODD' : 'EVEN';
+    if (currentFilter !== originalOddEvenFilter) {
+      return { valid: false, reason: `Parity shifted: was ${originalOddEvenFilter}, now ${currentFilter}` };
+    }
+  }
+
+  return { valid: true, reason: 'Conditions still valid' };
 }
