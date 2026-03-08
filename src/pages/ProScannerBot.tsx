@@ -1358,6 +1358,8 @@ export default function ProScannerBot() {
               </table>
             </div>
           </div>
+          {/* Bot Configuration Preview */}
+          <ConfigPreview config={currentConfig} onLoadConfig={handleLoadConfig} disabled={isRunning} />
         </div>
       </div>
     </div>
