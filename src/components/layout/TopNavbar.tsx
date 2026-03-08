@@ -25,6 +25,7 @@ const navItems = [
   { title: 'Live Scanner', url: '/markets', icon: BarChart3 },
   { title: 'Smart Signal Bot', url: '/smart-bot', icon: Zap },
   { title: 'Auto Trade', url: '/auto-trade', icon: Bot },
+  { title: 'Copy Trading', url: '/copy-trading', icon: Users },
   { title: 'Account', url: '/settings', icon: Settings },
 ];
 
