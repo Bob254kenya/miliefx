@@ -697,6 +697,16 @@ export default function ProScannerBot() {
     if ((cfg as any).botName) setBotName((cfg as any).botName);
   }, []);
 
+  // Auto-load config from navigation state (Free Bots page)
+  useEffect(() => {
+    const state = location.state as { loadConfig?: BotConfig } | null;
+    if (state?.loadConfig) {
+      handleLoadConfig(state.loadConfig);
+      // Clear state to prevent re-loading on re-render
+      window.history.replaceState({}, '');
+    }
+  }, [location.state, handleLoadConfig]);
+
   const activeSymbol = currentMarket === 1 ? m1Symbol : m2Symbol;
   const activeDigits = (tickMapRef.current.get(activeSymbol) || []).slice(-8);
 
