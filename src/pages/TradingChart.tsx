@@ -349,6 +349,7 @@ export default function TradingChart() {
   // Per-candle indicator series
   const candleEndIndices = useMemo(() => mapCandlesToPriceIndices(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
   const emaSeries = useMemo(() => calcEMASeries(tfPrices, 50), [tfPrices]);
+  const smaSeries = useMemo(() => calcSMASeries(tfPrices, 20), [tfPrices]);
   const bbSeries = useMemo(() => calcBBSeries(tfPrices, 20, 2), [tfPrices]);
   const rsiSeries = useMemo(() => calcRSISeries(tfPrices, 14), [tfPrices]);
 
