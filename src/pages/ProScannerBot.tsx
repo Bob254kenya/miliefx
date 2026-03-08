@@ -291,7 +291,7 @@ export default function ProScannerBot() {
     setLogEntries([]);
     setWins(0); setLosses(0); setTotalStaked(0); setNetProfit(0);
     setMartingaleStepState(0);
-    setVhFakeWins(0); setVhFakeLosses(0); setVhStatus('idle');
+    setVhFakeWins(0); setVhFakeLosses(0); setVhConsecLosses(0); setVhStatus('idle');
     setTicksCaptured(0); setTicksMissed(0);
   }, []);
 
