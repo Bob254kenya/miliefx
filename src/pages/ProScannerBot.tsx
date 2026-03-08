@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { copyTradingService } from '@/services/copy-trading-service';
 import { getLastDigit } from '@/services/analysis';
@@ -113,6 +114,7 @@ function simulateVirtualContract(
 export default function ProScannerBot() {
   const { isAuthorized, balance, activeAccount } = useAuth();
   const { recordLoss } = useLossRequirement();
+  const location = useLocation();
 
   /* ── Market 1 config ── */
   const [m1Enabled, setM1Enabled] = useState(true);
@@ -694,6 +696,16 @@ export default function ProScannerBot() {
     if (cfg.turbo?.enabled !== undefined) setTurboMode(cfg.turbo.enabled);
     if ((cfg as any).botName) setBotName((cfg as any).botName);
   }, []);
+
+  // Auto-load config from navigation state (Free Bots page)
+  useEffect(() => {
+    const state = location.state as { loadConfig?: BotConfig } | null;
+    if (state?.loadConfig) {
+      handleLoadConfig(state.loadConfig);
+      // Clear state to prevent re-loading on re-render
+      window.history.replaceState({}, '');
+    }
+  }, [location.state, handleLoadConfig]);
 
   const activeSymbol = currentMarket === 1 ? m1Symbol : m2Symbol;
   const activeDigits = (tickMapRef.current.get(activeSymbol) || []).slice(-8);

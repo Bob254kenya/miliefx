@@ -21,6 +21,7 @@ import TradingChart from "@/pages/TradingChart";
 import TradeHistory from "@/pages/TradeHistory";
 import SettingsPage from "@/pages/SettingsPage";
 import CopyTradingManager from "@/pages/CopyTradingManager";
+import FreeBots from "@/pages/FreeBots";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -154,6 +155,7 @@ function AppRoutes() {
         <Route path="/history" element={<TradeHistory />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/copy-trading" element={<CopyTradingManager />} />
+        <Route path="/free-bots" element={<FreeBots />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>
