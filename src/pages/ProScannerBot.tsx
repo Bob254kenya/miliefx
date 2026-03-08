@@ -625,368 +625,356 @@ export default function ProScannerBot() {
   const activeDigits = (tickMapRef.current.get(activeSymbol) || []).slice(-8);
 
   return (
-    <div className="space-y-4 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <Scan className="w-5 h-5 text-primary" /> Pro Scanner Bot
-          </h1>
-          <p className="text-xs text-muted-foreground">Multi-market scanner • Virtual Hook • Turbo Engine</p>
-        </div>
+    <div className="space-y-2 max-w-7xl mx-auto">
+      {/* ── Compact Header ── */}
+      <div className="flex items-center justify-between gap-2 bg-card border border-border rounded-xl px-3 py-2">
+        <h1 className="text-base font-bold text-foreground flex items-center gap-2">
+          <Scan className="w-4 h-4 text-primary" /> Pro Scanner Bot
+        </h1>
         <div className="flex items-center gap-2">
-          <Badge className={`${status.color} text-xs`}>{status.icon} {status.label}</Badge>
+          <Badge className={`${status.color} text-[10px]`}>{status.icon} {status.label}</Badge>
           {isRunning && (
-            <Badge variant="outline" className="text-xs text-warning animate-pulse font-mono">
+            <Badge variant="outline" className="text-[10px] text-warning animate-pulse font-mono">
               P/L: ${netProfit.toFixed(2)}
+            </Badge>
+          )}
+          {isRunning && (
+            <Badge variant="outline" className={`text-[10px] ${currentMarket === 1 ? 'text-profit border-profit/50' : 'text-purple-400 border-purple-500/50'}`}>
+              {currentMarket === 1 ? '🏠 M1' : '🔄 M2'}
             </Badge>
           )}
         </div>
       </div>
 
-      {/* Scanner + Turbo Row */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {/* Scanner Toggle */}
-        <div className="bg-card border border-border rounded-xl p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <Eye className="w-4 h-4 text-primary" />
-              <span className="text-sm font-semibold text-foreground">Multi-Market Scanner</span>
-              <Badge variant={scannerActive ? 'default' : 'secondary'} className="text-[10px]">
-                {scannerActive ? '🟢 SCANNING ACTIVE' : '⚫ SCANNING OFF'}
+      {/* ── Scanner + Turbo + Stats Compact Row ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+        {/* Scanner */}
+        <div className="bg-card border border-border rounded-xl p-2.5">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center gap-1.5">
+              <Eye className="w-3.5 h-3.5 text-primary" />
+              <span className="text-xs font-semibold text-foreground">Scanner</span>
+              <Badge variant={scannerActive ? 'default' : 'secondary'} className="text-[9px] h-4 px-1.5">
+                {scannerActive ? '🟢 ON' : '⚫ OFF'}
               </Badge>
             </div>
             <Switch checked={scannerActive} onCheckedChange={setScannerActive} disabled={isRunning} />
           </div>
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-0.5">
             {SCANNER_MARKETS.map(m => {
               const count = tickCounts[m.symbol] || 0;
               return (
                 <Badge key={m.symbol} variant="outline"
-                  className={`text-[9px] font-mono ${count > 0 ? 'border-primary/50 text-primary' : 'text-muted-foreground'}`}>
-                  {m.name} {count > 0 && <span className="ml-1 opacity-60">{count}</span>}
+                  className={`text-[8px] h-4 px-1 font-mono ${count > 0 ? 'border-primary/50 text-primary' : 'text-muted-foreground'}`}>
+                  {m.name}
                 </Badge>
               );
             })}
           </div>
         </div>
 
-        {/* Turbo Mode */}
-        <div className="bg-card border border-border rounded-xl p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <Zap className={`w-4 h-4 ${turboMode ? 'text-profit animate-pulse' : 'text-muted-foreground'}`} />
-              <span className="text-sm font-semibold text-foreground">⚡ Turbo Execution</span>
+        {/* Turbo */}
+        <div className="bg-card border border-border rounded-xl p-2.5">
+          <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center gap-1.5">
+              <Zap className={`w-3.5 h-3.5 ${turboMode ? 'text-profit animate-pulse' : 'text-muted-foreground'}`} />
+              <span className="text-xs font-semibold text-foreground">Turbo</span>
             </div>
             <Button
               size="sm"
               variant={turboMode ? 'default' : 'outline'}
-              className={`h-7 text-[10px] ${turboMode ? 'bg-profit hover:bg-profit/90 text-profit-foreground animate-pulse' : ''}`}
+              className={`h-6 text-[9px] px-2 ${turboMode ? 'bg-profit hover:bg-profit/90 text-profit-foreground animate-pulse' : ''}`}
               onClick={() => setTurboMode(!turboMode)}
               disabled={isRunning}
             >
-              {turboMode ? '⚡ TURBO ON' : 'TURBO OFF'}
+              {turboMode ? '⚡ ON' : 'OFF'}
             </Button>
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <div>
-              <div className="text-[9px] text-muted-foreground">Latency</div>
-              <div className="font-mono text-xs text-primary font-bold">{turboLatency}ms</div>
+          <div className="grid grid-cols-3 gap-1 text-center">
+            <div className="bg-muted/50 rounded p-1">
+              <div className="text-[8px] text-muted-foreground">Latency</div>
+              <div className="font-mono text-[10px] text-primary font-bold">{turboLatency}ms</div>
             </div>
-            <div>
-              <div className="text-[9px] text-muted-foreground">Captured</div>
-              <div className="font-mono text-xs text-profit font-bold">{ticksCaptured}</div>
+            <div className="bg-muted/50 rounded p-1">
+              <div className="text-[8px] text-muted-foreground">Captured</div>
+              <div className="font-mono text-[10px] text-profit font-bold">{ticksCaptured}</div>
             </div>
-            <div>
-              <div className="text-[9px] text-muted-foreground">Missed</div>
-              <div className="font-mono text-xs text-loss font-bold">{ticksMissed}</div>
+            <div className="bg-muted/50 rounded p-1">
+              <div className="text-[8px] text-muted-foreground">Missed</div>
+              <div className="font-mono text-[10px] text-loss font-bold">{ticksMissed}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Live Stats */}
+        <div className="bg-card border border-border rounded-xl p-2.5">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs font-semibold text-foreground">Stats</span>
+            <span className="font-mono text-sm font-bold text-foreground">${balance.toFixed(2)}</span>
+          </div>
+          <div className="grid grid-cols-3 gap-1 text-center">
+            <div className="bg-muted/50 rounded p-1">
+              <div className="text-[8px] text-muted-foreground">W/L</div>
+              <div className="font-mono text-[10px] font-bold"><span className="text-profit">{wins}</span>/<span className="text-loss">{losses}</span></div>
+            </div>
+            <div className="bg-muted/50 rounded p-1">
+              <div className="text-[8px] text-muted-foreground">Net P/L</div>
+              <div className={`font-mono text-[10px] font-bold ${netProfit >= 0 ? 'text-profit' : 'text-loss'}`}>${netProfit.toFixed(2)}</div>
+            </div>
+            <div className="bg-muted/50 rounded p-1">
+              <div className="text-[8px] text-muted-foreground">Stake</div>
+              <div className="font-mono text-[10px] font-bold text-foreground">${currentStake.toFixed(2)}{martingaleStep > 0 && <span className="text-warning"> M{martingaleStep}</span>}</div>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        {/* ═══ LEFT: Markets + Risk + Strategy ═══ */}
-        <div className="lg:col-span-4 space-y-3">
-          {/* Market 1 */}
-          <div className="bg-card border-2 border-profit/30 rounded-xl p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-profit flex items-center gap-1"><Home className="w-4 h-4" /> 🏠 Market 1 — Home</h3>
-              <Switch checked={m1Enabled} onCheckedChange={setM1Enabled} disabled={isRunning} />
-            </div>
-            {currentMarket === 1 && isRunning && <Badge className="bg-profit text-profit-foreground text-[10px]">ACTIVE</Badge>}
-            <Select value={m1Symbol} onValueChange={v => setM1Symbol(v)} disabled={isRunning}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>{SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name} ({m.symbol})</SelectItem>)}</SelectContent>
-            </Select>
-            <Select value={m1Contract} onValueChange={v => setM1Contract(v)} disabled={isRunning}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-            </Select>
-            {needsBarrier(m1Contract) && (
-              <Input type="number" min="0" max="9" value={m1Barrier} onChange={e => setM1Barrier(e.target.value)}
-                className="h-8 text-xs" placeholder="Barrier (0-9)" disabled={isRunning} />
-            )}
-
-            {/* Virtual Hook M1 */}
-            <div className="border-t border-border/30 pt-2 space-y-1.5">
+      {/* ── Main 2-Column Layout ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-2">
+        {/* ═══ LEFT: Config Column ═══ */}
+        <div className="lg:col-span-4 space-y-2">
+          {/* Market 1 + Market 2 side by side on md */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-2">
+            {/* Market 1 */}
+            <div className="bg-card border-2 border-profit/30 rounded-xl p-2.5 space-y-1.5">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-semibold text-primary flex items-center gap-1">
-                  <Anchor className="w-3 h-3" /> 🎣 Virtual Hook
-                </span>
-                <Switch checked={m1HookEnabled} onCheckedChange={setM1HookEnabled} disabled={isRunning} />
-              </div>
-              {m1HookEnabled && (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[9px] text-muted-foreground">Virtual Loss Count</label>
-                      <Input type="number" min="1" max="20" value={m1VirtualLossCount} onChange={e => setM1VirtualLossCount(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-                    </div>
-                    <div>
-                      <label className="text-[9px] text-muted-foreground">Real After Hook</label>
-                      <Input type="number" min="1" max="10" value={m1RealCount} onChange={e => setM1RealCount(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-                    </div>
-                  </div>
-                  <div className="text-[8px] text-muted-foreground bg-muted/30 rounded p-1.5">
-                    Bot will simulate virtual trades until {m1VirtualLossCount} consecutive losses occur, then execute real trades.
-                  </div>
+                <h3 className="text-xs font-bold text-profit flex items-center gap-1"><Home className="w-3.5 h-3.5" /> M1 — Home</h3>
+                <div className="flex items-center gap-1.5">
+                  {currentMarket === 1 && isRunning && <span className="w-2 h-2 rounded-full bg-profit animate-pulse" />}
+                  <Switch checked={m1Enabled} onCheckedChange={setM1Enabled} disabled={isRunning} />
                 </div>
+              </div>
+              <Select value={m1Symbol} onValueChange={v => setM1Symbol(v)} disabled={isRunning}>
+                <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>{SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name} ({m.symbol})</SelectItem>)}</SelectContent>
+              </Select>
+              <Select value={m1Contract} onValueChange={v => setM1Contract(v)} disabled={isRunning}>
+                <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+              </Select>
+              {needsBarrier(m1Contract) && (
+                <Input type="number" min="0" max="9" value={m1Barrier} onChange={e => setM1Barrier(e.target.value)}
+                  className="h-7 text-xs" placeholder="Barrier (0-9)" disabled={isRunning} />
               )}
+              {/* Virtual Hook M1 */}
+              <div className="border-t border-border/30 pt-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-semibold text-primary flex items-center gap-1">
+                    <Anchor className="w-3 h-3" /> Virtual Hook
+                  </span>
+                  <Switch checked={m1HookEnabled} onCheckedChange={setM1HookEnabled} disabled={isRunning} />
+                </div>
+                {m1HookEnabled && (
+                  <div className="grid grid-cols-2 gap-1.5 mt-1">
+                    <div>
+                      <label className="text-[8px] text-muted-foreground">V-Losses</label>
+                      <Input type="number" min="1" max="20" value={m1VirtualLossCount} onChange={e => setM1VirtualLossCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                    </div>
+                    <div>
+                      <label className="text-[8px] text-muted-foreground">Real Trades</label>
+                      <Input type="number" min="1" max="10" value={m1RealCount} onChange={e => setM1RealCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
 
-          {/* Market 2 */}
-          <div className="bg-card border-2 border-purple-500/30 rounded-xl p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-purple-400 flex items-center gap-1"><RefreshCw className="w-4 h-4" /> 🔄 Market 2 — Recovery</h3>
-              <Switch checked={m2Enabled} onCheckedChange={setM2Enabled} disabled={isRunning} />
-            </div>
-            {currentMarket === 2 && isRunning && <Badge className="bg-destructive text-destructive-foreground text-[10px]">RECOVERY MODE ACTIVE</Badge>}
-            <Select value={m2Symbol} onValueChange={v => setM2Symbol(v)} disabled={isRunning}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>{SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name} ({m.symbol})</SelectItem>)}</SelectContent>
-            </Select>
-            <Select value={m2Contract} onValueChange={v => setM2Contract(v)} disabled={isRunning}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-            </Select>
-            {needsBarrier(m2Contract) && (
-              <Input type="number" min="0" max="9" value={m2Barrier} onChange={e => setM2Barrier(e.target.value)}
-                className="h-8 text-xs" placeholder="Barrier (0-9)" disabled={isRunning} />
-            )}
-
-            {/* Virtual Hook M2 */}
-            <div className="border-t border-border/30 pt-2 space-y-1.5">
+            {/* Market 2 */}
+            <div className="bg-card border-2 border-purple-500/30 rounded-xl p-2.5 space-y-1.5">
               <div className="flex items-center justify-between">
-                <span className="text-[10px] font-semibold text-primary flex items-center gap-1">
-                  <Anchor className="w-3 h-3" /> 🎣 Virtual Hook
-                </span>
-                <Switch checked={m2HookEnabled} onCheckedChange={setM2HookEnabled} disabled={isRunning} />
-              </div>
-              {m2HookEnabled && (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[9px] text-muted-foreground">Virtual Loss Count</label>
-                      <Input type="number" min="1" max="20" value={m2VirtualLossCount} onChange={e => setM2VirtualLossCount(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-                    </div>
-                    <div>
-                      <label className="text-[9px] text-muted-foreground">Real After Hook</label>
-                      <Input type="number" min="1" max="10" value={m2RealCount} onChange={e => setM2RealCount(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-                    </div>
-                  </div>
-                  <div className="text-[8px] text-muted-foreground bg-muted/30 rounded p-1.5">
-                    Bot will simulate virtual trades until {m2VirtualLossCount} consecutive losses occur, then execute real trades.
-                  </div>
+                <h3 className="text-xs font-bold text-purple-400 flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5" /> M2 — Recovery</h3>
+                <div className="flex items-center gap-1.5">
+                  {currentMarket === 2 && isRunning && <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />}
+                  <Switch checked={m2Enabled} onCheckedChange={setM2Enabled} disabled={isRunning} />
                 </div>
+              </div>
+              <Select value={m2Symbol} onValueChange={v => setM2Symbol(v)} disabled={isRunning}>
+                <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>{SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name} ({m.symbol})</SelectItem>)}</SelectContent>
+              </Select>
+              <Select value={m2Contract} onValueChange={v => setM2Contract(v)} disabled={isRunning}>
+                <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+              </Select>
+              {needsBarrier(m2Contract) && (
+                <Input type="number" min="0" max="9" value={m2Barrier} onChange={e => setM2Barrier(e.target.value)}
+                  className="h-7 text-xs" placeholder="Barrier (0-9)" disabled={isRunning} />
               )}
-            </div>
-
-            <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-2 text-[10px] text-purple-300">
-              After a loss on M1, bot switches here until a win occurs, then auto-returns to M1.
+              {/* Virtual Hook M2 */}
+              <div className="border-t border-border/30 pt-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-semibold text-primary flex items-center gap-1">
+                    <Anchor className="w-3 h-3" /> Virtual Hook
+                  </span>
+                  <Switch checked={m2HookEnabled} onCheckedChange={setM2HookEnabled} disabled={isRunning} />
+                </div>
+                {m2HookEnabled && (
+                  <div className="grid grid-cols-2 gap-1.5 mt-1">
+                    <div>
+                      <label className="text-[8px] text-muted-foreground">V-Losses</label>
+                      <Input type="number" min="1" max="20" value={m2VirtualLossCount} onChange={e => setM2VirtualLossCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                    </div>
+                    <div>
+                      <label className="text-[8px] text-muted-foreground">Real Trades</label>
+                      <Input type="number" min="1" max="10" value={m2RealCount} onChange={e => setM2RealCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
           {/* Virtual Hook Stats */}
           {(m1HookEnabled || m2HookEnabled) && (
-            <div className="bg-card border border-primary/30 rounded-xl p-3 space-y-1">
-              <h3 className="text-xs font-semibold text-primary flex items-center gap-1">
-                <Anchor className="w-3.5 h-3.5" /> Virtual Hook Status
+            <div className="bg-card border border-primary/30 rounded-xl p-2.5">
+              <h3 className="text-[10px] font-semibold text-primary flex items-center gap-1 mb-1">
+                <Anchor className="w-3 h-3" /> Hook Status
               </h3>
-              <div className="grid grid-cols-4 gap-2 text-center">
-                <div>
-                  <div className="text-[9px] text-muted-foreground">V-Wins</div>
-                  <div className="font-mono text-sm font-bold text-profit">{vhFakeWins}</div>
+              <div className="grid grid-cols-4 gap-1 text-center">
+                <div className="bg-muted/50 rounded p-1">
+                  <div className="text-[8px] text-muted-foreground">V-Win</div>
+                  <div className="font-mono text-[10px] font-bold text-profit">{vhFakeWins}</div>
                 </div>
-                <div>
-                  <div className="text-[9px] text-muted-foreground">V-Losses</div>
-                  <div className="font-mono text-sm font-bold text-loss">{vhFakeLosses}</div>
+                <div className="bg-muted/50 rounded p-1">
+                  <div className="text-[8px] text-muted-foreground">V-Loss</div>
+                  <div className="font-mono text-[10px] font-bold text-loss">{vhFakeLosses}</div>
                 </div>
-                <div>
-                  <div className="text-[9px] text-muted-foreground">Loss Streak</div>
-                  <div className="font-mono text-sm font-bold text-warning">{vhConsecLosses}</div>
+                <div className="bg-muted/50 rounded p-1">
+                  <div className="text-[8px] text-muted-foreground">Streak</div>
+                  <div className="font-mono text-[10px] font-bold text-warning">{vhConsecLosses}</div>
                 </div>
-                <div>
-                  <div className="text-[9px] text-muted-foreground">Status</div>
-                  <Badge variant="outline" className={`text-[9px] ${
-                    vhStatus === 'confirmed' ? 'text-profit border-profit/50' :
-                    vhStatus === 'failed' ? 'text-loss border-loss/50' :
-                    vhStatus === 'waiting' ? 'text-warning border-warning/50 animate-pulse' :
-                    'text-muted-foreground'
+                <div className="bg-muted/50 rounded p-1">
+                  <div className="text-[8px] text-muted-foreground">State</div>
+                  <div className={`text-[9px] font-bold ${
+                    vhStatus === 'confirmed' ? 'text-profit' :
+                    vhStatus === 'waiting' ? 'text-warning animate-pulse' :
+                    vhStatus === 'failed' ? 'text-loss' : 'text-muted-foreground'
                   }`}>
-                    {vhStatus === 'confirmed' ? '✓ Confirmed' :
-                     vhStatus === 'failed' ? '✗ Failed' :
-                     vhStatus === 'waiting' ? '⏳ Waiting' : 'Idle'}
-                  </Badge>
+                    {vhStatus === 'confirmed' ? '✓' : vhStatus === 'waiting' ? '⏳' : vhStatus === 'failed' ? '✗' : '—'}
+                  </div>
                 </div>
               </div>
             </div>
           )}
 
           {/* Risk */}
-          <div className="bg-card border border-border rounded-xl p-3 space-y-2">
-            <h3 className="text-sm font-semibold text-foreground flex items-center gap-1"><Shield className="w-4 h-4" /> Risk Management</h3>
-            <div>
-              <label className="text-[10px] text-muted-foreground">Stake ($)</label>
-              <Input type="number" min="0.35" step="0.01" value={stake} onChange={e => setStake(e.target.value)} disabled={isRunning} className="h-8 text-xs" />
+          <div className="bg-card border border-border rounded-xl p-2.5 space-y-1.5">
+            <h3 className="text-xs font-semibold text-foreground flex items-center gap-1"><Shield className="w-3.5 h-3.5" /> Risk</h3>
+            <div className="grid grid-cols-3 gap-1.5">
+              <div>
+                <label className="text-[8px] text-muted-foreground">Stake ($)</label>
+                <Input type="number" min="0.35" step="0.01" value={stake} onChange={e => setStake(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
+              </div>
+              <div>
+                <label className="text-[8px] text-muted-foreground">Take Profit</label>
+                <Input type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
+              </div>
+              <div>
+                <label className="text-[8px] text-muted-foreground">Stop Loss</label>
+                <Input type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
+              </div>
             </div>
             <div className="flex items-center justify-between">
-              <label className="text-xs">Martingale</label>
+              <label className="text-[10px] text-foreground">Martingale</label>
               <Switch checked={martingaleOn} onCheckedChange={setMartingaleOn} disabled={isRunning} />
             </div>
             {martingaleOn && (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-1.5">
                 <div>
-                  <label className="text-[10px] text-muted-foreground">Multiplier</label>
-                  <Input type="number" min="1.1" step="0.1" value={martingaleMultiplier} onChange={e => setMartingaleMultiplier(e.target.value)} disabled={isRunning} className="h-8 text-xs" />
+                  <label className="text-[8px] text-muted-foreground">Multiplier</label>
+                  <Input type="number" min="1.1" step="0.1" value={martingaleMultiplier} onChange={e => setMartingaleMultiplier(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
                 </div>
                 <div>
-                  <label className="text-[10px] text-muted-foreground">Max Steps</label>
-                  <Input type="number" min="1" max="10" value={martingaleMaxSteps} onChange={e => setMartingaleMaxSteps(e.target.value)} disabled={isRunning} className="h-8 text-xs" />
+                  <label className="text-[8px] text-muted-foreground">Max Steps</label>
+                  <Input type="number" min="1" max="10" value={martingaleMaxSteps} onChange={e => setMartingaleMaxSteps(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
                 </div>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] text-muted-foreground">Take Profit ($)</label>
-                <Input type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunning} className="h-8 text-xs" />
-              </div>
-              <div>
-                <label className="text-[10px] text-muted-foreground">Stop Loss ($)</label>
-                <Input type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunning} className="h-8 text-xs" />
-              </div>
-            </div>
-            <div className="space-y-1.5 pt-1">
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="enableStrategyM2" checked={strategyEnabled} onChange={e => setStrategyEnabled(e.target.checked)} disabled={isRunning} className="rounded" />
-                <label htmlFor="enableStrategyM2" className="text-xs text-foreground">Enable Strategy (M2)</label>
-              </div>
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="enableStrategyM1" checked={strategyM1Enabled} onChange={e => setStrategyM1Enabled(e.target.checked)} disabled={isRunning} className="rounded" />
-                <label htmlFor="enableStrategyM1" className="text-xs text-foreground">Enable Strategy (M1)</label>
-              </div>
+            <div className="flex items-center gap-3 pt-0.5">
+              <label className="flex items-center gap-1 text-[10px] text-foreground">
+                <input type="checkbox" checked={strategyM1Enabled} onChange={e => setStrategyM1Enabled(e.target.checked)} disabled={isRunning} className="rounded w-3 h-3" />
+                Strategy M1
+              </label>
+              <label className="flex items-center gap-1 text-[10px] text-foreground">
+                <input type="checkbox" checked={strategyEnabled} onChange={e => setStrategyEnabled(e.target.checked)} disabled={isRunning} className="rounded w-3 h-3" />
+                Strategy M2
+              </label>
             </div>
           </div>
 
           {/* Strategy Card */}
           {(strategyEnabled || strategyM1Enabled) && (
-            <div className="bg-card border border-warning/30 rounded-xl p-3 space-y-2">
-              <h3 className="text-sm font-semibold text-warning flex items-center gap-1"><Zap className="w-4 h-4" /> Pattern Strategy</h3>
-              <div className="flex gap-1">
-                <Button size="sm" variant={strategyMode === 'pattern' ? 'default' : 'outline'}
-                  className="text-[10px] h-7 flex-1" onClick={() => setStrategyMode('pattern')} disabled={isRunning}>
-                  Even/Odd Pattern
-                </Button>
-                <Button size="sm" variant={strategyMode === 'digit' ? 'default' : 'outline'}
-                  className="text-[10px] h-7 flex-1" onClick={() => setStrategyMode('digit')} disabled={isRunning}>
-                  Digit Analysis
-                </Button>
+            <div className="bg-card border border-warning/30 rounded-xl p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold text-warning flex items-center gap-1"><Zap className="w-3.5 h-3.5" /> Strategy</h3>
+                <div className="flex gap-0.5">
+                  <Button size="sm" variant={strategyMode === 'pattern' ? 'default' : 'outline'}
+                    className="text-[9px] h-6 px-2" onClick={() => setStrategyMode('pattern')} disabled={isRunning}>
+                    Pattern
+                  </Button>
+                  <Button size="sm" variant={strategyMode === 'digit' ? 'default' : 'outline'}
+                    className="text-[9px] h-6 px-2" onClick={() => setStrategyMode('digit')} disabled={isRunning}>
+                    Digit
+                  </Button>
+                </div>
               </div>
 
               {strategyMode === 'pattern' ? (
-                <div className="space-y-3">
-                  {/* M1 Pattern */}
+                <div className="space-y-1.5">
                   {strategyM1Enabled && (
-                    <div className="space-y-1.5 border border-profit/20 rounded-lg p-2">
-                      <label className="text-[10px] font-semibold text-profit">M1 Pattern</label>
+                    <div className="border border-profit/20 rounded-lg p-1.5 space-y-1">
+                      <label className="text-[9px] font-semibold text-profit">M1 Pattern</label>
                       <Textarea placeholder="E=Even O=Odd e.g. EEEOE" value={m1Pattern}
                         onChange={e => setM1Pattern(e.target.value.toUpperCase().replace(/[^EO]/g, ''))}
-                        disabled={isRunning} className="h-14 text-xs font-mono" />
-                      <div className={`text-[10px] font-mono ${m1PatternValid ? 'text-profit' : 'text-loss'}`}>
-                        {cleanM1Pattern.length === 0 ? 'Enter M1 pattern...' :
-                          m1PatternValid ? `✓ ${cleanM1Pattern} (${cleanM1Pattern.length} chars)` :
-                            `✗ Too short (need 2+)`}
+                        disabled={isRunning} className="h-10 text-[10px] font-mono min-h-0" />
+                      <div className={`text-[9px] font-mono ${m1PatternValid ? 'text-profit' : 'text-loss'}`}>
+                        {cleanM1Pattern.length === 0 ? 'Enter pattern...' :
+                          m1PatternValid ? `✓ ${cleanM1Pattern}` : `✗ Need 2+`}
                       </div>
                     </div>
                   )}
-                  {/* M2 Pattern */}
                   {strategyEnabled && (
-                    <div className="space-y-1.5 border border-destructive/20 rounded-lg p-2">
-                      <label className="text-[10px] font-semibold text-destructive">M2 Pattern</label>
+                    <div className="border border-destructive/20 rounded-lg p-1.5 space-y-1">
+                      <label className="text-[9px] font-semibold text-destructive">M2 Pattern</label>
                       <Textarea placeholder="E=Even O=Odd e.g. OOEEO" value={m2Pattern}
                         onChange={e => setM2Pattern(e.target.value.toUpperCase().replace(/[^EO]/g, ''))}
-                        disabled={isRunning} className="h-14 text-xs font-mono" />
-                      <div className={`text-[10px] font-mono ${m2PatternValid ? 'text-profit' : 'text-loss'}`}>
-                        {cleanM2Pattern.length === 0 ? 'Enter M2 pattern...' :
-                          m2PatternValid ? `✓ ${cleanM2Pattern} (${cleanM2Pattern.length} chars)` :
-                            `✗ Too short (need 2+)`}
+                        disabled={isRunning} className="h-10 text-[10px] font-mono min-h-0" />
+                      <div className={`text-[9px] font-mono ${m2PatternValid ? 'text-profit' : 'text-loss'}`}>
+                        {cleanM2Pattern.length === 0 ? 'Enter pattern...' :
+                          m2PatternValid ? `✓ ${cleanM2Pattern}` : `✗ Need 2+`}
                       </div>
                     </div>
                   )}
-                  <div className="text-[8px] text-muted-foreground bg-muted/30 rounded p-1.5">
-                    Mode: Trade Once per match
-                  </div>
                 </div>
               ) : (
-                <div className="space-y-3">
-                  {/* M1 Digit */}
+                <div className="space-y-1.5">
                   {strategyM1Enabled && (
-                    <div className="space-y-1.5 border border-profit/20 rounded-lg p-2">
-                      <label className="text-[10px] font-semibold text-profit">M1 Digit Condition</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <label className="text-[9px] text-muted-foreground">Condition</label>
-                          <Select value={m1DigitCondition} onValueChange={setM1DigitCondition} disabled={isRunning}>
-                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div>
-                          <label className="text-[9px] text-muted-foreground">Value</label>
-                          <Input type="number" min="0" max="9" value={m1DigitCompare} onChange={e => setM1DigitCompare(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-                        </div>
-                        <div>
-                          <label className="text-[9px] text-muted-foreground">Window</label>
-                          <Input type="number" min="1" max="50" value={m1DigitWindow} onChange={e => setM1DigitWindow(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-                        </div>
+                    <div className="border border-profit/20 rounded-lg p-1.5">
+                      <label className="text-[9px] font-semibold text-profit">M1 Digit</label>
+                      <div className="grid grid-cols-3 gap-1 mt-0.5">
+                        <Select value={m1DigitCondition} onValueChange={setM1DigitCondition} disabled={isRunning}>
+                          <SelectTrigger className="h-6 text-[10px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <Input type="number" min="0" max="9" value={m1DigitCompare} onChange={e => setM1DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                        <Input type="number" min="1" max="50" value={m1DigitWindow} onChange={e => setM1DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                       </div>
                     </div>
                   )}
-                  {/* M2 Digit */}
                   {strategyEnabled && (
-                    <div className="space-y-1.5 border border-destructive/20 rounded-lg p-2">
-                      <label className="text-[10px] font-semibold text-destructive">M2 Digit Condition</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <label className="text-[9px] text-muted-foreground">Condition</label>
-                          <Select value={m2DigitCondition} onValueChange={setM2DigitCondition} disabled={isRunning}>
-                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div>
-                          <label className="text-[9px] text-muted-foreground">Value</label>
-                          <Input type="number" min="0" max="9" value={m2DigitCompare} onChange={e => setM2DigitCompare(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-                        </div>
-                        <div>
-                          <label className="text-[9px] text-muted-foreground">Window</label>
-                          <Input type="number" min="1" max="50" value={m2DigitWindow} onChange={e => setM2DigitWindow(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-                        </div>
+                    <div className="border border-destructive/20 rounded-lg p-1.5">
+                      <label className="text-[9px] font-semibold text-destructive">M2 Digit</label>
+                      <div className="grid grid-cols-3 gap-1 mt-0.5">
+                        <Select value={m2DigitCondition} onValueChange={setM2DigitCondition} disabled={isRunning}>
+                          <SelectTrigger className="h-6 text-[10px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <Input type="number" min="0" max="9" value={m2DigitCompare} onChange={e => setM2DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                        <Input type="number" min="1" max="50" value={m2DigitWindow} onChange={e => setM2DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                       </div>
                     </div>
                   )}
@@ -994,48 +982,27 @@ export default function ProScannerBot() {
               )}
 
               {botStatus === 'waiting_pattern' && (
-                <div className="bg-warning/10 border border-warning/30 rounded-lg p-2 text-[10px] text-warning animate-pulse text-center font-semibold">
+                <div className="bg-warning/10 border border-warning/30 rounded p-1.5 text-[9px] text-warning animate-pulse text-center font-semibold">
                   ⏳ WAITING FOR PATTERN...
                 </div>
               )}
               {botStatus === 'pattern_matched' && (
-                <div className="bg-profit/10 border border-profit/30 rounded-lg p-2 text-[10px] text-profit text-center font-semibold animate-pulse">
+                <div className="bg-profit/10 border border-profit/30 rounded p-1.5 text-[9px] text-profit text-center font-semibold animate-pulse">
                   ✅ PATTERN MATCHED!
                 </div>
               )}
             </div>
           )}
-
-          {isRunning && (
-            <div className={`text-center text-xs font-semibold py-1.5 rounded-lg ${
-              currentMarket === 1 ? 'bg-profit/10 text-profit' : 'bg-purple-500/10 text-purple-400'
-            }`}>
-              {currentMarket === 1 ? '🏠 M1: HOME' : '🔄 M2: RECOVERY'}
-            </div>
-          )}
         </div>
 
-        {/* ═══ CENTER: Stats + Digit Stream ═══ */}
-        <div className="lg:col-span-4 space-y-3">
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { label: 'Wins', value: wins, color: 'text-profit' },
-              { label: 'Losses', value: losses, color: 'text-loss' },
-              { label: 'Total Staked', value: `$${totalStaked.toFixed(2)}`, color: 'text-primary' },
-              { label: 'Net Profit', value: `$${netProfit.toFixed(2)}`, color: netProfit >= 0 ? 'text-profit' : 'text-loss' },
-              { label: 'Current Stake', value: `$${currentStake.toFixed(2)}${martingaleStep > 0 ? ` M${martingaleStep}` : ''}`, color: 'text-foreground' },
-              { label: 'Win Rate', value: `${winRate}%`, color: 'text-primary' },
-            ].map(s => (
-              <div key={s.label} className="bg-card border border-border rounded-xl p-2.5 text-center">
-                <div className="text-[9px] text-muted-foreground uppercase">{s.label}</div>
-                <div className={`font-mono text-sm font-bold ${s.color}`}>{s.value}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Live Digit Stream */}
-          <div className="bg-card border border-border rounded-xl p-3">
-            <h3 className="text-xs font-semibold text-foreground mb-2">Live Digit Stream — {activeSymbol}</h3>
+        {/* ═══ RIGHT: Digit Stream + Activity Log ═══ */}
+        <div className="lg:col-span-8 space-y-2">
+          {/* Digit Stream */}
+          <div className="bg-card border border-border rounded-xl p-2.5">
+            <div className="flex items-center justify-between mb-1.5">
+              <h3 className="text-[10px] font-semibold text-foreground">Live Digits — {activeSymbol}</h3>
+              <span className="text-[9px] text-muted-foreground font-mono">Win Rate: {winRate}% | Staked: ${totalStaked.toFixed(2)}</span>
+            </div>
             <div className="flex gap-1 justify-center">
               {activeDigits.length === 0 ? (
                 <span className="text-[10px] text-muted-foreground">Waiting for ticks...</span>
@@ -1044,96 +1011,94 @@ export default function ProScannerBot() {
                 const isEven = d % 2 === 0;
                 const isLast = i === activeDigits.length - 1;
                 return (
-                  <div key={i} className={`w-9 h-12 rounded-lg flex flex-col items-center justify-center text-xs font-mono font-bold border ${
+                  <div key={i} className={`w-8 h-10 rounded-lg flex flex-col items-center justify-center text-xs font-mono font-bold border ${
                     isLast ? 'ring-2 ring-primary' : ''
                   } ${isOver ? 'bg-loss/10 border-loss/30 text-loss' : 'bg-profit/10 border-profit/30 text-profit'}`}>
                     <span className="text-sm">{d}</span>
-                    <span className="text-[8px] opacity-60">{isOver ? 'O' : 'U'}{isEven ? 'E' : 'O'}</span>
+                    <span className="text-[7px] opacity-60">{isOver ? 'O' : 'U'}{isEven ? 'E' : 'O'}</span>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          <div className="bg-card border border-border rounded-xl p-3 text-center">
-            <div className="text-[10px] text-muted-foreground">Live Balance</div>
-            <div className="font-mono text-lg font-bold text-foreground">${balance.toFixed(2)}</div>
-          </div>
-        </div>
-
-        {/* ═══ RIGHT: Activity Log ═══ */}
-        <div className="lg:col-span-4 space-y-3">
+          {/* Activity Log */}
           <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="p-2.5 border-b border-border flex items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-foreground">Activity Log</h3>
+            <div className="px-2.5 py-2 border-b border-border flex items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold text-foreground">Activity Log</h3>
               <div className="flex items-center gap-1.5">
+                {logEntries.length > 0 && logEntries[0].switchInfo && (
+                  <span className="text-[9px] text-muted-foreground font-mono hidden md:inline truncate max-w-[200px]">
+                    {logEntries[0].switchInfo}
+                  </span>
+                )}
                 {!isRunning ? (
                   <Button onClick={startBot} disabled={!isAuthorized || balance < parseFloat(stake)}
-                    size="sm" className="h-8 text-xs font-bold bg-profit hover:bg-profit/90 text-profit-foreground">
-                    <Play className="w-3.5 h-3.5 mr-1" /> START
+                    size="sm" className="h-7 text-[10px] font-bold bg-profit hover:bg-profit/90 text-profit-foreground px-3">
+                    <Play className="w-3 h-3 mr-1" /> START
                   </Button>
                 ) : (
-                  <Button onClick={stopBot} variant="destructive" size="sm" className="h-8 text-xs font-bold">
-                    <StopCircle className="w-3.5 h-3.5 mr-1" /> STOP
+                  <Button onClick={stopBot} variant="destructive" size="sm" className="h-7 text-[10px] font-bold px-3">
+                    <StopCircle className="w-3 h-3 mr-1" /> STOP
                   </Button>
                 )}
-                <Button variant="ghost" size="sm" onClick={clearLog} className="h-8 text-[10px] text-muted-foreground hover:text-loss">
+                <Button variant="ghost" size="sm" onClick={clearLog} className="h-7 w-7 p-0 text-muted-foreground hover:text-loss">
                   <Trash2 className="w-3 h-3" />
                 </Button>
               </div>
             </div>
-            <div className="max-h-[500px] overflow-auto">
+            <div className="max-h-[calc(100vh-380px)] min-h-[300px] overflow-auto">
               <table className="w-full text-[10px]">
                 <thead className="text-[9px] text-muted-foreground bg-muted/30 sticky top-0">
                   <tr>
                     <th className="text-left p-1.5">Time</th>
-                    <th className="text-left p-1.5">Mkt</th>
-                    <th className="text-left p-1.5">Symbol</th>
-                    <th className="text-left p-1.5">Type</th>
-                    <th className="text-right p-1.5">Stake</th>
-                    <th className="text-center p-1.5">Digit</th>
-                    <th className="text-center p-1.5">Result</th>
-                    <th className="text-right p-1.5">P/L</th>
-                    <th className="text-right p-1.5">Bal</th>
-                    <th className="text-center p-1.5">Action</th>
+                    <th className="text-left p-1">Mkt</th>
+                    <th className="text-left p-1">Symbol</th>
+                    <th className="text-left p-1">Type</th>
+                    <th className="text-right p-1">Stake</th>
+                    <th className="text-center p-1">Digit</th>
+                    <th className="text-center p-1">Result</th>
+                    <th className="text-right p-1">P/L</th>
+                    <th className="text-right p-1">Bal</th>
+                    <th className="text-center p-1">⏹</th>
                   </tr>
                 </thead>
                 <tbody>
                   {logEntries.length === 0 ? (
-                    <tr><td colSpan={10} className="text-center text-muted-foreground py-6">No trades yet</td></tr>
+                    <tr><td colSpan={10} className="text-center text-muted-foreground py-8">No trades yet — configure and start the bot</td></tr>
                   ) : logEntries.map(e => (
                     <tr key={e.id} className={`border-t border-border/30 hover:bg-muted/20 ${
                       e.market === 'M1' ? 'border-l-2 border-l-profit' :
                       e.market === 'VH' ? 'border-l-2 border-l-primary' :
                       'border-l-2 border-l-purple-500'
                     }`}>
-                      <td className="p-1.5 font-mono">{e.time}</td>
-                      <td className={`p-1.5 font-bold ${
+                      <td className="p-1 font-mono text-[9px]">{e.time}</td>
+                      <td className={`p-1 font-bold ${
                         e.market === 'M1' ? 'text-profit' :
                         e.market === 'VH' ? 'text-primary' :
                         'text-purple-400'
                       }`}>{e.market}</td>
-                      <td className="p-1.5 font-mono">{e.symbol}</td>
-                      <td className="p-1.5">{e.contract.replace('DIGIT', '')}</td>
-                      <td className="p-1.5 font-mono text-right">
+                      <td className="p-1 font-mono text-[9px]">{e.symbol}</td>
+                      <td className="p-1 text-[9px]">{e.contract.replace('DIGIT', '')}</td>
+                      <td className="p-1 font-mono text-right text-[9px]">
                         {e.market === 'VH' ? 'FAKE' : `$${e.stake.toFixed(2)}`}
                         {e.martingaleStep > 0 && e.market !== 'VH' && <span className="text-warning ml-0.5">M{e.martingaleStep}</span>}
                       </td>
-                      <td className="p-1.5 text-center font-mono">{e.exitDigit}</td>
-                      <td className="p-1.5 text-center">
-                        <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
+                      <td className="p-1 text-center font-mono">{e.exitDigit}</td>
+                      <td className="p-1 text-center">
+                        <span className={`px-1 py-0.5 rounded-full text-[8px] font-bold ${
                           e.result === 'Win' || e.result === 'V-Win' ? 'bg-profit/20 text-profit' :
                           e.result === 'Loss' || e.result === 'V-Loss' ? 'bg-loss/20 text-loss' :
                           'bg-warning/20 text-warning animate-pulse'
                         }`}>{e.result === 'Pending' ? '...' : e.result}</span>
                       </td>
-                      <td className={`p-1.5 font-mono text-right ${e.pnl > 0 ? 'text-profit' : e.pnl < 0 ? 'text-loss' : ''}`}>
+                      <td className={`p-1 font-mono text-right text-[9px] ${e.pnl > 0 ? 'text-profit' : e.pnl < 0 ? 'text-loss' : ''}`}>
                         {e.result === 'Pending' ? '...' : e.market === 'VH' ? '-' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
                       </td>
-                      <td className="p-1.5 font-mono text-right">{e.market === 'VH' ? '-' : `$${e.balance.toFixed(2)}`}</td>
-                      <td className="p-1.5 text-center">
+                      <td className="p-1 font-mono text-right text-[9px]">{e.market === 'VH' ? '-' : `$${e.balance.toFixed(2)}`}</td>
+                      <td className="p-1 text-center">
                         {isRunning && (
-                          <button onClick={stopBot} className="px-1.5 py-0.5 rounded bg-destructive/80 hover:bg-destructive text-destructive-foreground text-[9px] font-bold transition-colors" title="Stop Bot">
+                          <button onClick={stopBot} className="px-1 py-0.5 rounded bg-destructive/80 hover:bg-destructive text-destructive-foreground text-[8px] font-bold transition-colors" title="Stop Bot">
                             ■
                           </button>
                         )}
@@ -1144,11 +1109,6 @@ export default function ProScannerBot() {
               </table>
             </div>
           </div>
-          {logEntries.length > 0 && logEntries[0].switchInfo && (
-            <div className="text-[10px] text-muted-foreground bg-card border border-border rounded-lg p-2 font-mono">
-              Last: {logEntries[0].switchInfo}
-            </div>
-          )}
         </div>
       </div>
     </div>
