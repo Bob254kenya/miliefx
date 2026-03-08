@@ -138,7 +138,6 @@ export default function AutoTrade() {
 
     while (runningRef.current && tradeCount < maxTradeCount) {
       if (pausedRef.current) { await new Promise(r => setTimeout(r, 500)); continue; }
-      if (balance < stake) { toast.error('Insufficient balance'); runningRef.current = false; break; }
 
       try {
         const mkt = config.market;
@@ -171,7 +170,7 @@ export default function AutoTrade() {
 
         if (config.martingale) {
           if (won) stake = parseFloat(config.stake);
-          else stake *= mult;
+          else stake = Math.round(stake * mult * 100) / 100;
         } else { stake = parseFloat(config.stake); }
         setCurrentStake(stake);
 
@@ -210,7 +209,6 @@ export default function AutoTrade() {
 
     while (recoveryRunningRef.current && tradeCount < maxTradeCount) {
       if (recoveryPausedRef.current) { await new Promise(r => setTimeout(r, 500)); continue; }
-      if (balance < stake) { toast.error('Insufficient balance'); recoveryRunningRef.current = false; break; }
 
       try {
         const mkt = config.market;
@@ -279,7 +277,7 @@ export default function AutoTrade() {
           if (activeBotType === 'even_odd' || activeBotType === 'matches_differs' || activeBotType === 'rise_fall') {
             alternateToggle = !alternateToggle;
           }
-          if (config.martingale) stake *= mult;
+          if (config.martingale) stake = Math.round(stake * mult * 100) / 100;
         }
         setCurrentStake(stake);
 

@@ -283,6 +283,7 @@ export default function TradingChart() {
     maxTrades: '50',
   });
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
+  const [turboMode, setTurboMode] = useState(false);
 
   /* ── Load history + subscribe ── */
   useEffect(() => {
@@ -849,7 +850,7 @@ export default function TradingChart() {
           if (voiceEnabled && trades % 5 === 0) speak(`Trade ${trades} won. Total profit ${pnl.toFixed(2)}`);
         } else {
           losses++; consLosses++;
-          stake = mart ? stake * mult : baseStake;
+          stake = mart ? Math.round(stake * mult * 100) / 100 : baseStake;
           if (voiceEnabled) speak(`Loss ${consLosses}. ${mart ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
         }
         setBotStats({ trades, wins, losses, pnl, currentStake: stake, consecutiveLosses: consLosses });
@@ -1234,11 +1235,23 @@ export default function TradingChart() {
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
                 <Zap className="w-3.5 h-3.5 text-primary" /> Auto Trading Bot
               </h3>
-              {botRunning && (
-                <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ repeat: Infinity, duration: 1.5 }}>
-                  <Badge className="text-[8px] bg-profit text-profit-foreground">RUNNING</Badge>
-                </motion.div>
-              )}
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant={turboMode ? 'default' : 'outline'}
+                  className={`h-6 text-[9px] px-2 ${turboMode ? 'bg-profit hover:bg-profit/90 text-profit-foreground animate-pulse' : ''}`}
+                  onClick={() => setTurboMode(!turboMode)}
+                  disabled={botRunning}
+                >
+                  <Zap className="w-3 h-3 mr-0.5" />
+                  {turboMode ? '⚡ TURBO' : 'Turbo'}
+                </Button>
+                {botRunning && (
+                  <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ repeat: Infinity, duration: 1.5 }}>
+                    <Badge className="text-[8px] bg-profit text-profit-foreground">RUNNING</Badge>
+                  </motion.div>
+                )}
+              </div>
             </div>
 
             <Select value={botConfig.contractType} onValueChange={v => setBotConfig(p => ({ ...p, contractType: v }))} disabled={botRunning}>
