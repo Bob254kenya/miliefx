@@ -315,7 +315,6 @@ export default function ProScannerBot() {
     let cStake = baseStake;
     let mStep = 0;
     let inRecovery = false;
-    let tuwLocked = false; // TUW: after pattern loss, skip pattern until win
     let localPnl = 0;
     let localBalance = balance;
 
