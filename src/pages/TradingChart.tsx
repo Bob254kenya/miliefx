@@ -1065,6 +1065,68 @@ export default function TradingChart() {
 
         {/* ═══ RIGHT: Signals + Trade + Tech ═══ */}
         <div className="xl:col-span-4 space-y-3">
+          {/* Voice AI Toggle */}
+          <div className="bg-card border border-primary/30 rounded-xl p-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
+                <Zap className="w-3.5 h-3.5 text-primary" /> AI Voice Signals
+              </h3>
+              <Button
+                size="sm"
+                variant={voiceEnabled ? 'default' : 'outline'}
+                className="h-7 text-[10px] gap-1"
+                onClick={() => {
+                  setVoiceEnabled(!voiceEnabled);
+                  if (!voiceEnabled) {
+                    const u = new SpeechSynthesisUtterance('Voice signals enabled');
+                    u.rate = 1.1;
+                    window.speechSynthesis?.speak(u);
+                  } else {
+                    window.speechSynthesis?.cancel();
+                  }
+                }}
+              >
+                {voiceEnabled ? <Volume2 className="w-3 h-3" /> : <VolumeX className="w-3 h-3" />}
+                {voiceEnabled ? 'ON' : 'OFF'}
+              </Button>
+            </div>
+            {voiceEnabled && (
+              <p className="text-[9px] text-muted-foreground mt-1">🔊 AI will announce strong signals across timeframes</p>
+            )}
+          </div>
+
+          {/* Multi-Timeframe Rise/Fall Predictions */}
+          <div className="bg-card border border-border rounded-xl p-3 space-y-2">
+            <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5 text-primary" /> Rise/Fall Predictions
+            </h3>
+            <div className="space-y-1.5">
+              {multiTfPredictions.map(p => (
+                <div key={p.tf} className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono font-bold w-8 text-muted-foreground">{p.tf}</span>
+                  <div className="flex-1 h-5 bg-muted rounded-full overflow-hidden relative">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${p.confidence}%` }}
+                      transition={{ duration: 0.6 }}
+                      className={`h-full rounded-full ${p.direction === 'Rise' ? 'bg-profit' : 'bg-loss'}`}
+                    />
+                    <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold text-foreground">
+                      {p.direction} {p.confidence}%
+                    </span>
+                  </div>
+                  {p.direction === 'Rise' 
+                    ? <TrendingUp className="w-3.5 h-3.5 text-profit" />
+                    : <TrendingDown className="w-3.5 h-3.5 text-loss" />
+                  }
+                </div>
+              ))}
+            </div>
+            <div className="text-[8px] text-muted-foreground text-center mt-1">
+              Based on RSI, EMA crossover & SMA position analysis
+            </div>
+          </div>
+
           {/* Trading Signals */}
           <div className="grid grid-cols-2 gap-2">
             {/* Rise/Fall */}
@@ -1173,13 +1235,75 @@ export default function TradingChart() {
               <div className="text-[9px] text-primary">Auto-suggestion: Digit {selectedDigit} ({percentages[selectedDigit]?.toFixed(1)}%)</div>
             )}
             <div className="grid grid-cols-2 gap-2">
-              <Button onClick={() => handleBuy('buy')} className="h-9 text-xs font-bold bg-profit hover:bg-profit/90 text-profit-foreground">
-                <ArrowUp className="w-3 h-3 mr-1" /> BUY
+              <Button onClick={() => handleBuy('buy')} disabled={isTrading} className="h-9 text-xs font-bold bg-profit hover:bg-profit/90 text-profit-foreground">
+                {isTrading ? <span className="animate-spin">⏳</span> : <ArrowUp className="w-3 h-3 mr-1" />} BUY
               </Button>
-              <Button onClick={() => handleBuy('sell')} className="h-9 text-xs font-bold bg-loss hover:bg-loss/90 text-loss-foreground">
-                <ArrowDown className="w-3 h-3 mr-1" /> SELL
+              <Button onClick={() => handleBuy('sell')} disabled={isTrading} className="h-9 text-xs font-bold bg-loss hover:bg-loss/90 text-loss-foreground">
+                {isTrading ? <span className="animate-spin">⏳</span> : <ArrowDown className="w-3 h-3 mr-1" />} SELL
               </Button>
             </div>
+          </div>
+
+          {/* Bot Progress */}
+          <div className="bg-card border border-border rounded-xl p-3 space-y-2">
+            <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
+              <Trophy className="w-3.5 h-3.5 text-primary" /> Trade Progress
+            </h3>
+            <div className="grid grid-cols-4 gap-1.5">
+              <div className="bg-muted/30 rounded-lg p-1.5 text-center">
+                <div className="text-[8px] text-muted-foreground">Trades</div>
+                <div className="font-mono text-sm font-bold text-foreground">{totalTrades}</div>
+              </div>
+              <div className="bg-profit/10 rounded-lg p-1.5 text-center">
+                <div className="text-[8px] text-profit">Wins</div>
+                <div className="font-mono text-sm font-bold text-profit">{wins}</div>
+              </div>
+              <div className="bg-loss/10 rounded-lg p-1.5 text-center">
+                <div className="text-[8px] text-loss">Losses</div>
+                <div className="font-mono text-sm font-bold text-loss">{losses}</div>
+              </div>
+              <div className={`${totalProfit >= 0 ? 'bg-profit/10' : 'bg-loss/10'} rounded-lg p-1.5 text-center`}>
+                <div className="text-[8px] text-muted-foreground">P/L</div>
+                <div className={`font-mono text-sm font-bold ${totalProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
+                  {totalProfit >= 0 ? '+' : ''}{totalProfit.toFixed(2)}
+                </div>
+              </div>
+            </div>
+            {totalTrades > 0 && (
+              <div>
+                <div className="flex justify-between text-[9px] text-muted-foreground mb-0.5">
+                  <span>Win Rate</span>
+                  <span className="font-mono font-bold">{winRate.toFixed(1)}%</span>
+                </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full bg-profit rounded-full" style={{ width: `${winRate}%` }} />
+                </div>
+              </div>
+            )}
+
+            {/* Trade History */}
+            {tradeHistory.length > 0 && (
+              <div className="max-h-40 overflow-auto space-y-1">
+                {tradeHistory.slice(0, 10).map(t => (
+                  <div key={t.id} className={`flex items-center justify-between text-[9px] p-1.5 rounded-lg border ${
+                    t.status === 'open' ? 'border-primary/30 bg-primary/5' :
+                    t.status === 'won' ? 'border-profit/30 bg-profit/5' :
+                    'border-loss/30 bg-loss/5'
+                  }`}>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`font-bold ${t.status === 'won' ? 'text-profit' : t.status === 'lost' ? 'text-loss' : 'text-primary'}`}>
+                        {t.status === 'open' ? '⏳' : t.status === 'won' ? '✅' : '❌'}
+                      </span>
+                      <span className="font-mono text-muted-foreground">{t.type}</span>
+                      <span className="text-muted-foreground">${t.stake.toFixed(2)}</span>
+                    </div>
+                    <span className={`font-mono font-bold ${t.profit >= 0 ? 'text-profit' : 'text-loss'}`}>
+                      {t.status === 'open' ? '...' : `${t.profit >= 0 ? '+' : ''}$${t.profit.toFixed(2)}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Technical Status */}
