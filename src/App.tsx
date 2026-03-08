@@ -20,6 +20,7 @@ import ProScannerBot from "@/pages/ProScannerBot";
 import TradingChart from "@/pages/TradingChart";
 import TradeHistory from "@/pages/TradeHistory";
 import SettingsPage from "@/pages/SettingsPage";
+import CopyTradingManager from "@/pages/CopyTradingManager";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -152,6 +153,7 @@ function AppRoutes() {
         <Route path="/chart" element={<TradingChart />} />
         <Route path="/history" element={<TradeHistory />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/copy-trading" element={<CopyTradingManager />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

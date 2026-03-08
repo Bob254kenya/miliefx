@@ -2,7 +2,7 @@ import { NavLink } from '@/components/NavLink';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLossRequirement } from '@/hooks/useLossRequirement';
 import {
-  LayoutDashboard, BarChart3, Activity, Bot, Cpu, Zap,
+  LayoutDashboard, BarChart3, Activity, Bot, Cpu, Zap, Users,
   History, Settings, LogOut, ChevronDown, RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,7 @@ const navItems = [
   { title: 'Live Scanner', url: '/markets', icon: BarChart3 },
   { title: 'Smart Signal Bot', url: '/smart-bot', icon: Zap },
   { title: 'Auto Trade', url: '/auto-trade', icon: Bot },
+  { title: 'Copy Trading', url: '/copy-trading', icon: Users },
   { title: 'Account', url: '/settings', icon: Settings },
 ];
 
