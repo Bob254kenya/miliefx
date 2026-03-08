@@ -59,7 +59,7 @@ const GROUPS = [
 
 const TIMEFRAMES = ['1m','3m','5m','15m','30m','1h','4h','12h','1d'];
 const TF_TICKS: Record<string,number> = {
-  '1m':60,'3m':180,'5m':300,'15m':450,'30m':600,'1h':800,'4h':900,'12h':950,'1d':1000,
+  '1m':1000,'3m':2000,'5m':3000,'15m':4000,'30m':4500,'1h':5000,'4h':5000,'12h':5000,'1d':5000,
 };
 
 const CONTRACT_TYPES = [
@@ -219,6 +219,13 @@ export default function TradingChart() {
   const subscribedRef = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Zoom & pan state
+  const [candleWidth, setCandleWidth] = useState(7); // px per candle (zoom)
+  const [scrollOffset, setScrollOffset] = useState(0); // candles from right edge
+  const isDragging = useRef(false);
+  const dragStartX = useRef(0);
+  const dragStartOffset = useRef(0);
+
   // Trade panel
   const [contractType, setContractType] = useState('CALL');
   const [prediction, setPrediction] = useState('5');
@@ -236,18 +243,19 @@ export default function TradingChart() {
       if (!derivApi.isConnected) { setIsLoading(false); return; }
       setIsLoading(true);
       try {
-        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, 1000);
+        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, 5000);
         if (!active) return;
         setPrices(hist.history.prices || []);
         setTimes(hist.history.times || []);
+        setScrollOffset(0);
         setIsLoading(false);
 
         if (!subscribedRef.current) {
           subscribedRef.current = true;
           await derivApi.subscribeTicks(symbol as MarketSymbol, (data: any) => {
             if (!active || !data.tick) return;
-            setPrices(prev => [...prev, data.tick.quote].slice(-1000));
-            setTimes(prev => [...prev, data.tick.epoch].slice(-1000));
+            setPrices(prev => [...prev, data.tick.quote].slice(-5000));
+            setTimes(prev => [...prev, data.tick.epoch].slice(-5000));
           });
         }
       } catch (err) {
@@ -334,6 +342,56 @@ export default function TradingChart() {
   const bbSeries = useMemo(() => calcBBSeries(tfPrices, 20, 2), [tfPrices]);
   const rsiSeries = useMemo(() => calcRSISeries(tfPrices, 14), [tfPrices]);
 
+  // Canvas mouse handlers for zoom & pan
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        // Zoom
+        setCandleWidth(prev => Math.max(2, Math.min(20, prev - Math.sign(e.deltaY))));
+      } else {
+        // Scroll
+        const delta = Math.sign(e.deltaY) * Math.max(3, Math.floor(candles.length * 0.03));
+        setScrollOffset(prev => Math.max(0, Math.min(candles.length - 10, prev + delta)));
+      }
+    };
+
+    const onMouseDown = (e: MouseEvent) => {
+      isDragging.current = true;
+      dragStartX.current = e.clientX;
+      dragStartOffset.current = scrollOffset;
+      canvas.style.cursor = 'grabbing';
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const dx = dragStartX.current - e.clientX;
+      const candlesPerPx = 1 / (candleWidth + 1);
+      const delta = Math.round(dx * candlesPerPx);
+      setScrollOffset(Math.max(0, Math.min(candles.length - 10, dragStartOffset.current + delta)));
+    };
+
+    const onMouseUp = () => {
+      isDragging.current = false;
+      canvas.style.cursor = 'crosshair';
+    };
+
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    canvas.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      canvas.removeEventListener('wheel', onWheel);
+      canvas.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [candles.length, scrollOffset, candleWidth]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || candles.length < 2) return;
@@ -347,8 +405,8 @@ export default function TradingChart() {
     ctx.scale(dpr, dpr);
     const W = rect.width;
     const totalH = rect.height;
-    const rsiH = 80; // RSI subplot height
-    const H = totalH - rsiH - 8; // main chart area
+    const rsiH = 80;
+    const H = totalH - rsiH - 8;
     const priceAxisW = 70;
     const chartW = W - priceAxisW;
 
@@ -356,8 +414,19 @@ export default function TradingChart() {
     ctx.fillStyle = '#0D1117';
     ctx.fillRect(0, 0, W, totalH);
 
+    // ── Visible candles based on zoom & scroll ──
+    const gap = 1;
+    const totalCandleW = candleWidth + gap;
+    const maxVisible = Math.floor(chartW / totalCandleW);
+    const endIdx = candles.length - scrollOffset;
+    const startIdx = Math.max(0, endIdx - maxVisible);
+    const visibleCandles = candles.slice(startIdx, endIdx);
+    const visibleEndIndices = candleEndIndices.slice(startIdx, endIdx);
+
+    if (visibleCandles.length < 1) return;
+
     // ── Price scale ──
-    const allPrices = candles.flatMap(c => [c.high, c.low]);
+    const allPrices = visibleCandles.flatMap(c => [c.high, c.low]);
     const rawMin = Math.min(...allPrices);
     const rawMax = Math.max(...allPrices);
     const padding = (rawMax - rawMin) * 0.08 || 0.001;
@@ -383,17 +452,9 @@ export default function TradingChart() {
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
     }
 
-    // ── Candle geometry ──
-    const maxCandles = Math.min(candles.length, 120); // show last 120 candles max
-    const visibleCandles = candles.slice(-maxCandles);
-    const visibleEndIndices = candleEndIndices.slice(-maxCandles);
-    const gap = 1;
-    const candleW = Math.max(3, Math.min(12, (chartW - 10) / maxCandles - gap));
-    const totalCandleW = candleW + gap;
-    const offsetX = chartW - maxCandles * totalCandleW - 5;
+    // ── Draw helpers ──
+    const offsetX = 5;
 
-    // ── Draw BB bands as filled area + lines ──
-    // Collect per-candle BB values
     const drawLine = (values: (number | null)[], color: string, width: number, dash: number[] = []) => {
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
@@ -405,7 +466,7 @@ export default function TradingChart() {
         if (idx === undefined) continue;
         const v = idx < values.length ? values[idx] : null;
         if (v === null) continue;
-        const x = offsetX + i * totalCandleW + candleW / 2;
+        const x = offsetX + i * totalCandleW + candleWidth / 2;
         const y = toY(v);
         if (!started) { ctx.moveTo(x, y); started = true; }
         else ctx.lineTo(x, y);
@@ -414,10 +475,8 @@ export default function TradingChart() {
       ctx.setLineDash([]);
     };
 
-    // BB fill area
+    // ── BB fill area ──
     ctx.fillStyle = 'rgba(188, 140, 255, 0.06)';
-    ctx.beginPath();
-    let fillStarted = false;
     const bbUpperPoints: {x: number, y: number}[] = [];
     const bbLowerPoints: {x: number, y: number}[] = [];
     for (let i = 0; i < visibleCandles.length; i++) {
@@ -426,7 +485,7 @@ export default function TradingChart() {
       const u = idx < bbSeries.upper.length ? bbSeries.upper[idx] : null;
       const l = idx < bbSeries.lower.length ? bbSeries.lower[idx] : null;
       if (u === null || l === null) continue;
-      const x = offsetX + i * totalCandleW + candleW / 2;
+      const x = offsetX + i * totalCandleW + candleWidth / 2;
       bbUpperPoints.push({ x, y: toY(u) });
       bbLowerPoints.push({ x, y: toY(l) });
     }
@@ -482,23 +541,16 @@ export default function TradingChart() {
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(x + candleW / 2, toY(c.high));
-      ctx.lineTo(x + candleW / 2, toY(c.low));
+      ctx.moveTo(x + candleWidth / 2, toY(c.high));
+      ctx.lineTo(x + candleWidth / 2, toY(c.low));
       ctx.stroke();
 
       // Body
       const bodyTop = toY(Math.max(c.open, c.close));
       const bodyBot = toY(Math.min(c.open, c.close));
       const bodyH = Math.max(1, bodyBot - bodyTop);
-
-      if (isGreen) {
-        ctx.fillStyle = color;
-        ctx.fillRect(x, bodyTop, candleW, bodyH);
-      } else {
-        // Hollow red or filled
-        ctx.fillStyle = color;
-        ctx.fillRect(x, bodyTop, candleW, bodyH);
-      }
+      ctx.fillStyle = color;
+      ctx.fillRect(x, bodyTop, candleWidth, bodyH);
     }
 
     // ── Current price line ──
@@ -508,14 +560,13 @@ export default function TradingChart() {
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(0, curY); ctx.lineTo(chartW, curY); ctx.stroke();
     ctx.setLineDash([]);
-    // Price tag on axis
     ctx.fillStyle = '#58A6FF';
     ctx.fillRect(chartW, curY - 8, priceAxisW, 16);
     ctx.fillStyle = '#0D1117';
     ctx.font = 'bold 10px JetBrains Mono, monospace';
     ctx.fillText(currentPrice.toFixed(4), chartW + 2, curY + 4);
 
-    // ── Indicator legend (top-left) ──
+    // ── Indicator legend ──
     ctx.font = '10px JetBrains Mono, monospace';
     const legends = [
       { label: 'BB(20,2)', color: '#BC8CFF' },
@@ -531,6 +582,11 @@ export default function TradingChart() {
       lx += ctx.measureText(l.label).width + 24;
     });
 
+    // ── Zoom info ──
+    ctx.fillStyle = '#484F58';
+    ctx.font = '9px JetBrains Mono, monospace';
+    ctx.fillText(`${visibleCandles.length} candles | Scroll: wheel | Zoom: Ctrl+wheel | Drag to pan`, 8, H - 6);
+
     // ══════ RSI Subplot ══════
     const rsiTop = H + 8;
     ctx.fillStyle = '#161B22';
@@ -539,7 +595,6 @@ export default function TradingChart() {
     ctx.lineWidth = 0.5;
     ctx.beginPath(); ctx.moveTo(0, rsiTop); ctx.lineTo(W, rsiTop); ctx.stroke();
 
-    // RSI grid: 30, 50, 70
     const rsiToY = (v: number) => rsiTop + 4 + ((100 - v) / 100) * (rsiH - 8);
     ctx.font = '8px JetBrains Mono, monospace';
     [30, 50, 70].forEach(level => {
@@ -552,7 +607,6 @@ export default function TradingChart() {
       ctx.fillText(String(level), chartW + 4, y + 3);
     });
 
-    // RSI label
     ctx.fillStyle = '#8B949E';
     ctx.font = '9px JetBrains Mono, monospace';
     ctx.fillText('RSI(14)', 4, rsiTop + 12);
@@ -567,7 +621,7 @@ export default function TradingChart() {
       if (idx === undefined) continue;
       const v = idx < rsiSeries.length ? rsiSeries[idx] : null;
       if (v === null) continue;
-      const x = offsetX + i * totalCandleW + candleW / 2;
+      const x = offsetX + i * totalCandleW + candleWidth / 2;
       const y = rsiToY(v);
       if (!rsiStarted) { ctx.moveTo(x, y); rsiStarted = true; }
       else ctx.lineTo(x, y);
@@ -589,7 +643,7 @@ export default function TradingChart() {
     ctx.fillStyle = 'rgba(63, 185, 80, 0.04)';
     ctx.fillRect(0, rsiToY(30), chartW, rsiTop + rsiH - rsiToY(30));
 
-  }, [candles, bb, ema50, support, resistance, currentPrice, candleEndIndices, emaSeries, bbSeries, rsiSeries, rsi]);
+  }, [candles, bb, ema50, support, resistance, currentPrice, candleEndIndices, emaSeries, bbSeries, rsiSeries, rsi, candleWidth, scrollOffset]);
 
   const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
   const marketName = ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol;
@@ -651,7 +705,7 @@ export default function TradingChart() {
         <div className="xl:col-span-8 space-y-3">
           {/* Candlestick Chart */}
           <div className="bg-[#0D1117] border border-[#30363D] rounded-xl overflow-hidden">
-            <canvas ref={canvasRef} className="w-full" style={{ height: 520 }} />
+            <canvas ref={canvasRef} className="w-full" style={{ height: 520, cursor: 'crosshair' }} />
           </div>
 
           {/* Price Info Panel */}
