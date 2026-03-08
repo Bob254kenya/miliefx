@@ -467,7 +467,7 @@ export default function TradingChart() {
     ctx.font = '9px JetBrains Mono, monospace';
     ctx.fillStyle = '#484F58';
     for (let i = 0; i <= gridSteps; i++) {
-      const y = 10 + (i / gridSteps) * (H - 20);
+      const y = chartPadTop + (i / gridSteps) * drawH;
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartW, y); ctx.stroke();
       const pLabel = maxP - (i / gridSteps) * range;
       ctx.fillText(pLabel.toFixed(4), chartW + 4, y + 3);
