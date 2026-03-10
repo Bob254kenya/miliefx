@@ -21,7 +21,7 @@ const navItems = [
   { title: 'Analyzer', url: '/analyzer', icon: Activity },
   { title: 'Auto Trade', url: '/auto-trade', icon: Bot },
   { title: 'Smart Bots', url: '/bots', icon: Cpu },
-  { title: 'Smart Signal Bot', url: '/smart-bot', icon: Zap },
+  { title: 'Free bots', url: '/smart-bot', icon: Zap },
   { title: 'Ramz Bot', url: '/ramz-bot', icon: Rocket },
   { title: 'Trade History', url: '/history', icon: History },
   { title: 'Settings', url: '/settings', icon: Settings },
