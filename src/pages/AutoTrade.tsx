@@ -3,41 +3,37 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { derivApi } from '@/services/deriv-api';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { 
-  Loader2, 
-  TrendingUp, 
-  TrendingDown, 
-  CircleDot, 
-  Volume2,
-  AlertCircle,
-  DollarSign,
-  Zap,
-  Activity,
-  BarChart3,
-  Target
-} from 'lucide-react';
 
-// Market list for scanning
-const ALL_MARKETS = [
-  // Volatility Indices
-  'R_10', 'R_25', 'R_50', 'R_75', 'R_100',
-  // 1HZ Volatility
-  '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V',
-  // Boom & Crash
-  'BOOM300', 'BOOM500', 'BOOM1000',
-  'CRASH300', 'CRASH500', 'CRASH1000',
+// All Deriv markets
+const ALL_MARKETS = {
+  // Volatility Indices (R_10 to R_100)
+  volatility: ['R_10', 'R_25', 'R_50', 'R_75', 'R_100'],
+  
+  // 1HZ Volatility Indices
+  hzVolatility: ['1HZ10V', '1HZ25V', 'HZ50V', '1HZ75V', '1HZ100V'],
+  
+  // Boom & Crash Indices
+  boomCrash: ['BOOM300', 'BOOM500', 'BOOM1000', 'CRASH300', 'CRASH500', 'CRASH1000'],
+  
   // Jump Indices
-  'JD10', 'JD25', 'JD50', 'JD75', 'JD100',
-  // Bear/Bull
-  'RDBEAR', 'RDBULL'
+  jump: ['JD10', 'JD25', 'JD50', 'JD75', 'JD100'],
+  
+  // Bear & Bull Markets
+  bearBull: ['RDBEAR', 'RDBULL']
+};
+
+// Flatten all markets for scanning
+const ALL_MARKETS_FLAT = [
+  ...ALL_MARKETS.volatility,
+  ...ALL_MARKETS.hzVolatility,
+  ...ALL_MARKETS.boomCrash,
+  ...ALL_MARKETS.jump,
+  ...ALL_MARKETS.bearBull
 ];
 
-// Voice alert system
-class VoiceAlertSystem {
-  private static instance: VoiceAlertSystem;
+// Voice Alert System
+class VoiceAlert {
+  private static instance: VoiceAlert;
   private synth: SpeechSynthesis | null = null;
   private speaking: boolean = false;
 
@@ -47,11 +43,11 @@ class VoiceAlertSystem {
     }
   }
 
-  static getInstance(): VoiceAlertSystem {
-    if (!VoiceAlertSystem.instance) {
-      VoiceAlertSystem.instance = new VoiceAlertSystem();
+  static getInstance(): VoiceAlert {
+    if (!VoiceAlert.instance) {
+      VoiceAlert.instance = new VoiceAlert();
     }
-    return VoiceAlertSystem.instance;
+    return VoiceAlert.instance;
   }
 
   speak(text: string, isDeep: boolean = true) {
@@ -59,20 +55,21 @@ class VoiceAlertSystem {
 
     const utterance = new SpeechSynthesisUtterance(text);
     
-    // Find a deep voice if available
+    // Find a deep voice
     const voices = this.synth.getVoices();
     const deepVoice = voices.find(v => 
       v.name.toLowerCase().includes('male') || 
-      v.name.toLowerCase().includes('deep')
+      v.name.toLowerCase().includes('deep') ||
+      v.name.toLowerCase().includes('david')
     );
     
     if (deepVoice) {
       utterance.voice = deepVoice;
     }
     
-    utterance.rate = 0.8;
-    utterance.pitch = 0.3;
-    utterance.volume = 0.9;
+    utterance.rate = 0.7;
+    utterance.pitch = 0.2;
+    utterance.volume = 1;
     
     utterance.onstart = () => { this.speaking = true; };
     utterance.onend = () => { this.speaking = false; };
@@ -89,168 +86,330 @@ class VoiceAlertSystem {
   }
 }
 
-interface MarketData {
-  symbol: string;
-  ticks: number[];
-  digits: number[];
-  frequency: Record<number, number>;
-  mostAppearing: number;
-  secondMost: number;
-  thirdMost: number;
-  leastAppearing: number;
-}
-
-interface BotSignal {
-  id: string;
-  market: string;
-  botType: string;
-  botName: string;
-  condition: string;
-  status: 'waiting' | 'monitoring' | 'triggered' | 'trading';
-  entryTriggered: boolean;
-  lastDigits: number[];
-  contractType: string;
-  barrier?: number;
-}
-
-const BotConfigs = {
+// Bot Configurations
+const BOT_STRATEGIES = {
   'OVER-1': {
     name: 'OVER 1 BOT',
-    contractType: 'DIGITOVER',
-    barrier: 1,
-    checkCondition: (freq: MarketData) => {
+    icon: '🎯',
+    color: 'from-blue-500 to-cyan-500',
+    bgColor: 'bg-blue-500/10',
+    borderColor: 'border-blue-500/30',
+    textColor: 'text-blue-400',
+    condition: (freq: any) => {
       return freq.mostAppearing > 4 && 
              freq.secondMost > 4 && 
              freq.leastAppearing > 4;
     },
-    checkEntry: (digits: number[]) => {
+    entryCondition: (digits: number[]) => {
       if (digits.length < 2) return false;
       const lastTwo = digits.slice(-2);
       return lastTwo.every(d => d <= 1);
-    }
+    },
+    entryText: 'Last 2 digits ≤ 1',
+    contractType: 'DIGITOVER',
+    barrier: 1
   },
   'UNDER-8': {
     name: 'UNDER 8 BOT',
-    contractType: 'DIGITUNDER',
-    barrier: 8,
-    checkCondition: (freq: MarketData) => {
+    icon: '⬇️',
+    color: 'from-orange-500 to-red-500',
+    bgColor: 'bg-orange-500/10',
+    borderColor: 'border-orange-500/30',
+    textColor: 'text-orange-400',
+    condition: (freq: any) => {
       return freq.mostAppearing < 6 && 
              freq.secondMost < 6 && 
              freq.leastAppearing < 6;
     },
-    checkEntry: (digits: number[]) => {
+    entryCondition: (digits: number[]) => {
       if (digits.length < 2) return false;
       const lastTwo = digits.slice(-2);
       return lastTwo.every(d => d >= 8);
-    }
+    },
+    entryText: 'Last 2 digits ≥ 8',
+    contractType: 'DIGITUNDER',
+    barrier: 8
   },
   'EVEN': {
     name: 'EVEN BOT',
-    contractType: 'DIGITEVEN',
-    checkCondition: (freq: MarketData) => {
+    icon: '⚖️',
+    color: 'from-green-500 to-emerald-500',
+    bgColor: 'bg-green-500/10',
+    borderColor: 'border-green-500/30',
+    textColor: 'text-green-400',
+    condition: (freq: any) => {
       return freq.mostAppearing % 2 === 0 &&
              freq.secondMost % 2 === 0 &&
              freq.leastAppearing % 2 === 0;
     },
-    checkEntry: (digits: number[]) => {
+    entryCondition: (digits: number[]) => {
       if (digits.length < 3) return false;
       const lastThree = digits.slice(-3);
       return lastThree.every(d => d % 2 === 1);
-    }
+    },
+    entryText: 'Last 3 digits odd',
+    contractType: 'DIGITEVEN'
   },
   'ODD': {
     name: 'ODD BOT',
-    contractType: 'DIGITODD',
-    checkCondition: (freq: MarketData) => {
+    icon: '🎲',
+    color: 'from-purple-500 to-pink-500',
+    bgColor: 'bg-purple-500/10',
+    borderColor: 'border-purple-500/30',
+    textColor: 'text-purple-400',
+    condition: (freq: any) => {
       return freq.mostAppearing % 2 === 1 &&
              freq.secondMost % 2 === 1 &&
              freq.thirdMost % 2 === 1;
     },
-    checkEntry: (digits: number[]) => {
+    entryCondition: (digits: number[]) => {
       if (digits.length < 3) return false;
       const lastThree = digits.slice(-3);
       return lastThree.every(d => d % 2 === 0);
-    }
+    },
+    entryText: 'Last 3 digits even',
+    contractType: 'DIGITODD'
   },
   'OVER-3': {
     name: 'OVER 3 BOT',
-    contractType: 'DIGITOVER',
-    barrier: 3,
-    checkCondition: (freq: MarketData) => {
+    icon: '📈',
+    color: 'from-indigo-500 to-blue-500',
+    bgColor: 'bg-indigo-500/10',
+    borderColor: 'border-indigo-500/30',
+    textColor: 'text-indigo-400',
+    condition: (freq: any) => {
       return freq.mostAppearing > 4 &&
              freq.secondMost > 4 &&
              freq.leastAppearing > 4;
     },
-    checkEntry: (digits: number[]) => {
+    entryCondition: (digits: number[]) => {
       if (digits.length < 3) return false;
       const lastThree = digits.slice(-3);
       return lastThree.every(d => d <= 3);
-    }
+    },
+    entryText: 'Last 3 digits ≤ 3',
+    contractType: 'DIGITOVER',
+    barrier: 3
   },
   'UNDER-6': {
     name: 'UNDER 6 BOT',
-    contractType: 'DIGITUNDER',
-    barrier: 6,
-    checkCondition: (freq: MarketData) => {
+    icon: '📉',
+    color: 'from-amber-500 to-orange-500',
+    bgColor: 'bg-amber-500/10',
+    borderColor: 'border-amber-500/30',
+    textColor: 'text-amber-400',
+    condition: (freq: any) => {
       return freq.mostAppearing < 5 &&
              freq.secondMost < 5 &&
              freq.leastAppearing < 5;
     },
-    checkEntry: (digits: number[]) => {
+    entryCondition: (digits: number[]) => {
       if (digits.length < 3) return false;
       const lastThree = digits.slice(-3);
       return lastThree.every(d => d >= 6);
-    }
+    },
+    entryText: 'Last 3 digits ≥ 6',
+    contractType: 'DIGITUNDER',
+    barrier: 6
   }
 };
 
-export default function AutoTradeScanner() {
-  const { isAuthorized, balance } = useAuth();
-  const voiceSystem = useRef(VoiceAlertSystem.getInstance());
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanProgress, setScanProgress] = useState(0);
-  const [signals, setSignals] = useState<BotSignal[]>([]);
-  const [noSignal, setNoSignal] = useState(false);
-  const [marketData, setMarketData] = useState<Record<string, MarketData>>({});
-  const [activeBots, setActiveBots] = useState<Record<string, boolean>>({});
-  const scanIntervalRef = useRef<NodeJS.Timeout>();
-  const voiceIntervalRef = useRef<NodeJS.Timeout>();
-  const tickSubscriptions = useRef<Record<string, () => void>>({});
+// Dollar Background Animation Component
+const DollarBackground = () => {
+  const [dimensions, setDimensions] = useState({ width: 1200, height: 800 });
 
-  // Dollar animation component
-  const DollarAnimation = () => (
+  useEffect(() => {
+    setDimensions({
+      width: window.innerWidth,
+      height: window.innerHeight
+    });
+
+    const handleResize = () => {
+      setDimensions({
+        width: window.innerWidth,
+        height: window.innerHeight
+      });
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  return (
     <div className="fixed inset-0 pointer-events-none overflow-hidden">
-      {[...Array(20)].map((_, i) => (
-        <motion.div
-          key={i}
-          className="absolute text-green-500/20 font-bold text-2xl"
-          initial={{
-            x: Math.random() * window.innerWidth,
-            y: window.innerHeight + 100,
-            opacity: 0.3,
-            scale: Math.random() * 0.5 + 0.5
-          }}
-          animate={{
-            y: -100,
-            opacity: [0.3, 0.6, 0.3],
-            rotate: [0, 10, -10, 0]
-          }}
-          transition={{
-            duration: Math.random() * 10 + 10,
-            repeat: Infinity,
-            delay: Math.random() * 5,
-            ease: "linear"
-          }}
-        >
-          $
-        </motion.div>
-      ))}
+      {/* Gradient Overlay */}
+      <div className="absolute inset-0 bg-gradient-to-b from-gray-900/95 via-gray-800/95 to-black/95 z-0" />
+      
+      {/* Floating Dollar Signs */}
+      {[...Array(50)].map((_, i) => {
+        const size = Math.random() * 40 + 20;
+        const left = Math.random() * 100;
+        const duration = Math.random() * 20 + 15;
+        const delay = Math.random() * 10;
+        const rotation = Math.random() * 360;
+        
+        return (
+          <motion.div
+            key={i}
+            className="absolute text-green-500/5 font-bold z-0"
+            style={{
+              fontSize: `${size}px`,
+              left: `${left}%`,
+              top: `${-size}px`,
+              transform: `rotate(${rotation}deg)`,
+            }}
+            animate={{
+              y: [0, dimensions.height + size],
+              rotate: [rotation, rotation + 360],
+              opacity: [0, 0.3, 0.2, 0]
+            }}
+            transition={{
+              duration: duration,
+              repeat: Infinity,
+              delay: delay,
+              ease: "linear"
+            }}
+          >
+            $
+          </motion.div>
+        );
+      })}
+
+      {/* Additional Dollar Signs with different animations */}
+      {[...Array(25)].map((_, i) => {
+        const size = Math.random() * 60 + 30;
+        const left = Math.random() * 100;
+        const duration = Math.random() * 30 + 20;
+        const delay = Math.random() * 15;
+        
+        return (
+          <motion.div
+            key={`large-${i}`}
+            className="absolute text-yellow-500/5 font-bold z-0"
+            style={{
+              fontSize: `${size}px`,
+              left: `${left}%`,
+              top: `${-size}px`,
+            }}
+            animate={{
+              y: [0, dimensions.height + size],
+              x: [0, Math.sin(i) * 100, 0],
+              rotate: [0, 180, 360],
+              opacity: [0, 0.2, 0.1, 0]
+            }}
+            transition={{
+              duration: duration,
+              repeat: Infinity,
+              delay: delay,
+              ease: "easeInOut"
+            }}
+          >
+            💰
+          </motion.div>
+        );
+      })}
     </div>
   );
+};
+
+// Market Category Card Component
+const MarketCategory = ({ title, markets, icon, color }: any) => (
+  <motion.div
+    initial={{ opacity: 0, y: 20 }}
+    animate={{ opacity: 1, y: 0 }}
+    className="bg-gray-800/50 backdrop-blur-sm rounded-xl p-4 border border-gray-700"
+  >
+    <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+      <span className={`p-1 rounded-lg bg-${color}-500/20 text-${color}-400`}>
+        {icon}
+      </span>
+      {title}
+    </h3>
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+      {markets.map((market: string) => (
+        <Badge key={market} variant="outline" className="justify-start text-xs">
+          {market}
+        </Badge>
+      ))}
+    </div>
+  </motion.div>
+);
+
+// Badge Component
+const Badge = ({ children, variant = "default", className = "", ...props }: any) => {
+  const baseStyle = "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium";
+  const variants = {
+    default: "bg-gray-700 text-gray-200",
+    success: "bg-green-500/20 text-green-400 border border-green-500/30",
+    warning: "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30",
+    error: "bg-red-500/20 text-red-400 border border-red-500/30",
+    outline: "border border-gray-600 text-gray-300"
+  };
+  
+  return (
+    <span className={`${baseStyle} ${variants[variant]} ${className}`} {...props}>
+      {children}
+    </span>
+  );
+};
+
+// Button Component
+const Button = ({ children, variant = "default", size = "default", className = "", ...props }: any) => {
+  const baseStyle = "inline-flex items-center justify-center font-medium transition-all duration-200 rounded-lg";
+  
+  const variants = {
+    default: "bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white shadow-lg shadow-green-500/25",
+    outline: "border border-gray-600 hover:border-gray-500 hover:bg-gray-800 text-gray-300",
+    ghost: "hover:bg-gray-800 text-gray-400",
+    danger: "bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 text-white"
+  };
+  
+  const sizes = {
+    sm: "px-3 py-1.5 text-sm",
+    default: "px-4 py-2",
+    lg: "px-6 py-3 text-lg"
+  };
+  
+  return (
+    <button
+      className={`${baseStyle} ${variants[variant]} ${sizes[size]} ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+};
+
+// Card Component
+const Card = ({ children, className = "", ...props }: any) => (
+  <div
+    className={`bg-gray-800/30 backdrop-blur-sm border border-gray-700 rounded-xl ${className}`}
+    {...props}
+  >
+    {children}
+  </div>
+);
+
+export default function AutoTradeScanner() {
+  const { isAuthorized, balance } = useAuth();
+  const voice = useRef(VoiceAlert.getInstance());
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [currentMarket, setCurrentMarket] = useState('');
+  const [signals, setSignals] = useState<any[]>([]);
+  const [noSignal, setNoSignal] = useState(false);
+  const [marketData, setMarketData] = useState<Record<string, any>>({});
+  const [scanStats, setScanStats] = useState({
+    total: 0,
+    scanned: 0,
+    found: 0
+  });
 
   // Fetch ticks for a market
-  const fetchMarketTicks = async (symbol: string): Promise<MarketData | null> => {
+  const fetchMarketTicks = async (symbol: string) => {
     try {
+      setCurrentMarket(symbol);
+      
       const response = await derivApi.getTicks(symbol, 1000);
       if (!response?.ticks) return null;
 
@@ -272,247 +431,224 @@ export default function AutoTradeScanner() {
         mostAppearing: sortedDigits[0],
         secondMost: sortedDigits[1],
         thirdMost: sortedDigits[2],
-        leastAppearing: sortedDigits[9]
+        leastAppearing: sortedDigits[9],
+        distribution: sortedDigits.map(d => ({ digit: d, count: frequency[d] }))
       };
     } catch (error) {
-      console.error(`Error fetching ticks for ${symbol}:`, error);
+      console.error(`Error fetching ${symbol}:`, error);
       return null;
     }
   };
 
-  // Check if market matches any bot condition
-  const findMatchingBots = (data: MarketData): string[] => {
-    const matches: string[] = [];
+  // Check for matching bots
+  const findMatchingBots = (data: any) => {
+    const matches: any[] = [];
     
-    Object.entries(BotConfigs).forEach(([key, config]) => {
-      if (config.checkCondition(data)) {
-        matches.push(key);
+    Object.entries(BOT_STRATEGIES).forEach(([key, config]: [string, any]) => {
+      if (config.condition(data)) {
+        matches.push({
+          botType: key,
+          ...config
+        });
       }
     });
 
     return matches;
   };
 
-  // Monitor entry conditions for a bot
-  const monitorBotEntry = useCallback((signalId: string, market: string, botType: string) => {
-    const config = BotConfigs[botType as keyof typeof BotConfigs];
-    if (!config) return;
-
-    // Subscribe to real-time ticks
-    const unsub = derivApi.onTick(market, (tick: any) => {
-      setMarketData(prev => {
-        const marketData = prev[market];
-        if (!marketData) return prev;
-
-        const newDigit = Math.floor(tick.quote % 10);
-        const updatedDigits = [...marketData.digits, newDigit].slice(-1000);
-
-        // Check entry condition
-        if (config.checkEntry(updatedDigits)) {
-          setSignals(prev => prev.map(s => 
-            s.id === signalId ? { ...s, status: 'triggered', lastDigits: updatedDigits.slice(-3) } : s
-          ));
-          
-          // Voice alert for signal found
-          voiceSystem.current.speak("Signal found. Prepare to trade.", true);
-          
-          toast.success(`🎯 Entry signal for ${market} - ${config.name}`);
-        }
-
-        return {
-          ...prev,
-          [market]: { ...marketData, digits: updatedDigits }
-        };
-      });
-    });
-
-    tickSubscriptions.current[signalId] = unsub;
-  }, []);
-
-  // Scan all markets
+  // Start scanning
   const startScan = async () => {
     if (isScanning) return;
     
     setIsScanning(true);
     setNoSignal(false);
     setSignals([]);
-    
-    // Stop any existing voice intervals
-    if (voiceIntervalRef.current) {
-      clearInterval(voiceIntervalRef.current);
-    }
+    setScanStats({ total: ALL_MARKETS_FLAT.length, scanned: 0, found: 0 });
 
-    // Start periodic voice alerts during scanning
-    voiceIntervalRef.current = setInterval(() => {
-      voiceSystem.current.speak("Scanning the markets for money... stay ready.", true);
+    // Start periodic voice alerts
+    const voiceInterval = setInterval(() => {
+      voice.current.speak("Scanning the markets for money... stay ready.", true);
     }, 20000);
 
-    // Progress animation
-    const progressInterval = setInterval(() => {
-      setScanProgress(prev => Math.min(prev + 1, 90));
-    }, 200);
-
-    const foundSignals: BotSignal[] = [];
-    const processedMarkets: Record<string, MarketData> = {};
+    const foundSignals: any[] = [];
+    const processedData: Record<string, any> = {};
 
     // Scan each market
-    for (let i = 0; i < ALL_MARKETS.length; i++) {
-      const market = ALL_MARKETS[i];
+    for (let i = 0; i < ALL_MARKETS_FLAT.length; i++) {
+      const market = ALL_MARKETS_FLAT[i];
       
       const data = await fetchMarketTicks(market);
       if (data) {
-        processedMarkets[market] = data;
+        processedData[market] = data;
         
-        // Find matching bots
         const matches = findMatchingBots(data);
         
-        matches.forEach(botType => {
-          const config = BotConfigs[botType as keyof typeof BotConfigs];
-          const signalId = `${market}-${botType}-${Date.now()}`;
-          
-          const newSignal: BotSignal = {
-            id: signalId,
+        matches.forEach((match: any) => {
+          foundSignals.push({
+            id: `${market}-${match.botType}-${Date.now()}`,
             market,
-            botType,
-            botName: config.name,
-            condition: `Most:${data.mostAppearing}, 2nd:${data.secondMost}, Least:${data.leastAppearing}`,
-            status: 'monitoring',
-            entryTriggered: false,
+            ...match,
             lastDigits: data.digits.slice(-3),
-            contractType: config.contractType,
-            barrier: config.barrier
-          };
-          
-          foundSignals.push(newSignal);
+            status: 'monitoring'
+          });
         });
       }
 
       // Update progress
-      setScanProgress(Math.floor((i + 1) / ALL_MARKETS.length * 100));
+      const progress = Math.floor((i + 1) / ALL_MARKETS_FLAT.length * 100);
+      setScanProgress(progress);
+      setScanStats(prev => ({ ...prev, scanned: i + 1, found: foundSignals.length }));
     }
 
-    clearInterval(progressInterval);
-    setScanProgress(100);
-    setMarketData(processedMarkets);
+    clearInterval(voiceInterval);
+    setMarketData(processedData);
 
     if (foundSignals.length > 0) {
       setSignals(foundSignals);
-      setNoSignal(false);
-      
-      // Start monitoring each signal
-      foundSignals.forEach(signal => {
-        monitorBotEntry(signal.id, signal.market, signal.botType);
-      });
-      
-      toast.success(`Found ${foundSignals.length} trading signals!`);
+      voice.current.speak(`Found ${foundSignals.length} trading signals. Prepare to trade.`, true);
+      toast.success(`🎯 Found ${foundSignals.length} trading signals!`);
     } else {
       setNoSignal(true);
-      voiceSystem.current.speak("No signals found. Keep scanning.", true);
+      voice.current.speak("No signals found. Keep scanning.", true);
       toast.info('No matching signals found');
     }
 
-    // Cleanup
+    setScanProgress(100);
     setTimeout(() => {
       setIsScanning(false);
-      setScanProgress(0);
-      if (voiceIntervalRef.current) {
-        clearInterval(voiceIntervalRef.current);
-      }
+      setCurrentMarket('');
     }, 1000);
   };
 
-  // Cleanup subscriptions on unmount
+  // Stop all voices on unmount
   useEffect(() => {
     return () => {
-      Object.values(tickSubscriptions.current).forEach(unsub => unsub());
-      if (voiceIntervalRef.current) {
-        clearInterval(voiceIntervalRef.current);
-      }
-      voiceSystem.current.stop();
+      voice.current.stop();
     };
   }, []);
 
-  // Get market icon
-  const getMarketIcon = (market: string) => {
-    if (market.startsWith('1HZ')) return <Zap className="w-4 h-4" />;
-    if (market.startsWith('BOOM')) return <Activity className="w-4 h-4" />;
-    if (market.startsWith('CRASH')) return <TrendingDown className="w-4 h-4" />;
-    if (market.startsWith('R_')) return <BarChart3 className="w-4 h-4" />;
-    return <Target className="w-4 h-4" />;
-  };
-
-  // Get bot color
-  const getBotColor = (botType: string) => {
-    switch(botType) {
-      case 'OVER-1': case 'OVER-3': return 'blue';
-      case 'UNDER-8': case 'UNDER-6': return 'orange';
-      case 'EVEN': return 'green';
-      case 'ODD': return 'purple';
-      default: return 'gray';
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-black text-white">
-      <DollarAnimation />
-      
-      {/* Header */}
-      <div className="relative z-10 p-4 border-b border-gray-700 bg-black/50 backdrop-blur-sm">
-        <div className="container mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-r from-green-500 to-emerald-600 rounded-lg">
-              <DollarSign className="w-6 h-6" />
-            </div>
+    <div className="min-h-screen bg-gray-900 text-white relative">
+      {/* Animated Dollar Background */}
+      <DollarBackground />
+
+      {/* Main Content */}
+      <div className="relative z-10 container mx-auto px-4 py-6">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center gap-4">
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+              className="text-4xl"
+            >
+              💰
+            </motion.div>
             <div>
-              <h1 className="text-xl font-bold">Money Scanner Pro</h1>
-              <p className="text-xs text-gray-400">6-Bot Automated Trading System</p>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-green-400 to-emerald-400 bg-clip-text text-transparent">
+                Money Scanner Pro
+              </h1>
+              <p className="text-gray-400 text-sm mt-1">
+                6-Bot Automated Trading System • All Markets
+              </p>
             </div>
           </div>
           
           <div className="flex items-center gap-4">
-            <Badge variant="outline" className="px-3 py-1">
-              Balance: ${balance?.toFixed(2) || '0.00'}
-            </Badge>
+            <Card className="px-4 py-2">
+              <div className="text-xs text-gray-400">Balance</div>
+              <div className="text-xl font-bold text-green-400">
+                ${balance?.toFixed(2) || '0.00'}
+              </div>
+            </Card>
+            
             <Button
               onClick={startScan}
               disabled={isScanning || !isAuthorized}
-              className="relative overflow-hidden bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-bold py-6 px-8 rounded-xl text-lg shadow-lg shadow-green-500/25"
+              size="lg"
+              className="min-w-[200px]"
             >
               {isScanning ? (
                 <>
-                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent mr-2" />
                   SCANNING...
                 </>
               ) : (
                 <>
-                  <Volume2 className="w-5 h-5 mr-2" />
-                  SCAN MARKETS
+                  <span className="mr-2">🔍</span>
+                  SCAN ALL MARKETS
                 </>
               )}
             </Button>
           </div>
         </div>
-      </div>
 
-      {/* Progress Bar */}
-      {isScanning && (
-        <div className="relative z-10 container mx-auto px-4 mt-4">
-          <div className="bg-gray-700 rounded-full h-2 overflow-hidden">
-            <motion.div
-              className="h-full bg-gradient-to-r from-green-400 to-emerald-500"
-              initial={{ width: 0 }}
-              animate={{ width: `${scanProgress}%` }}
-              transition={{ duration: 0.3 }}
-            />
-          </div>
-          <p className="text-center text-sm text-gray-400 mt-1">
-            Scanning {ALL_MARKETS.length} markets... {scanProgress}%
-          </p>
+        {/* Progress Bar */}
+        {isScanning && (
+          <Card className="p-4 mb-6">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-400">Scanning:</span>
+                <Badge variant="warning">{currentMarket}</Badge>
+              </div>
+              <div className="text-sm">
+                <span className="text-green-400">{scanStats.found}</span>
+                <span className="text-gray-400"> signals found from </span>
+                <span className="text-white">{scanStats.scanned}</span>
+                <span className="text-gray-400">/{scanStats.total}</span>
+              </div>
+            </div>
+            <div className="w-full h-3 bg-gray-700 rounded-full overflow-hidden">
+              <motion.div
+                className="h-full bg-gradient-to-r from-green-400 to-emerald-400"
+                initial={{ width: 0 }}
+                animate={{ width: `${scanProgress}%` }}
+                transition={{ duration: 0.3 }}
+              />
+            </div>
+          </Card>
+        )}
+
+        {/* Market Categories */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+          <MarketCategory
+            title="Volatility Indices"
+            markets={ALL_MARKETS.volatility}
+            icon="📊"
+            color="blue"
+          />
+          <MarketCategory
+            title="1HZ Volatility"
+            markets={ALL_MARKETS.hzVolatility}
+            icon="⚡"
+            color="yellow"
+          />
+          <MarketCategory
+            title="Boom & Crash"
+            markets={ALL_MARKETS.boomCrash}
+            icon="💥"
+            color="red"
+          />
+          <MarketCategory
+            title="Jump Indices"
+            markets={ALL_MARKETS.jump}
+            icon="🦘"
+            color="purple"
+          />
+          <MarketCategory
+            title="Bear & Bull"
+            markets={ALL_MARKETS.bearBull}
+            icon="🐂"
+            color="green"
+          />
+          <MarketCategory
+            title="Total Markets"
+            markets={[`${ALL_MARKETS_FLAT.length} Markets`]}
+            icon="🎯"
+            color="white"
+          />
         </div>
-      )}
 
-      {/* Main Content */}
-      <div className="relative z-10 container mx-auto p-4">
         {/* No Signal Message */}
         <AnimatePresence>
           {noSignal && (
@@ -522,10 +658,12 @@ export default function AutoTradeScanner() {
               exit={{ opacity: 0, y: -20 }}
               className="mb-6"
             >
-              <Card className="bg-red-500/10 border-red-500/30 p-8 text-center">
-                <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
-                <h2 className="text-2xl font-bold text-red-400">NO SIGNAL FOUND</h2>
-                <p className="text-gray-400 mt-2">No markets match current bot conditions</p>
+              <Card className="p-8 text-center border-red-500/30 bg-red-500/5">
+                <div className="text-6xl mb-4">😕</div>
+                <h2 className="text-2xl font-bold text-red-400 mb-2">NO SIGNAL FOUND</h2>
+                <p className="text-gray-400">
+                  No markets match current bot conditions. Try scanning again later.
+                </p>
               </Card>
             </motion.div>
           )}
@@ -534,94 +672,96 @@ export default function AutoTradeScanner() {
         {/* Signals Grid */}
         {signals.length > 0 && (
           <div className="space-y-4">
-            <h2 className="text-xl font-bold flex items-center gap-2">
-              <Target className="w-5 h-5 text-green-400" />
-              Active Signals ({signals.length})
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <span className="text-2xl">🎯</span>
+                Active Signals ({signals.length})
+              </h2>
+              <Badge variant="success">Live Monitoring</Badge>
+            </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {signals.map((signal) => {
-                const color = getBotColor(signal.botType);
-                return (
-                  <motion.div
-                    key={signal.id}
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className={`
-                      relative overflow-hidden rounded-xl border-2 p-4
-                      ${signal.status === 'triggered' 
-                        ? `border-${color}-500 bg-${color}-500/20 animate-pulse` 
-                        : 'border-gray-700 bg-gray-800/50'}
-                      backdrop-blur-sm
-                    `}
-                  >
-                    {/* Market Header */}
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className={`p-2 bg-${color}-500/20 rounded-lg`}>
-                          {getMarketIcon(signal.market)}
-                        </div>
-                        <div>
-                          <h3 className="font-bold">{signal.market}</h3>
-                          <p className="text-xs text-gray-400">Bot: {signal.botName}</p>
-                        </div>
+              {signals.map((signal) => (
+                <motion.div
+                  key={signal.id}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className={`
+                    relative overflow-hidden rounded-xl border-2 p-5
+                    ${signal.bgColor} ${signal.borderColor}
+                    backdrop-blur-sm
+                  `}
+                >
+                  {/* Background Icon */}
+                  <div className="absolute right-0 bottom-0 text-6xl opacity-5 transform rotate-12">
+                    {signal.icon}
+                  </div>
+
+                  {/* Header */}
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className={`text-2xl p-2 rounded-lg bg-black/30`}>
+                        {signal.icon}
                       </div>
-                      <Badge className={`
-                        ${signal.status === 'triggered' ? 'bg-green-500' : 'bg-yellow-500'}
-                      `}>
-                        {signal.status === 'triggered' ? '🔔 READY' : '👀 MONITORING'}
-                      </Badge>
-                    </div>
-
-                    {/* Condition Info */}
-                    <div className="bg-black/30 rounded-lg p-2 mb-3 text-xs">
-                      <p className="text-gray-400">Market Condition:</p>
-                      <p className="font-mono">{signal.condition}</p>
-                    </div>
-
-                    {/* Entry Monitoring */}
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-400">Last Digits:</span>
-                      <div className="flex gap-1">
-                        {signal.lastDigits.map((d, i) => (
-                          <span 
-                            key={i}
-                            className={`
-                              w-6 h-6 flex items-center justify-center rounded
-                              ${signal.status === 'triggered' 
-                                ? 'bg-green-500/30 text-green-400' 
-                                : 'bg-gray-700'}
-                            `}
-                          >
-                            {d}
-                          </span>
-                        ))}
+                      <div>
+                        <h3 className="font-bold text-lg">{signal.market}</h3>
+                        <p className={`text-sm ${signal.textColor}`}>{signal.name}</p>
                       </div>
                     </div>
+                    <Badge variant="warning">MONITORING</Badge>
+                  </div>
 
-                    {/* Entry Condition */}
-                    <div className="mt-2 text-xs text-gray-400">
-                      Entry: {signal.botType === 'OVER-1' && 'Two digits ≤ 1'}
-                      {signal.botType === 'OVER-3' && 'Three digits ≤ 3'}
-                      {signal.botType === 'UNDER-8' && 'Two digits ≥ 8'}
-                      {signal.botType === 'UNDER-6' && 'Three digits ≥ 6'}
-                      {signal.botType === 'EVEN' && 'Three odd digits'}
-                      {signal.botType === 'ODD' && 'Three even digits'}
+                  {/* Market Analysis */}
+                  {marketData[signal.market] && (
+                    <div className="grid grid-cols-2 gap-2 mb-4">
+                      <div className="bg-black/30 rounded-lg p-2 text-center">
+                        <div className="text-xs text-gray-400">Most</div>
+                        <div className="text-lg font-bold text-green-400">
+                          {marketData[signal.market].mostAppearing}
+                        </div>
+                      </div>
+                      <div className="bg-black/30 rounded-lg p-2 text-center">
+                        <div className="text-xs text-gray-400">Least</div>
+                        <div className="text-lg font-bold text-red-400">
+                          {marketData[signal.market].leastAppearing}
+                        </div>
+                      </div>
                     </div>
+                  )}
 
-                    {/* Trade Button (when triggered) */}
-                    {signal.status === 'triggered' && (
-                      <Button
-                        className="w-full mt-3 bg-gradient-to-r from-green-500 to-emerald-600"
-                        size="sm"
-                      >
-                        <Target className="w-4 h-4 mr-2" />
-                        ENTER TRADE
-                      </Button>
+                  {/* Entry Condition */}
+                  <div className="bg-black/30 rounded-lg p-3 mb-4">
+                    <div className="text-xs text-gray-400 mb-1">Entry Condition:</div>
+                    <div className="text-sm font-medium">{signal.entryText}</div>
+                  </div>
+
+                  {/* Last Digits */}
+                  <div className="flex items-center justify-between mb-4">
+                    <span className="text-sm text-gray-400">Last Digits:</span>
+                    <div className="flex gap-1">
+                      {signal.lastDigits.map((d: number, i: number) => (
+                        <motion.div
+                          key={i}
+                          animate={{ scale: [1, 1.2, 1] }}
+                          transition={{ duration: 0.3, delay: i * 0.1 }}
+                          className={`w-8 h-8 flex items-center justify-center rounded-lg
+                            ${signal.bgColor} border ${signal.borderColor} font-bold`}
+                        >
+                          {d}
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Contract Info */}
+                  <div className="flex gap-2 text-xs">
+                    <Badge variant="outline">{signal.contractType}</Badge>
+                    {signal.barrier !== undefined && (
+                      <Badge variant="outline">Barrier: {signal.barrier}</Badge>
                     )}
-                  </motion.div>
-                );
-              })}
+                  </div>
+                </motion.div>
+              ))}
             </div>
           </div>
         )}
@@ -631,40 +771,39 @@ export default function AutoTradeScanner() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="text-center py-20"
+            className="text-center py-16"
           >
-            <DollarSign className="w-20 h-20 text-gray-600 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-gray-400 mb-2">Ready to Scan</h2>
-            <p className="text-gray-500">
-              Click the SCAN MARKETS button to analyze all markets for trading opportunities
+            <div className="text-8xl mb-6 animate-bounce">💰</div>
+            <h2 className="text-3xl font-bold text-gray-300 mb-3">Ready to Scan</h2>
+            <p className="text-gray-400 text-lg max-w-md mx-auto mb-8">
+              Click the SCAN ALL MARKETS button to analyze all volatility, jump, bear, and bull markets for trading opportunities
             </p>
+            <div className="flex items-center justify-center gap-3 text-sm text-gray-500">
+              <span>📊 {ALL_MARKETS_FLAT.length} Markets</span>
+              <span>•</span>
+              <span>🤖 6 Bot Strategies</span>
+              <span>•</span>
+              <span>🎯 Real-time Monitoring</span>
+            </div>
           </motion.div>
         )}
-      </div>
 
-      {/* Bot Legend */}
-      <div className="relative z-10 container mx-auto px-4 mt-8">
-        <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl p-4 border border-gray-700">
+        {/* Bot Strategies Legend */}
+        <Card className="p-4 mt-8">
           <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-            <Activity className="w-4 h-4" />
+            <span className="text-xl">🤖</span>
             Bot Strategies
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            {Object.entries(BotConfigs).map(([key, config]) => (
-              <div key={key} className="text-xs">
-                <Badge className={`bg-${getBotColor(key)}-500/20 text-${getBotColor(key)}-400 mb-1`}>
-                  {config.name}
-                </Badge>
-                <p className="text-gray-400">Entry: {key === 'OVER-1' && '2 digits ≤1'}
-                  {key === 'OVER-3' && '3 digits ≤3'}
-                  {key === 'UNDER-8' && '2 digits ≥8'}
-                  {key === 'UNDER-6' && '3 digits ≥6'}
-                  {key === 'EVEN' && '3 odds'}
-                  {key === 'ODD' && '3 evens'}</p>
+            {Object.entries(BOT_STRATEGIES).map(([key, bot]: [string, any]) => (
+              <div key={key} className="text-center p-2 bg-gray-700/30 rounded-lg">
+                <div className={`text-2xl mb-1`}>{bot.icon}</div>
+                <div className={`text-xs font-medium ${bot.textColor}`}>{bot.name}</div>
+                <div className="text-[10px] text-gray-400 mt-1">{bot.entryText}</div>
               </div>
             ))}
           </div>
-        </div>
+        </Card>
       </div>
     </div>
   );
