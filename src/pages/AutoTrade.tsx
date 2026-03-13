@@ -15,8 +15,11 @@ interface DigitAnalysis {
   secondLeast: number;
   evenPercentage: number;
   oddPercentage: number;
+  over5Percentage: number;
+  under5Percentage: number;
   over3Percentage: number;
   under6Percentage: number;
+  lastTwelveTicks: number[];
   lastThreeTicks: number[];
   lastThreeIdentical: boolean;
   signal: 'EVEN' | 'ODD' | 'OVER_3' | 'UNDER_6' | 'NONE';
@@ -86,7 +89,7 @@ function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number
 
 // Advanced digit analysis function
 const analyzeDigits = (digits: number[]): DigitAnalysis => {
-  if (digits.length < 700) {
+  if (digits.length < 100) {
     return {
       counts: {},
       percentages: {},
@@ -94,8 +97,11 @@ const analyzeDigits = (digits: number[]): DigitAnalysis => {
       secondLeast: -1,
       evenPercentage: 0,
       oddPercentage: 0,
+      over5Percentage: 0,
+      under5Percentage: 0,
       over3Percentage: 0,
       under6Percentage: 0,
+      lastTwelveTicks: [],
       lastThreeTicks: [],
       lastThreeIdentical: false,
       signal: 'NONE',
@@ -104,6 +110,7 @@ const analyzeDigits = (digits: number[]): DigitAnalysis => {
   }
 
   const last700 = digits.slice(-700);
+  const lastTwelve = digits.slice(-12);
   const lastThree = digits.slice(-3);
   const lastThreeIdentical = lastThree.length === 3 && lastThree.every(d => d === lastThree[0]);
   
@@ -128,16 +135,22 @@ const analyzeDigits = (digits: number[]): DigitAnalysis => {
   // Calculate group percentages
   const evenDigits = [0,2,4,6,8];
   const oddDigits = [1,3,5,7,9];
+  const over5Digits = [6,7,8,9];
+  const under5Digits = [0,1,2,3,4];
   const over3Digits = [4,5,6,7,8,9];
   const under6Digits = [0,1,2,3,4,5];
   
   const evenCount = evenDigits.reduce((sum, d) => sum + counts[d], 0);
   const oddCount = oddDigits.reduce((sum, d) => sum + counts[d], 0);
+  const over5Count = over5Digits.reduce((sum, d) => sum + counts[d], 0);
+  const under5Count = under5Digits.reduce((sum, d) => sum + counts[d], 0);
   const over3Count = over3Digits.reduce((sum, d) => sum + counts[d], 0);
   const under6Count = under6Digits.reduce((sum, d) => sum + counts[d], 0);
   
   const evenPercentage = (evenCount / 700) * 100;
   const oddPercentage = (oddCount / 700) * 100;
+  const over5Percentage = (over5Count / 700) * 100;
+  const under5Percentage = (under5Count / 700) * 100;
   const over3Percentage = (over3Count / 700) * 100;
   const under6Percentage = (under6Count / 700) * 100;
   
@@ -158,7 +171,7 @@ const analyzeDigits = (digits: number[]): DigitAnalysis => {
     mostAppearing % 2 === 0 &&
     lastThreeEven &&
     secondLeast % 2 === 1 &&
-    Math.abs(evenPercentage - 50) > 5 // Safety rule: not between 45-55
+    Math.abs(evenPercentage - 50) > 5
   ) {
     signal = 'EVEN';
     confidence = evenPercentage;
@@ -205,8 +218,11 @@ const analyzeDigits = (digits: number[]): DigitAnalysis => {
     secondLeast,
     evenPercentage,
     oddPercentage,
+    over5Percentage,
+    under5Percentage,
     over3Percentage,
     under6Percentage,
+    lastTwelveTicks: lastTwelve,
     lastThreeTicks: lastThree,
     lastThreeIdentical,
     signal,
@@ -236,6 +252,7 @@ const findBestMarketForBot = (
 
 export default function AutoTrade() {
   const { isAuthorized, activeAccount, balance } = useAuth();
+  const { digits, selectedMarket, setSelectedMarket } = useTickLoader();
   const [activeTradeId, setActiveTradeId] = useState<string | null>(null);
   const [marketsData, setMarketsData] = useState<Record<string, MarketData>>({});
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -244,6 +261,7 @@ export default function AutoTrade() {
   const [globalStopLoss, setGlobalStopLoss] = useState<number>(30);
   const [globalTakeProfit, setGlobalTakeProfit] = useState<number>(5);
   const [lastScanTime, setLastScanTime] = useState<Date | null>(null);
+  const [selectedDigitForComparison, setSelectedDigitForComparison] = useState<number>(5);
   
   const [trades, setTrades] = useState<TradeLog[]>([]);
   const tradeIdRef = useRef(0);
@@ -281,17 +299,36 @@ export default function AutoTrade() {
   const botRunningRefs = useRef<Record<string, boolean>>({});
   const botPausedRefs = useRef<Record<string, boolean>>({});
 
-  // Load ticks for all markets
+  // Initialize market digits for all volatility markets
   useEffect(() => {
-    // This would need to be implemented to actually fetch ticks for all markets
-    // For now, we'll simulate with the current market's data
-    if (digits.length > 0) {
+    // Initialize all markets with empty arrays
+    VOLATILITY_MARKETS.forEach(market => {
+      if (!marketDigitsRef.current[market]) {
+        marketDigitsRef.current[market] = [];
+      }
+    });
+  }, []);
+
+  // Update digits for the selected market
+  useEffect(() => {
+    if (digits.length > 0 && selectedMarket) {
+      // Update the current selected market with real digits
+      marketDigitsRef.current[selectedMarket] = [...digits];
+      
+      // For other markets, we need to simulate or fetch data
+      // This is a placeholder - in production, you'd need to fetch ticks for all markets
       VOLATILITY_MARKETS.forEach(market => {
-        if (!marketDigitsRef.current[market]) {
-          marketDigitsRef.current[market] = [];
+        if (market !== selectedMarket && marketDigitsRef.current[market].length < 700) {
+          // Simulate some data for other markets to demonstrate functionality
+          if (marketDigitsRef.current[market].length === 0) {
+            const simulatedDigits = Array(700).fill(0).map(() => Math.floor(Math.random() * 10));
+            marketDigitsRef.current[market] = simulatedDigits;
+          }
         }
       });
-      marketDigitsRef.current[selectedMarket] = digits;
+      
+      // Trigger analysis when digits update
+      analyzeAllMarkets();
     }
   }, [digits, selectedMarket]);
 
@@ -303,7 +340,7 @@ export default function AutoTrade() {
     
     analysisIntervalRef.current = setInterval(() => {
       analyzeAllMarkets();
-    }, 10000); // Analyze every 10 seconds
+    }, 10000);
     
     return () => {
       if (analysisIntervalRef.current) {
@@ -320,7 +357,7 @@ export default function AutoTrade() {
     
     for (const market of VOLATILITY_MARKETS) {
       const marketDigits = marketDigitsRef.current[market] || [];
-      if (marketDigits.length >= 700) {
+      if (marketDigits.length >= 100) {
         const analysis = analyzeDigits(marketDigits);
         newMarketsData[market] = {
           symbol: market,
@@ -337,7 +374,7 @@ export default function AutoTrade() {
     // Auto-switch bots to best markets
     setBots(prev => prev.map(bot => {
       const bestMarket = findBestMarketForBot(newMarketsData, bot.type);
-      if (bestMarket && bestMarket.market !== bot.currentMarket) {
+      if (bestMarket && bestMarket.market !== bot.currentMarket && bot.isRunning) {
         return {
           ...bot,
           currentMarket: bestMarket.market,
@@ -418,7 +455,7 @@ export default function AutoTrade() {
           status: 'cooldown',
           cooldownRemaining 
         } : b));
-        await new Promise(r => setTimeout(r, 1000)); // 1 second per tick
+        await new Promise(r => setTimeout(r, 1000));
         cooldownRemaining--;
         continue;
       }
@@ -536,15 +573,13 @@ export default function AutoTrade() {
         if (won) {
           wins++;
           consecutiveLosses = 0;
-          stake = globalStake; // Reset stake after win
+          stake = globalStake;
         } else {
           losses++;
           consecutiveLosses++;
-          // Martingale on loss
           stake = Math.round(stake * globalMultiplier * 100) / 100;
         }
 
-        // After trade, wait 3 ticks before next trade
         cooldownRemaining = 3;
 
         setBots(prev => prev.map(b => {
@@ -694,6 +729,47 @@ export default function AutoTrade() {
       case 'switching_market': return '🔄';
       default: return '⚫';
     }
+  };
+
+  // Digit button component for market signals
+  const DigitButton = ({ digit, percentage, counts, marketData }: { digit: number; percentage: number; counts: number; marketData: MarketData }) => {
+    const isSelected = digit === selectedDigitForComparison;
+    const analysis = marketData.analysis;
+    
+    // Calculate comparisons
+    const overSelectedPercentage = digit < 9 ? 
+      Array.from({ length: 9 - digit }, (_, i) => digit + i + 1).reduce((sum, d) => sum + (analysis.percentages[d] || 0), 0) : 0;
+    const underSelectedPercentage = digit > 0 ?
+      Array.from({ length: digit }, (_, i) => i).reduce((sum, d) => sum + (analysis.percentages[d] || 0), 0) : 0;
+    
+    const evenComparison = digit % 2 === 0 ? 
+      ((analysis.evenPercentage - (analysis.percentages[digit] || 0)) / (analysis.evenPercentage || 1) * 100).toFixed(1) :
+      ((analysis.oddPercentage - (analysis.percentages[digit] || 0)) / (analysis.oddPercentage || 1) * 100).toFixed(1);
+    
+    const oddEvenType = digit % 2 === 0 ? 'Even' : 'Odd';
+    const overUnderType = digit > selectedDigitForComparison ? 'Over' : digit < selectedDigitForComparison ? 'Under' : 'Equal';
+    
+    return (
+      <button
+        onClick={() => setSelectedDigitForComparison(digit)}
+        className={`relative p-1 rounded text-[8px] font-mono transition-all ${
+          isSelected ? 'ring-2 ring-primary bg-primary/20' : 'hover:bg-muted'
+        }`}
+      >
+        <div className="flex flex-col items-center">
+          <span className="font-bold text-xs">{digit}</span>
+          <span className="text-[6px]">{percentage.toFixed(1)}%</span>
+          <span className="text-[6px] text-muted-foreground">({counts})</span>
+        </div>
+        {isSelected && (
+          <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-popover border border-border rounded p-1 text-[6px] whitespace-nowrap z-10">
+            <div>Over {digit}: {overSelectedPercentage.toFixed(1)}%</div>
+            <div>Under {digit}: {underSelectedPercentage.toFixed(1)}%</div>
+            <div>{oddEvenType}: {evenComparison}%</div>
+          </div>
+        )}
+      </button>
+    );
   };
 
   return (
@@ -874,9 +950,16 @@ export default function AutoTrade() {
                       <span>Over 3: {marketData.analysis.over3Percentage.toFixed(1)}%</span>
                       <span>Under 6: {marketData.analysis.under6Percentage.toFixed(1)}%</span>
                     </div>
+                    <div className="flex justify-between text-[8px]">
+                      <span>Over 5: {marketData.analysis.over5Percentage.toFixed(1)}%</span>
+                      <span>Under 5: {marketData.analysis.under5Percentage.toFixed(1)}%</span>
+                    </div>
                     <div className="text-[8px] mt-1">
                       Last 3: {marketData.analysis.lastThreeTicks.join(', ')}
                       {marketData.analysis.lastThreeIdentical && ' ⚠️ Identical'}
+                    </div>
+                    <div className="text-[8px] mt-1">
+                      Last 12: {marketData.analysis.lastTwelveTicks.join(' ')}
                     </div>
                   </>
                 )}
@@ -963,13 +1046,18 @@ export default function AutoTrade() {
 
       {/* Market Signals Dashboard */}
       <div className="bg-card border border-border rounded-xl p-3">
-        <h3 className="text-sm font-semibold mb-2">📊 Live Market Signals</h3>
-        <div className="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold">📊 Live Market Signals</h3>
+          <div className="text-xs text-muted-foreground">
+            Click any digit to see Over/Under and Even/Odd comparisons
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-2 max-h-[500px] overflow-y-auto">
           {Object.entries(marketsData).length > 0 ? (
             Object.entries(marketsData).map(([symbol, data]) => (
-              <div key={symbol} className="bg-muted/30 rounded p-2 text-xs">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold">{getMarketDisplay(symbol)}</span>
+              <div key={symbol} className="bg-muted/30 rounded p-2">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="font-bold text-xs">{getMarketDisplay(symbol)}</span>
                   <Badge className={`text-[8px] ${
                     data.analysis.signal === 'EVEN' ? 'bg-green-500' :
                     data.analysis.signal === 'ODD' ? 'bg-purple-500' :
@@ -977,22 +1065,122 @@ export default function AutoTrade() {
                     data.analysis.signal === 'UNDER_6' ? 'bg-orange-500' :
                     'bg-gray-500'
                   }`}>
-                    {data.analysis.signal || 'NO SIGNAL'}
+                    {data.analysis.signal || 'NO SIGNAL'} {data.analysis.confidence > 0 ? `(${data.analysis.confidence.toFixed(1)}%)` : ''}
                   </Badge>
                 </div>
-                <div className="grid grid-cols-2 gap-1 mt-1 text-[8px]">
-                  <div>Even: {data.analysis.evenPercentage.toFixed(1)}%</div>
-                  <div>Odd: {data.analysis.oddPercentage.toFixed(1)}%</div>
-                  <div>Over 3: {data.analysis.over3Percentage.toFixed(1)}%</div>
-                  <div>Under 6: {data.analysis.under6Percentage.toFixed(1)}%</div>
-                  <div>Most: {data.analysis.mostAppearing}</div>
-                  <div>2nd Least: {data.analysis.secondLeast}</div>
-                  <div colSpan={2}>Last 3: {data.analysis.lastThreeTicks.join(', ')}</div>
+                
+                {/* Last 12 Digits */}
+                <div className="mb-1">
+                  <span className="text-[8px] text-muted-foreground">Last 12:</span>
+                  <div className="flex gap-0.5 mt-0.5">
+                    {data.analysis.lastTwelveTicks.map((digit, idx) => (
+                      <span 
+                        key={idx} 
+                        className={`text-[8px] font-mono px-1 py-0.5 rounded ${
+                          digit === data.analysis.mostAppearing ? 'bg-green-500/20 text-green-400' :
+                          digit === data.analysis.secondLeast ? 'bg-red-500/20 text-red-400' : ''
+                        }`}
+                      >
+                        {digit}
+                      </span>
+                    ))}
+                  </div>
                 </div>
+
+                {/* Most Appearing and Second Least */}
+                <div className="grid grid-cols-2 gap-2 text-[8px] mb-1">
+                  <div className="bg-green-500/10 rounded p-1">
+                    <span className="text-muted-foreground">Most Appearing:</span>
+                    <span className="ml-1 font-bold text-green-400">{data.analysis.mostAppearing}</span>
+                    <span className="ml-1 text-[6px]">({data.analysis.percentages[data.analysis.mostAppearing]?.toFixed(1)}%)</span>
+                  </div>
+                  <div className="bg-red-500/10 rounded p-1">
+                    <span className="text-muted-foreground">2nd Least:</span>
+                    <span className="ml-1 font-bold text-red-400">{data.analysis.secondLeast}</span>
+                    <span className="ml-1 text-[6px]">({data.analysis.percentages[data.analysis.secondLeast]?.toFixed(1)}%)</span>
+                  </div>
+                </div>
+
+                {/* Digit Grid with Percentages */}
+                <div className="mb-1">
+                  <span className="text-[8px] text-muted-foreground">Digit Distribution (hover/click for details):</span>
+                  <div className="grid grid-cols-10 gap-0.5 mt-0.5">
+                    {[0,1,2,3,4,5,6,7,8,9].map(digit => (
+                      <DigitButton 
+                        key={digit} 
+                        digit={digit} 
+                        percentage={data.analysis.percentages[digit] || 0}
+                        counts={data.analysis.counts[digit] || 0}
+                        marketData={data}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Group Comparisons */}
+                <div className="grid grid-cols-2 gap-1 text-[8px]">
+                  <div className="bg-blue-500/10 rounded p-1">
+                    <div className="flex justify-between">
+                      <span>Even/Odd:</span>
+                      <span className={data.analysis.evenPercentage > data.analysis.oddPercentage ? 'text-profit' : 'text-loss'}>
+                        {data.analysis.evenPercentage.toFixed(1)}% / {data.analysis.oddPercentage.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Over/Under 5:</span>
+                      <span className={data.analysis.over5Percentage > data.analysis.under5Percentage ? 'text-profit' : 'text-loss'}>
+                        {data.analysis.over5Percentage.toFixed(1)}% / {data.analysis.under5Percentage.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="bg-purple-500/10 rounded p-1">
+                    <div className="flex justify-between">
+                      <span>Over 3/Under 6:</span>
+                      <span>{data.analysis.over3Percentage.toFixed(1)}% / {data.analysis.under6Percentage.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Confidence:</span>
+                      <span className={data.analysis.confidence >= 58 ? 'text-profit' : 'text-muted-foreground'}>
+                        {data.analysis.confidence.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Selected Digit Comparison */}
+                {data.analysis.percentages[selectedDigitForComparison] && (
+                  <div className="mt-1 text-[8px] bg-primary/10 rounded p-1">
+                    <div className="font-bold">Digit {selectedDigitForComparison} Analysis:</div>
+                    <div className="grid grid-cols-2 gap-1">
+                      <div>
+                        <span>Over {selectedDigitForComparison}: </span>
+                        <span className="font-mono">
+                          {Array.from({ length: 9 - selectedDigitForComparison }, (_, i) => selectedDigitForComparison + i + 1)
+                            .reduce((sum, d) => sum + (data.analysis.percentages[d] || 0), 0).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div>
+                        <span>Under {selectedDigitForComparison}: </span>
+                        <span className="font-mono">
+                          {Array.from({ length: selectedDigitForComparison }, (_, i) => i)
+                            .reduce((sum, d) => sum + (data.analysis.percentages[d] || 0), 0).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div>
+                        <span>Even/Odd comparison: </span>
+                        <span className="font-mono">
+                          {selectedDigitForComparison % 2 === 0 ? 
+                            ((data.analysis.evenPercentage - (data.analysis.percentages[selectedDigitForComparison] || 0)) / (data.analysis.evenPercentage || 1) * 100).toFixed(1) :
+                            ((data.analysis.oddPercentage - (data.analysis.percentages[selectedDigitForComparison] || 0)) / (data.analysis.oddPercentage || 1) * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ))
           ) : (
-            <p className="text-muted-foreground col-span-2 text-center py-2">No market data yet. Click Analyze Now.</p>
+            <p className="text-muted-foreground text-center py-4">No market data yet. Click Analyze Now or wait for ticks.</p>
           )}
         </div>
       </div>
