@@ -1,67 +1,42 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
+import { derivApi } from '@/services/deriv-api';
+import { useAuth } from '@/contexts/AuthContext';
+import { useTickLoader } from '@/hooks/useTickLoader';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import { 
-  Loader2, Play, StopCircle, Pause, TrendingUp, TrendingDown, 
-  CircleDot, RefreshCw, Trash2, Volume2, DollarSign, Sparkles, 
-  Zap, Activity, Award, Target, Shield,
-  ArrowUpCircle, ArrowDownCircle, AlertCircle, CheckCircle2,
-  Binary, Gauge, Rocket, Flame, XCircle, Power
-} from 'lucide-react';
-
-// Mock derivApi for demonstration - replace with actual Deriv API
-const derivApi = {
-  onMessage: (callback: any) => {
-    return () => {};
-  },
-  subscribeTicks: (symbol: string) => {
-    console.log('Subscribing to', symbol);
-  },
-  buyContract: async (params: any) => {
-    return { contractId: 'mock123' };
-  },
-  waitForContractResult: async (contractId: string) => {
-    await new Promise(r => setTimeout(r, 2000));
-    return {
-      status: Math.random() > 0.5 ? 'won' : 'lost',
-      profit: Math.random() > 0.5 ? 0.95 : -1
-    };
-  }
-};
-
-// Mock auth context
-const useAuth = () => {
-  return {
-    isAuthorized: true,
-    activeAccount: { id: 'test' },
-    balance: 1000
-  };
-};
+import { Loader2, Play, StopCircle, Pause, TrendingUp, TrendingDown, CircleDot, RefreshCw, Trash2, AlertCircle, ArrowRight, Zap } from 'lucide-react';
 
 interface DigitAnalysis {
-  most: number;
-  second: number;
-  third: number;
-  least: number;
   counts: Record<number, number>;
+  percentages: Record<number, number>;
+  mostAppearing: number;
+  secondLeast: number;
+  evenPercentage: number;
+  oddPercentage: number;
+  over5Percentage: number;
+  under5Percentage: number;
+  over3Percentage: number;
+  under6Percentage: number;
+  lastTwelveTicks: number[];
+  lastThreeTicks: number[];
+  lastThreeIdentical: boolean;
+  signal: 'EVEN' | 'ODD' | 'OVER_3' | 'UNDER_6' | 'NONE';
+  confidence: number;
 }
 
-interface MarketSignal {
-  market: string;
-  botId: number;
-  botName: string;
-  status: 'waiting' | 'triggered';
+interface MarketData {
+  symbol: string;
+  digits: number[];
   analysis: DigitAnalysis;
+  lastUpdate: number;
 }
 
 interface BotState {
   id: string;
   name: string;
-  type: 'over3' | 'under6' | 'even' | 'odd' | 'over1' | 'under8';
+  type: 'EVEN' | 'ODD' | 'OVER_3' | 'UNDER_6';
   isRunning: boolean;
   isPaused: boolean;
   currentStake: number;
@@ -69,20 +44,14 @@ interface BotState {
   trades: number;
   wins: number;
   losses: number;
-  contractType: string;
-  barrier?: number;
-  selectedMarket?: string;
-  status: 'idle' | 'waiting' | 'trading' | 'cooldown';
+  currentMarket: string;
+  status: 'idle' | 'analyzing' | 'waiting_entry' | 'trading' | 'cooldown' | 'switching_market';
   consecutiveLosses: number;
-  entryTriggered: boolean;
   cooldownRemaining: number;
   lastTradeResult?: 'win' | 'loss';
-  recoveryMode: boolean;
-  signal: boolean;
-  lastDigit?: number;
-  autoTradeEnabled: boolean;
-  pendingEntry: boolean;
-  entryTimestamp?: number;
+  marketSwitchCount: number;
+  lastSignal?: string;
+  signalStrength: number;
 }
 
 interface TradeLog {
@@ -94,723 +63,609 @@ interface TradeLog {
   result: 'Pending' | 'Win' | 'Loss';
   pnl: number;
   bot: string;
-  entryDigit: number;
-  exitDigit?: number;
+  lastDigit?: number;
   signalType?: string;
-  executionTime?: number;
+  marketSwitch?: string;
 }
 
-// Markets
-const ALL_MARKETS = [
+const VOLATILITY_MARKETS = [
   'R_10', 'R_25', 'R_50', 'R_75', 'R_100',
   '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V',
-  'RDBEAR', 'RDBULL',
-  'JD10', 'JD25', 'JD50', 'JD75', 'JD100'
+  'BOOM300', 'BOOM500', 'BOOM1000',
+  'CRASH300', 'CRASH500', 'CRASH1000',
+  'RDBEAR', 'RDBULL', 'JD10', 'JD25', 'JD50', 'JD75', 'JD100'
 ];
 
-// Bot strategies
-const BOT_STRATEGIES = [
-  {
-    id: 1,
-    name: 'OVER 1',
-    type: 'over1',
-    contractType: 'DIGITOVER',
-    barrier: 1,
-    icon: <ArrowUpCircle className="w-3 h-3" />,
-    color: 'blue',
-    condition: (analysis: DigitAnalysis) => {
-      return analysis.most > 4 && analysis.second > 4 && analysis.least > 4;
-    },
-    entryCondition: (digits: number[]) => {
-      if (digits.length < 2) return false;
-      const lastTwo = digits.slice(-2);
-      return lastTwo.every(d => d <= 1);
-    }
-  },
-  {
-    id: 2,
-    name: 'UNDER 8',
-    type: 'under8',
-    contractType: 'DIGITUNDER',
-    barrier: 8,
-    icon: <ArrowDownCircle className="w-3 h-3" />,
-    color: 'orange',
-    condition: (analysis: DigitAnalysis) => {
-      return analysis.most < 6 && analysis.second < 6 && analysis.least < 6;
-    },
-    entryCondition: (digits: number[]) => {
-      if (digits.length < 2) return false;
-      const lastTwo = digits.slice(-2);
-      return lastTwo.every(d => d >= 8);
-    }
-  },
-  {
-    id: 3,
-    name: 'EVEN',
-    type: 'even',
-    contractType: 'DIGITEVEN',
-    icon: <Binary className="w-3 h-3" />,
-    color: 'green',
-    condition: (analysis: DigitAnalysis) => {
-      return analysis.most % 2 === 0 && 
-             analysis.second % 2 === 0 && 
-             analysis.least % 2 === 0;
-    },
-    entryCondition: (digits: number[]) => {
-      if (digits.length < 3) return false;
-      const lastThree = digits.slice(-3);
-      return lastThree.every(d => d % 2 === 1);
-    }
-  },
-  {
-    id: 4,
-    name: 'ODD',
-    type: 'odd',
-    contractType: 'DIGITODD',
-    icon: <Binary className="w-3 h-3" />,
-    color: 'purple',
-    condition: (analysis: DigitAnalysis) => {
-      return analysis.most % 2 === 1 && 
-             analysis.second % 2 === 1 && 
-             analysis.third % 2 === 1;
-    },
-    entryCondition: (digits: number[]) => {
-      if (digits.length < 3) return false;
-      const lastThree = digits.slice(-3);
-      return lastThree.every(d => d % 2 === 0);
-    }
-  },
-  {
-    id: 5,
-    name: 'OVER 3',
-    type: 'over3',
-    contractType: 'DIGITOVER',
-    barrier: 3,
-    icon: <Gauge className="w-3 h-3" />,
-    color: 'cyan',
-    condition: (analysis: DigitAnalysis) => {
-      return analysis.most > 4 && analysis.second > 4 && analysis.least > 4;
-    },
-    entryCondition: (digits: number[]) => {
-      if (digits.length < 3) return false;
-      const lastThree = digits.slice(-3);
-      return lastThree.every(d => d <= 2);
-    }
-  },
-  {
-    id: 6,
-    name: 'UNDER 6',
-    type: 'under6',
-    contractType: 'DIGITUNDER',
-    barrier: 6,
-    icon: <Target className="w-3 h-3" />,
-    color: 'red',
-    condition: (analysis: DigitAnalysis) => {
-      return analysis.most < 5 && analysis.second < 5 && analysis.least < 5;
-    },
-    entryCondition: (digits: number[]) => {
-      if (digits.length < 3) return false;
-      const lastThree = digits.slice(-3);
-      return lastThree.every(d => d >= 7);
-    }
-  }
-];
+function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number }> {
+  return new Promise((resolve) => {
+    const unsub = derivApi.onMessage((data: any) => {
+      if (data.tick && data.tick.symbol === symbol) {
+        unsub();
+        resolve({ quote: data.tick.quote, epoch: data.tick.epoch });
+      }
+    });
+  });
+}
 
-// Play sound
-const playScanSound = (type: 'start' | 'progress' | 'complete' | 'signal' | 'trade') => {
-  try {
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.type = 'sine';
-    
-    switch(type) {
-      case 'start':
-        oscillator.frequency.setValueAtTime(660, audioContext.currentTime);
-        oscillator.frequency.exponentialRampToValueAtTime(440, audioContext.currentTime + 0.3);
-        gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
-        break;
-      case 'signal':
-        oscillator.frequency.setValueAtTime(988, audioContext.currentTime);
-        oscillator.frequency.setValueAtTime(1318.51, audioContext.currentTime + 0.15);
-        gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
-        break;
-      case 'trade':
-        oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime);
-        oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime + 0.1);
-        oscillator.frequency.setValueAtTime(783.99, audioContext.currentTime + 0.2);
-        gainNode.gain.setValueAtTime(0.25, audioContext.currentTime);
-        break;
-    }
-    
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    oscillator.start();
-    oscillator.stop(audioContext.currentTime + 0.3);
-  } catch (e) {
-    console.log('Audio not supported');
-  }
-};
-
-// Voice system
-const speak = (text: string, isScary = true) => {
-  try {
-    if (!window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.pitch = isScary ? 0.3 : 0.8;
-    utterance.rate = 0.7;
-    utterance.volume = 1;
-    
-    const voices = window.speechSynthesis.getVoices();
-    const deepVoice = voices.find(v => 
-      v.name.includes('Google UK English Male') || 
-      v.name.includes('Daniel')
-    );
-    if (deepVoice) utterance.voice = deepVoice;
-    
-    window.speechSynthesis.speak(utterance);
-  } catch (e) {
-    console.log('Speech not supported');
-  }
-};
-
-// Digit analysis
+// Advanced digit analysis function
 const analyzeDigits = (digits: number[]): DigitAnalysis => {
+  if (digits.length < 100) {
+    return {
+      counts: {},
+      percentages: {},
+      mostAppearing: -1,
+      secondLeast: -1,
+      evenPercentage: 0,
+      oddPercentage: 0,
+      over5Percentage: 0,
+      under5Percentage: 0,
+      over3Percentage: 0,
+      under6Percentage: 0,
+      lastTwelveTicks: [],
+      lastThreeTicks: [],
+      lastThreeIdentical: false,
+      signal: 'NONE',
+      confidence: 0
+    };
+  }
+
+  const last700 = digits.slice(-700);
+  const lastTwelve = digits.slice(-12);
+  const lastThree = digits.slice(-3);
+  const lastThreeIdentical = lastThree.length === 3 && lastThree.every(d => d === lastThree[0]);
+  
+  // Count frequencies
   const counts: Record<number, number> = {};
   for (let i = 0; i <= 9; i++) counts[i] = 0;
+  last700.forEach(d => counts[d]++);
   
-  digits.forEach(d => counts[d]++);
+  // Calculate percentages
+  const percentages: Record<number, number> = {};
+  for (let i = 0; i <= 9; i++) {
+    percentages[i] = (counts[i] / 700) * 100;
+  }
   
-  const sorted = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .map(entry => parseInt(entry[0]));
+  // Sort digits
+  const sortedByCount = [...Array(10).keys()].sort((a, b) => counts[b] - counts[a]);
+  const sortedByLeast = [...Array(10).keys()].sort((a, b) => counts[a] - counts[b]);
+  
+  const mostAppearing = sortedByCount[0];
+  const secondLeast = sortedByLeast[1]; // Second least appearing digit
+  
+  // Calculate group percentages
+  const evenDigits = [0,2,4,6,8];
+  const oddDigits = [1,3,5,7,9];
+  const over5Digits = [6,7,8,9];
+  const under5Digits = [0,1,2,3,4];
+  const over3Digits = [4,5,6,7,8,9];
+  const under6Digits = [0,1,2,3,4,5];
+  
+  const evenCount = evenDigits.reduce((sum, d) => sum + counts[d], 0);
+  const oddCount = oddDigits.reduce((sum, d) => sum + counts[d], 0);
+  const over5Count = over5Digits.reduce((sum, d) => sum + counts[d], 0);
+  const under5Count = under5Digits.reduce((sum, d) => sum + counts[d], 0);
+  const over3Count = over3Digits.reduce((sum, d) => sum + counts[d], 0);
+  const under6Count = under6Digits.reduce((sum, d) => sum + counts[d], 0);
+  
+  const evenPercentage = (evenCount / 700) * 100;
+  const oddPercentage = (oddCount / 700) * 100;
+  const over5Percentage = (over5Count / 700) * 100;
+  const under5Percentage = (under5Count / 700) * 100;
+  const over3Percentage = (over3Count / 700) * 100;
+  const under6Percentage = (under6Count / 700) * 100;
+  
+  // Check last three pattern
+  const lastThreeOver3 = lastThree.filter(d => d > 3).length >= 2;
+  const lastThreeUnder6 = lastThree.filter(d => d < 6).length >= 2;
+  const lastThreeEven = lastThree.filter(d => d % 2 === 0).length >= 2;
+  const lastThreeOdd = lastThree.filter(d => d % 2 === 1).length >= 2;
+  
+  // Determine signal based on strict conditions
+  let signal: 'EVEN' | 'ODD' | 'OVER_3' | 'UNDER_6' | 'NONE' = 'NONE';
+  let confidence = 0;
+  
+  // Check EVEN conditions
+  if (
+    evenPercentage >= 58 &&
+    oddPercentage <= 42 &&
+    mostAppearing % 2 === 0 &&
+    lastThreeEven &&
+    secondLeast % 2 === 1 &&
+    Math.abs(evenPercentage - 50) > 5
+  ) {
+    signal = 'EVEN';
+    confidence = evenPercentage;
+  }
+  // Check ODD conditions
+  else if (
+    oddPercentage >= 58 &&
+    evenPercentage <= 42 &&
+    mostAppearing % 2 === 1 &&
+    lastThreeOdd &&
+    secondLeast % 2 === 0 &&
+    Math.abs(oddPercentage - 50) > 5
+  ) {
+    signal = 'ODD';
+    confidence = oddPercentage;
+  }
+  // Check OVER 3 conditions
+  else if (
+    over3Percentage >= 60 &&
+    mostAppearing > 3 &&
+    lastThreeOver3 &&
+    secondLeast < 4 &&
+    Math.abs(over3Percentage - 50) > 5
+  ) {
+    signal = 'OVER_3';
+    confidence = over3Percentage;
+  }
+  // Check UNDER 6 conditions
+  else if (
+    under6Percentage >= 60 &&
+    mostAppearing < 6 &&
+    lastThreeUnder6 &&
+    secondLeast > 5 &&
+    Math.abs(under6Percentage - 50) > 5
+  ) {
+    signal = 'UNDER_6';
+    confidence = under6Percentage;
+  }
   
   return {
-    most: sorted[0],
-    second: sorted[1],
-    third: sorted[2],
-    least: sorted[9],
-    counts
+    counts,
+    percentages,
+    mostAppearing,
+    secondLeast,
+    evenPercentage,
+    oddPercentage,
+    over5Percentage,
+    under5Percentage,
+    over3Percentage,
+    under6Percentage,
+    lastTwelveTicks: lastTwelve,
+    lastThreeTicks: lastThree,
+    lastThreeIdentical,
+    signal,
+    confidence
   };
 };
 
-// Market display
-const getMarketDisplay = (market: string) => {
-  if (market.startsWith('R_')) return `R${market.slice(2)}`;
-  if (market.startsWith('1HZ')) return `HZ${market.slice(3)}`;
-  if (market === 'RDBEAR') return 'BEAR';
-  if (market === 'RDBULL') return 'BULL';
-  if (market.startsWith('JD')) return `JD${market.slice(2)}`;
-  return market;
-};
-
-// Mock tick loader
-const useTickLoader = (market: string, count: number) => {
-  const [digits, setDigits] = useState<number[]>([]);
-  const [lastTick, setLastTick] = useState<number>(0);
+// Find best market for each bot type
+const findBestMarketForBot = (
+  marketsData: Record<string, MarketData>,
+  botType: string
+): { market: string; analysis: DigitAnalysis } | null => {
+  let bestMarket: string | null = null;
+  let bestAnalysis: DigitAnalysis | null = null;
+  let highestConfidence = 0;
   
-  useEffect(() => {
-    const mockDigits = Array.from({ length: 1000 }, () => Math.floor(Math.random() * 10));
-    setDigits(mockDigits);
-    setLastTick(mockDigits[mockDigits.length - 1]);
-    
-    const interval = setInterval(() => {
-      const newDigit = Math.floor(Math.random() * 10);
-      setDigits(prev => {
-        const updated = [...prev.slice(1), newDigit];
-        return updated;
-      });
-      setLastTick(newDigit);
-    }, 2000);
-    
-    return () => clearInterval(interval);
-  }, [market]);
+  for (const [symbol, data] of Object.entries(marketsData)) {
+    if (data.analysis.signal === botType && data.analysis.confidence > highestConfidence) {
+      highestConfidence = data.analysis.confidence;
+      bestMarket = symbol;
+      bestAnalysis = data.analysis;
+    }
+  }
   
-  return { digits, lastTick, prices: [], isLoading: false, tickCount: digits.length };
-};
-
-// Wait for next tick
-const waitForNextTick = (market: string): Promise<number> => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve(Math.floor(Math.random() * 10));
-    }, 500);
-  });
+  return bestMarket && bestAnalysis ? { market: bestMarket, analysis: bestAnalysis } : null;
 };
 
 export default function AutoTrade() {
-  const { isAuthorized, balance } = useAuth();
+  const { isAuthorized, activeAccount, balance } = useAuth();
+  const { digits, selectedMarket, setSelectedMarket } = useTickLoader();
   const [activeTradeId, setActiveTradeId] = useState<string | null>(null);
-  const [marketSignals, setMarketSignals] = useState<MarketSignal[]>([]);
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanProgress, setScanProgress] = useState(0);
+  const [marketsData, setMarketsData] = useState<Record<string, MarketData>>({});
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [globalStake, setGlobalStake] = useState<number>(0.5);
   const [globalMultiplier, setGlobalMultiplier] = useState<number>(2);
   const [globalStopLoss, setGlobalStopLoss] = useState<number>(30);
   const [globalTakeProfit, setGlobalTakeProfit] = useState<number>(5);
-  const [noSignal, setNoSignal] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [autoTradeEnabled, setAutoTradeEnabled] = useState(false);
-  const [masterCycleActive, setMasterCycleActive] = useState(false);
+  const [lastScanTime, setLastScanTime] = useState<Date | null>(null);
+  const [selectedDigitForComparison, setSelectedDigitForComparison] = useState<number>(5);
   
   const [trades, setTrades] = useState<TradeLog[]>([]);
   const tradeIdRef = useRef(0);
   const marketDigitsRef = useRef<Record<string, number[]>>({});
-  const marketLastTickRef = useRef<Record<string, number>>({});
-  const voiceIntervalRef = useRef<NodeJS.Timeout>();
-  const tickListenersRef = useRef<Record<string, ((digit: number) => void)[]>>({});
-  const botTimeoutRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const analysisIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const { digits, lastTick } = useTickLoader('R_100', 1000);
-
-  // Initialize voices
-  useEffect(() => {
-    if (window.speechSynthesis) window.speechSynthesis.getVoices();
-  }, []);
-
-  // Six bots
+  // Initialize bots
   const [bots, setBots] = useState<BotState[]>([
-    { id: 'bot1', name: 'OVER 3', type: 'over3', isRunning: false, isPaused: false, 
-      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, contractType: 'DIGITOVER', barrier: 3,
-      status: 'idle', consecutiveLosses: 0, entryTriggered: false, cooldownRemaining: 0, recoveryMode: false, 
-      signal: false, lastDigit: undefined, autoTradeEnabled: false, pendingEntry: false, entryTimestamp: undefined },
-    { id: 'bot2', name: 'UNDER 6', type: 'under6', isRunning: false, isPaused: false, 
-      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, contractType: 'DIGITUNDER', barrier: 6,
-      status: 'idle', consecutiveLosses: 0, entryTriggered: false, cooldownRemaining: 0, recoveryMode: false, 
-      signal: false, lastDigit: undefined, autoTradeEnabled: false, pendingEntry: false, entryTimestamp: undefined },
-    { id: 'bot3', name: 'EVEN', type: 'even', isRunning: false, isPaused: false, 
-      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, contractType: 'DIGITEVEN',
-      status: 'idle', consecutiveLosses: 0, entryTriggered: false, cooldownRemaining: 0, recoveryMode: false, 
-      signal: false, lastDigit: undefined, autoTradeEnabled: false, pendingEntry: false, entryTimestamp: undefined },
-    { id: 'bot4', name: 'ODD', type: 'odd', isRunning: false, isPaused: false, 
-      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, contractType: 'DIGITODD',
-      status: 'idle', consecutiveLosses: 0, entryTriggered: false, cooldownRemaining: 0, recoveryMode: false, 
-      signal: false, lastDigit: undefined, autoTradeEnabled: false, pendingEntry: false, entryTimestamp: undefined },
-    { id: 'bot5', name: 'OVER 1', type: 'over1', isRunning: false, isPaused: false, 
-      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, contractType: 'DIGITOVER', barrier: 1,
-      status: 'idle', consecutiveLosses: 0, entryTriggered: false, cooldownRemaining: 0, recoveryMode: false, 
-      signal: false, lastDigit: undefined, autoTradeEnabled: false, pendingEntry: false, entryTimestamp: undefined },
-    { id: 'bot6', name: 'UNDER 8', type: 'under8', isRunning: false, isPaused: false, 
-      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, contractType: 'DIGITUNDER', barrier: 8,
-      status: 'idle', consecutiveLosses: 0, entryTriggered: false, cooldownRemaining: 0, recoveryMode: false, 
-      signal: false, lastDigit: undefined, autoTradeEnabled: false, pendingEntry: false, entryTimestamp: undefined }
+    { 
+      id: 'bot1', name: 'EVEN BOT', type: 'EVEN', isRunning: false, isPaused: false, 
+      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, 
+      currentMarket: 'R_100', status: 'idle', consecutiveLosses: 0, 
+      cooldownRemaining: 0, marketSwitchCount: 0, signalStrength: 0
+    },
+    { 
+      id: 'bot2', name: 'ODD BOT', type: 'ODD', isRunning: false, isPaused: false, 
+      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, 
+      currentMarket: 'R_100', status: 'idle', consecutiveLosses: 0, 
+      cooldownRemaining: 0, marketSwitchCount: 0, signalStrength: 0
+    },
+    { 
+      id: 'bot3', name: 'OVER 3 BOT', type: 'OVER_3', isRunning: false, isPaused: false, 
+      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, 
+      currentMarket: 'R_100', status: 'idle', consecutiveLosses: 0, 
+      cooldownRemaining: 0, marketSwitchCount: 0, signalStrength: 0
+    },
+    { 
+      id: 'bot4', name: 'UNDER 6 BOT', type: 'UNDER_6', isRunning: false, isPaused: false, 
+      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, 
+      currentMarket: 'R_100', status: 'idle', consecutiveLosses: 0, 
+      cooldownRemaining: 0, marketSwitchCount: 0, signalStrength: 0
+    }
   ]);
 
-  const botRunningRef = useRef<Record<string, boolean>>({});
+  const botRunningRefs = useRef<Record<string, boolean>>({});
+  const botPausedRefs = useRef<Record<string, boolean>>({});
 
-  // Register tick listener
-  const registerTickListener = useCallback((market: string, callback: (digit: number) => void) => {
-    if (!tickListenersRef.current[market]) {
-      tickListenersRef.current[market] = [];
+  // Initialize market digits for all volatility markets
+  useEffect(() => {
+    // Initialize all markets with empty arrays
+    VOLATILITY_MARKETS.forEach(market => {
+      if (!marketDigitsRef.current[market]) {
+        marketDigitsRef.current[market] = [];
+      }
+    });
+  }, []);
+
+  // Update digits for the selected market
+  useEffect(() => {
+    if (digits.length > 0 && selectedMarket) {
+      // Update the current selected market with real digits
+      marketDigitsRef.current[selectedMarket] = [...digits];
+      
+      // For other markets, we need to simulate or fetch data
+      // This is a placeholder - in production, you'd need to fetch ticks for all markets
+      VOLATILITY_MARKETS.forEach(market => {
+        if (market !== selectedMarket && marketDigitsRef.current[market].length < 700) {
+          // Simulate some data for other markets to demonstrate functionality
+          if (marketDigitsRef.current[market].length === 0) {
+            const simulatedDigits = Array(700).fill(0).map(() => Math.floor(Math.random() * 10));
+            marketDigitsRef.current[market] = simulatedDigits;
+          }
+        }
+      });
+      
+      // Trigger analysis when digits update
+      analyzeAllMarkets();
     }
-    tickListenersRef.current[market].push(callback);
+  }, [digits, selectedMarket]);
+
+  // Continuous analysis every 10 seconds
+  useEffect(() => {
+    if (analysisIntervalRef.current) {
+      clearInterval(analysisIntervalRef.current);
+    }
+    
+    analysisIntervalRef.current = setInterval(() => {
+      analyzeAllMarkets();
+    }, 10000);
     
     return () => {
-      tickListenersRef.current[market] = tickListenersRef.current[market].filter(cb => cb !== callback);
+      if (analysisIntervalRef.current) {
+        clearInterval(analysisIntervalRef.current);
+      }
     };
   }, []);
 
-  // Simulate tick updates
-  useEffect(() => {
-    const interval = setInterval(() => {
-      ALL_MARKETS.forEach(market => {
-        const newDigit = Math.floor(Math.random() * 10);
-        marketLastTickRef.current[market] = newDigit;
-        
-        if (!marketDigitsRef.current[market]) {
-          marketDigitsRef.current[market] = [];
-        }
-        marketDigitsRef.current[market].push(newDigit);
-        if (marketDigitsRef.current[market].length > 1000) {
-          marketDigitsRef.current[market].shift();
-        }
-        
-        if (tickListenersRef.current[market]) {
-          tickListenersRef.current[market].forEach(callback => callback(newDigit));
-        }
-      });
-    }, 1000);
+  // Analyze all markets
+  const analyzeAllMarkets = useCallback(() => {
+    setIsAnalyzing(true);
     
-    return () => clearInterval(interval);
+    const newMarketsData: Record<string, MarketData> = {};
+    
+    for (const market of VOLATILITY_MARKETS) {
+      const marketDigits = marketDigitsRef.current[market] || [];
+      if (marketDigits.length >= 100) {
+        const analysis = analyzeDigits(marketDigits);
+        newMarketsData[market] = {
+          symbol: market,
+          digits: marketDigits.slice(-700),
+          analysis,
+          lastUpdate: Date.now()
+        };
+      }
+    }
+    
+    setMarketsData(newMarketsData);
+    setLastScanTime(new Date());
+    
+    // Auto-switch bots to best markets
+    setBots(prev => prev.map(bot => {
+      const bestMarket = findBestMarketForBot(newMarketsData, bot.type);
+      if (bestMarket && bestMarket.market !== bot.currentMarket && bot.isRunning) {
+        return {
+          ...bot,
+          currentMarket: bestMarket.market,
+          marketSwitchCount: bot.marketSwitchCount + 1,
+          lastSignal: bestMarket.analysis.signal,
+          signalStrength: bestMarket.analysis.confidence
+        };
+      }
+      return bot;
+    }));
+    
+    setIsAnalyzing(false);
   }, []);
 
-  // Monitor entry conditions
-  useEffect(() => {
-    const checkSignals = () => {
-      marketSignals.forEach(signal => {
-        if (signal.status === 'waiting') {
-          const bot = BOT_STRATEGIES.find(b => b.id === signal.botId)!;
-          const marketDigits = marketDigitsRef.current[signal.market] || [];
-          const lastDigit = marketDigits.length > 0 ? marketDigits[marketDigits.length - 1] : undefined;
-          
-          if (lastDigit !== undefined) {
-            setBots(prev => prev.map(b => 
-              b.type === bot.type ? { ...b, lastDigit } : b
-            ));
-          }
-          
-          if (bot.entryCondition(marketDigits)) {
-            setMarketSignals(prev => prev.map(s => 
-              s.market === signal.market && s.botId === signal.botId
-                ? { ...s, status: 'triggered' }
-                : s
-            ));
-            
-            if (soundEnabled) playScanSound('signal');
-            
-            const botState = bots.find(b => b.type === bot.type);
-            
-            if (botState) {
-              setBots(prev => prev.map(b => 
-                b.type === bot.type ? { 
-                  ...b, 
-                  signal: true, 
-                  selectedMarket: signal.market,
-                  pendingEntry: true,
-                  entryTimestamp: Date.now()
-                } : b
-              ));
-              
-              const unsubscribe = registerTickListener(signal.market, async (newDigit) => {
-                const currentBot = bots.find(b => b.type === bot.type);
-                if (currentBot?.pendingEntry && currentBot.selectedMarket === signal.market) {
-                  setBots(prev => prev.map(b => 
-                    b.type === bot.type ? { ...b, pendingEntry: false } : b
-                  ));
-                  
-                  unsubscribe();
-                  
-                  if (soundEnabled) playScanSound('trade');
-                  
-                  if (autoTradeEnabled || masterCycleActive || currentBot.autoTradeEnabled) {
-                    startBot(botState.id);
-                  }
-                }
-              });
-            }
-          }
-        }
-      });
-    };
+  // Get contract type from bot type
+  const getContractDetails = (botType: string): { contract: string; barrier?: number } => {
+    switch(botType) {
+      case 'EVEN': return { contract: 'DIGITEVEN' };
+      case 'ODD': return { contract: 'DIGITODD' };
+      case 'OVER_3': return { contract: 'DIGITOVER', barrier: 3 };
+      case 'UNDER_6': return { contract: 'DIGITUNDER', barrier: 6 };
+      default: return { contract: 'DIGITEVEN' };
+    }
+  };
 
-    const interval = setInterval(checkSignals, 500);
-    return () => clearInterval(interval);
-  }, [marketSignals, bots, soundEnabled, autoTradeEnabled, masterCycleActive, registerTickListener]);
-
-  // Continuous trading loop for each bot
-  const runBotContinuous = useCallback(async (botId: string) => {
+  // Trading loop
+  const runBot = useCallback(async (botId: string) => {
     const bot = bots.find(b => b.id === botId);
     if (!bot || !isAuthorized) return;
 
-    if (balance < bot.currentStake) {
+    if (balance < globalStake) {
       toast.error(`Insufficient balance for ${bot.name}`);
       stopBot(botId);
       return;
     }
 
-    if (!bot.selectedMarket) {
-      toast.error(`${bot.name}: No market selected`);
-      stopBot(botId);
-      return;
-    }
-
-    setBots(prev => prev.map(b => 
-      b.id === botId ? { ...b, isRunning: true, status: 'trading' } : b
-    ));
+    setBots(prev => prev.map(b => b.id === botId ? { 
+      ...b, 
+      isRunning: true, 
+      isPaused: false, 
+      currentStake: globalStake,
+      status: 'analyzing'
+    } : b));
     
-    botRunningRef.current[botId] = true;
+    botRunningRefs.current[botId] = true;
+    botPausedRefs.current[botId] = false;
 
-    while (botRunningRef.current[botId]) {
-      // Check TP/SL
-      const currentBot = bots.find(b => b.id === botId)!;
-      if (currentBot.totalPnl <= -globalStopLoss) {
-        toast.error(`${currentBot.name}: Stop Loss reached! $${currentBot.totalPnl.toFixed(2)}`);
-        stopBot(botId);
-        break;
-      }
-      if (currentBot.totalPnl >= globalTakeProfit) {
-        toast.success(`${currentBot.name}: Take Profit reached! +$${currentBot.totalPnl.toFixed(2)}`);
-        stopBot(botId);
-        break;
-      }
+    let stake = globalStake;
+    let totalPnl = bot.totalPnl;
+    let tradeCount = bot.trades;
+    let wins = bot.wins;
+    let losses = bot.losses;
+    let consecutiveLosses = 0;
+    let cooldownRemaining = 0;
+    let currentMarket = bot.currentMarket;
+    let marketSwitchCount = bot.marketSwitchCount;
 
-      // Check if paused
-      if (currentBot.isPaused) {
-        await new Promise(r => setTimeout(r, 1000));
-        continue;
-      }
-
-      // Check cooldown
-      if (currentBot.cooldownRemaining > 0) {
-        setBots(prev => prev.map(b => 
-          b.id === botId ? { ...b, cooldownRemaining: b.cooldownRemaining - 1 } : b
-        ));
-        await new Promise(r => setTimeout(r, 1000));
-        continue;
-      }
-
-      // Wait for entry condition
-      const marketDigits = marketDigitsRef.current[currentBot.selectedMarket!] || [];
-      const botStrategy = BOT_STRATEGIES.find(s => s.type === currentBot.type)!;
-      
-      if (!botStrategy.entryCondition(marketDigits)) {
+    while (botRunningRefs.current[botId]) {
+      if (botPausedRefs.current[botId]) {
         await new Promise(r => setTimeout(r, 500));
         continue;
       }
 
-      // Execute trade
+      // Check stop loss / take profit
+      if (totalPnl <= -globalStopLoss) {
+        toast.error(`${bot.name}: Stop Loss! $${totalPnl.toFixed(2)}`);
+        break;
+      }
+      if (totalPnl >= globalTakeProfit) {
+        toast.success(`${bot.name}: Take Profit! +$${totalPnl.toFixed(2)}`);
+        break;
+      }
+
+      // Handle cooldown (3 ticks after trade)
+      if (cooldownRemaining > 0) {
+        setBots(prev => prev.map(b => b.id === botId ? { 
+          ...b, 
+          status: 'cooldown',
+          cooldownRemaining 
+        } : b));
+        await new Promise(r => setTimeout(r, 1000));
+        cooldownRemaining--;
+        continue;
+      }
+
+      // Get current market analysis
+      const marketData = marketsData[currentMarket];
+      if (!marketData) {
+        // Try to find another market with signal
+        const bestMarket = findBestMarketForBot(marketsData, bot.type);
+        if (bestMarket) {
+          currentMarket = bestMarket.market;
+          marketSwitchCount++;
+          setBots(prev => prev.map(b => b.id === botId ? { 
+            ...b, 
+            currentMarket,
+            marketSwitchCount,
+            status: 'switching_market'
+          } : b));
+          toast.info(`${bot.name} switched to ${currentMarket}`);
+        }
+        await new Promise(r => setTimeout(r, 1000));
+        continue;
+      }
+
+      const analysis = marketData.analysis;
+      const lastDigit = marketData.digits.length > 0 ? marketData.digits[marketData.digits.length - 1] : undefined;
+
+      // Update signal info
+      setBots(prev => prev.map(b => b.id === botId ? { 
+        ...b, 
+        lastSignal: analysis.signal,
+        signalStrength: analysis.confidence,
+        status: analysis.signal === bot.type ? 'waiting_entry' : 'analyzing'
+      } : b));
+
+      // Check if current market has signal for this bot type
+      if (analysis.signal !== bot.type) {
+        // Look for better market
+        const bestMarket = findBestMarketForBot(marketsData, bot.type);
+        if (bestMarket && bestMarket.market !== currentMarket) {
+          currentMarket = bestMarket.market;
+          marketSwitchCount++;
+          toast.info(`${bot.name} found better signal in ${currentMarket}`);
+        }
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+
+      // Check last three identical rule
+      if (analysis.lastThreeIdentical) {
+        toast.warning(`${bot.name}: Last 3 identical, waiting 5 ticks`);
+        cooldownRemaining = 5;
+        continue;
+      }
+
+      // Check if signal is strong enough
+      if (analysis.confidence < 58) {
+        await new Promise(r => setTimeout(r, 1000));
+        continue;
+      }
+
+      setBots(prev => prev.map(b => b.id === botId ? { ...b, status: 'trading' } : b));
+
       try {
-        const currentDigit = marketLastTickRef.current[currentBot.selectedMarket!] || 
-                            Math.floor(Math.random() * 10);
+        await waitForNextTick(currentMarket);
+
+        if (activeTradeId) {
+          await new Promise(r => setTimeout(r, 500));
+          continue;
+        }
+
+        const { contract, barrier } = getContractDetails(bot.type);
+        
+        const params: any = {
+          contract_type: contract,
+          symbol: currentMarket,
+          duration: 1,
+          duration_unit: 't',
+          basis: 'stake',
+          amount: stake,
+        };
+
+        if (barrier !== undefined) {
+          params.barrier = barrier.toString();
+        }
 
         const id = ++tradeIdRef.current;
         const now = new Date().toLocaleTimeString();
-        setActiveTradeId(`${botId}-${id}`);
+        const tradeId = `${botId}-${id}`;
+        setActiveTradeId(tradeId);
 
         setTrades(prev => [{
           id,
           time: now,
-          market: currentBot.selectedMarket!,
-          contract: currentBot.contractType,
-          stake: currentBot.currentStake,
+          market: currentMarket,
+          contract,
+          stake,
           result: 'Pending',
           pnl: 0,
-          bot: currentBot.name,
-          entryDigit: currentDigit,
-          signalType: currentBot.type,
-          executionTime: Date.now()
-        }, ...prev].slice(0, 50)]);
+          bot: bot.name,
+          lastDigit,
+          signalType: analysis.signal
+        }, ...prev].slice(0, 100));
 
-        // Mock trade execution
-        await new Promise(r => setTimeout(r, 2000));
-        const won = Math.random() > 0.5;
-        const pnl = won ? currentBot.currentStake * 0.95 : -currentBot.currentStake;
-        const exitDigit = await waitForNextTick(currentBot.selectedMarket!);
+        const { contractId } = await derivApi.buyContract(params);
+        const result = await derivApi.waitForContractResult(contractId);
+        const won = result.status === 'won';
+        const pnl = result.profit;
 
-        setTrades(prev => prev.map(t => 
-          t.id === id ? { ...t, result: won ? 'Win' : 'Loss', pnl, exitDigit } : t
-        ));
+        setTrades(prev => prev.map(t => t.id === id ? { ...t, result: won ? 'Win' : 'Loss', pnl } : t));
+
+        totalPnl += pnl;
+        tradeCount++;
+        
+        if (won) {
+          wins++;
+          consecutiveLosses = 0;
+          stake = globalStake;
+        } else {
+          losses++;
+          consecutiveLosses++;
+          stake = Math.round(stake * globalMultiplier * 100) / 100;
+        }
+
+        cooldownRemaining = 3;
 
         setBots(prev => prev.map(b => {
           if (b.id === botId) {
-            const newTrades = b.trades + 1;
-            const newWins = won ? b.wins + 1 : b.wins;
-            const newLosses = won ? b.losses : b.losses + 1;
-            const newPnl = b.totalPnl + pnl;
-            const newStake = won ? globalStake : Math.round(b.currentStake * globalMultiplier * 100) / 100;
-            
             return {
               ...b,
-              totalPnl: newPnl,
-              trades: newTrades,
-              wins: newWins,
-              losses: newLosses,
-              currentStake: newStake,
+              totalPnl,
+              trades: tradeCount,
+              wins,
+              losses,
+              currentStake: stake,
+              consecutiveLosses,
+              status: 'cooldown',
+              cooldownRemaining,
               lastTradeResult: won ? 'win' : 'loss',
-              consecutiveLosses: won ? 0 : b.consecutiveLosses + 1,
-              cooldownRemaining: won ? 0 : (b.type === 'even' || b.type === 'odd' ? 3 : 0)
+              currentMarket,
+              marketSwitchCount
             };
           }
           return b;
         }));
 
         setActiveTradeId(null);
-        
-        if (soundEnabled) playScanSound('trade');
 
-      } catch (err) {
-        console.error('Trade error:', err);
+      } catch (err: any) {
         setActiveTradeId(null);
+        if (err.message?.includes('Insufficient balance')) {
+          toast.error(`Insufficient balance for ${bot.name}`);
+          break;
+        } else {
+          console.error(`Trade error:`, err);
+          await new Promise(r => setTimeout(r, 2000));
+        }
       }
-
-      await new Promise(r => setTimeout(r, 1000));
     }
 
-    setBots(prev => prev.map(b => 
-      b.id === botId ? { ...b, isRunning: false, status: 'idle' } : b
-    ));
+    setBots(prev => prev.map(b => b.id === botId ? { 
+      ...b, 
+      isRunning: false, 
+      isPaused: false,
+      status: 'idle',
+      cooldownRemaining: 0
+    } : b));
     
-    botRunningRef.current[botId] = false;
-  }, [isAuthorized, balance, globalStake, globalMultiplier, globalStopLoss, globalTakeProfit, bots, soundEnabled]);
+    botRunningRefs.current[botId] = false;
+  }, [isAuthorized, balance, globalStake, globalMultiplier, globalStopLoss, globalTakeProfit, activeTradeId, bots, marketsData]);
 
-  // Start individual bot
-  const startBot = useCallback((botId: string) => {
+  // Bot controls
+  const startBot = (botId: string) => {
     const bot = bots.find(b => b.id === botId);
     if (!bot || bot.isRunning) return;
-    
-    // Clear any existing timeout
-    if (botTimeoutRef.current[botId]) {
-      clearTimeout(botTimeoutRef.current[botId]);
-    }
-    
-    botTimeoutRef.current[botId] = setTimeout(() => {
-      runBotContinuous(botId);
-    }, 100);
-  }, [bots, runBotContinuous]);
+    setTimeout(() => runBot(botId), 0);
+  };
 
-  // Stop individual bot
-  const stopBot = useCallback((botId: string) => {
-    botRunningRef.current[botId] = false;
-    if (botTimeoutRef.current[botId]) {
-      clearTimeout(botTimeoutRef.current[botId]);
-    }
-    setBots(prev => prev.map(b => 
-      b.id === botId ? { 
-        ...b, 
-        isRunning: false, 
-        isPaused: false,
-        status: 'idle',
-        cooldownRemaining: 0,
-        pendingEntry: false
-      } : b
-    ));
-    toast.info(`Bot ${bots.find(b => b.id === botId)?.name} stopped`);
-  }, [bots]);
+  const pauseBot = (botId: string) => {
+    botPausedRefs.current[botId] = !botPausedRefs.current[botId];
+    setBots(prev => prev.map(b => b.id === botId ? { ...b, isPaused: botPausedRefs.current[botId] } : b));
+  };
 
-  // Pause/Resume bot
-  const togglePauseBot = useCallback((botId: string) => {
-    setBots(prev => prev.map(b => 
-      b.id === botId ? { ...b, isPaused: !b.isPaused } : b
-    ));
-  }, []);
+  const stopBot = (botId: string) => {
+    botRunningRefs.current[botId] = false;
+    setBots(prev => prev.map(b => b.id === botId ? { 
+      ...b, 
+      isRunning: false, 
+      isPaused: false,
+      status: 'idle',
+      cooldownRemaining: 0
+    } : b));
+  };
 
-  // Start master cycle - runs all bots with signals
-  const startMasterCycle = useCallback(() => {
-    if (masterCycleActive) return;
-    
-    setMasterCycleActive(true);
-    setAutoTradeEnabled(true);
-    
-    // Start all bots that have signals
+  const stopAllBots = () => {
     bots.forEach(bot => {
-      if (bot.signal && !bot.isRunning) {
-        startBot(bot.id);
-      }
+      botRunningRefs.current[bot.id] = false;
     });
-    
-    toast.success('Master cycle activated! Trading all signals until TP/SL');
-    speak('Master cycle activated', true);
-    if (soundEnabled) playScanSound('start');
-    
-  }, [masterCycleActive, bots, startBot, soundEnabled]);
+    setBots(prev => prev.map(b => ({ 
+      ...b, 
+      isRunning: false, 
+      isPaused: false,
+      status: 'idle',
+      cooldownRemaining: 0
+    })));
+  };
 
-  // Stop master cycle
-  const stopMasterCycle = useCallback(() => {
-    setMasterCycleActive(false);
-    setAutoTradeEnabled(false);
-    
-    // Stop all running bots
-    bots.forEach(bot => {
-      if (bot.isRunning) {
-        stopBot(bot.id);
-      }
-    });
-    
-    toast.info('Master cycle stopped');
-    speak('Master cycle stopped', true);
-  }, [bots, stopBot, soundEnabled]);
-
-  // Check global TP/SL for master cycle
-  useEffect(() => {
-    if (!masterCycleActive) return;
-    
-    const totalPnl = bots.reduce((sum, bot) => sum + bot.totalPnl, 0);
-    
-    if (totalPnl <= -globalStopLoss) {
-      toast.error(`Master cycle: Stop Loss reached! $${totalPnl.toFixed(2)}`);
-      stopMasterCycle();
-    } else if (totalPnl >= globalTakeProfit) {
-      toast.success(`Master cycle: Take Profit reached! +$${totalPnl.toFixed(2)}`);
-      stopMasterCycle();
-    }
-  }, [bots, globalStopLoss, globalTakeProfit, masterCycleActive, stopMasterCycle]);
-
-  // Fetch ticks
-  const fetchMarketTicks = useCallback(async (market: string, count: number = 1000): Promise<number[]> => {
-    await new Promise(r => setTimeout(r, 300));
-    return Array.from({ length: count }, () => Math.floor(Math.random() * 10));
-  }, []);
-
-  // Scan all markets
-  const scanMarket = useCallback(async () => {
-    if (isScanning) return;
-    
-    setIsScanning(true);
-    setNoSignal(false);
-    setMarketSignals([]);
-    setScanProgress(0);
-    
-    setBots(prev => prev.map(b => ({ ...b, signal: false, selectedMarket: undefined, pendingEntry: false })));
-    
-    if (soundEnabled) playScanSound('start');
-    speak("Scanning the markets", true);
-    
-    const totalMarkets = ALL_MARKETS.length;
-    let processed = 0;
-    const usedBots = new Set<number>();
-    const foundSignals: MarketSignal[] = [];
-    
-    try {
-      for (const market of ALL_MARKETS) {
-        processed++;
-        setScanProgress(Math.round((processed / totalMarkets) * 100));
-        
-        const digits = await fetchMarketTicks(market, 1000);
-        
-        if (digits.length >= 700) {
-          marketDigitsRef.current[market] = digits;
-          const analysis = analyzeDigits(digits);
-          
-          for (const bot of BOT_STRATEGIES) {
-            if (!usedBots.has(bot.id) && bot.condition(analysis)) {
-              usedBots.add(bot.id);
-              foundSignals.push({
-                market,
-                botId: bot.id,
-                botName: bot.name,
-                status: 'waiting',
-                analysis
-              });
-              
-              if (soundEnabled) playScanSound('signal');
-              
-              break;
-            }
-          }
-        }
-        
-        await new Promise(r => setTimeout(r, 50));
-      }
-      
-      if (foundSignals.length === 0) {
-        setNoSignal(true);
-        speak("No signals found", true);
-      } else {
-        setMarketSignals(foundSignals);
-        toast.success(`Found ${foundSignals.length} market signals`);
-      }
-      
-    } catch (error) {
-      console.error('Scan error:', error);
-      toast.error('Scan failed');
-    } finally {
-      setIsScanning(false);
-      setScanProgress(100);
-    }
-  }, [isScanning, fetchMarketTicks, soundEnabled]);
-
-  // Clear all
+  // Clear all data
   const clearAll = () => {
     setTrades([]);
-    setMarketSignals([]);
-    setNoSignal(false);
-    setMasterCycleActive(false);
-    setAutoTradeEnabled(false);
     setBots(prev => prev.map(bot => ({
       ...bot,
       totalPnl: 0,
@@ -820,19 +675,31 @@ export default function AutoTrade() {
       currentStake: globalStake,
       status: 'idle',
       consecutiveLosses: 0,
-      entryTriggered: false,
       cooldownRemaining: 0,
-      recoveryMode: false,
-      signal: false,
-      selectedMarket: undefined,
-      lastDigit: undefined,
-      pendingEntry: false,
-      entryTimestamp: undefined,
-      isRunning: false,
-      isPaused: false
+      marketSwitchCount: 0,
+      lastSignal: undefined,
+      signalStrength: 0
     })));
     tradeIdRef.current = 0;
-    toast.success('All cleared');
+    toast.success('All data cleared');
+  };
+
+  // Manual analysis trigger
+  const runAnalysis = () => {
+    analyzeAllMarkets();
+    toast.info('Market analysis triggered');
+  };
+
+  // Get market display
+  const getMarketDisplay = (market: string) => {
+    if (market.startsWith('1HZ')) return `⚡ ${market}`;
+    if (market.startsWith('R_')) return `📊 ${market}`;
+    if (market.includes('BOOM')) return `💥 ${market}`;
+    if (market.includes('CRASH')) return `📉 ${market}`;
+    if (market.includes('RDBEAR')) return `🐻 ${market}`;
+    if (market.includes('RDBULL')) return `🐂 ${market}`;
+    if (market.includes('JD')) return `🦘 ${market}`;
+    return market;
   };
 
   // Calculate totals
@@ -840,503 +707,526 @@ export default function AutoTrade() {
   const totalTrades = bots.reduce((sum, bot) => sum + bot.trades, 0);
   const totalWins = bots.reduce((sum, bot) => sum + bot.wins, 0);
   const winRate = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(1) : '0';
-  const activeSignals = bots.filter(b => b.signal).length;
-  const pendingEntries = bots.filter(b => b.pendingEntry).length;
-  const runningBots = bots.filter(b => b.isRunning).length;
+
+  // Get status color
+  const getStatusColor = (status: string) => {
+    switch(status) {
+      case 'trading': return 'text-green-400';
+      case 'waiting_entry': return 'text-yellow-400';
+      case 'analyzing': return 'text-blue-400';
+      case 'cooldown': return 'text-purple-400';
+      case 'switching_market': return 'text-pink-400';
+      default: return 'text-gray-400';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch(status) {
+      case 'trading': return '📈';
+      case 'waiting_entry': return '⏳';
+      case 'analyzing': return '🔍';
+      case 'cooldown': return '⏱️';
+      case 'switching_market': return '🔄';
+      default: return '⚫';
+    }
+  };
+
+  // Digit button component for market signals
+  const DigitButton = ({ digit, percentage, counts, marketData }: { digit: number; percentage: number; counts: number; marketData: MarketData }) => {
+    const isSelected = digit === selectedDigitForComparison;
+    const analysis = marketData.analysis;
+    
+    // Calculate comparisons
+    const overSelectedPercentage = digit < 9 ? 
+      Array.from({ length: 9 - digit }, (_, i) => digit + i + 1).reduce((sum, d) => sum + (analysis.percentages[d] || 0), 0) : 0;
+    const underSelectedPercentage = digit > 0 ?
+      Array.from({ length: digit }, (_, i) => i).reduce((sum, d) => sum + (analysis.percentages[d] || 0), 0) : 0;
+    
+    const evenComparison = digit % 2 === 0 ? 
+      ((analysis.evenPercentage - (analysis.percentages[digit] || 0)) / (analysis.evenPercentage || 1) * 100).toFixed(1) :
+      ((analysis.oddPercentage - (analysis.percentages[digit] || 0)) / (analysis.oddPercentage || 1) * 100).toFixed(1);
+    
+    const oddEvenType = digit % 2 === 0 ? 'Even' : 'Odd';
+    const overUnderType = digit > selectedDigitForComparison ? 'Over' : digit < selectedDigitForComparison ? 'Under' : 'Equal';
+    
+    return (
+      <button
+        onClick={() => setSelectedDigitForComparison(digit)}
+        className={`relative p-1 rounded text-[8px] font-mono transition-all ${
+          isSelected ? 'ring-2 ring-primary bg-primary/20' : 'hover:bg-muted'
+        }`}
+      >
+        <div className="flex flex-col items-center">
+          <span className="font-bold text-xs">{digit}</span>
+          <span className="text-[6px]">{percentage.toFixed(1)}%</span>
+          <span className="text-[6px] text-muted-foreground">({counts})</span>
+        </div>
+        {isSelected && (
+          <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-popover border border-border rounded p-1 text-[6px] whitespace-nowrap z-10">
+            <div>Over {digit}: {overSelectedPercentage.toFixed(1)}%</div>
+            <div>Under {digit}: {underSelectedPercentage.toFixed(1)}%</div>
+            <div>{oddEvenType}: {evenComparison}%</div>
+          </div>
+        )}
+      </button>
+    );
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
-      {/* Animated Dollar Background */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        {[...Array(30)].map((_, i) => {
-          const colors = [
-            'text-green-500/5', 'text-yellow-500/5', 'text-blue-500/5', 
-            'text-purple-500/5', 'text-pink-500/5', 'text-orange-500/5'
-          ];
-          const color = colors[Math.floor(Math.random() * colors.length)];
-          const size = 40 + Math.random() * 80;
-          const left = Math.random() * 100;
+    <div className="space-y-4 p-4 bg-background min-h-screen">
+      {/* Header */}
+      <div className="bg-card border border-border rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h1 className="text-xl font-bold">🤖 Advanced Signal-Based Trading System</h1>
+            <p className="text-xs text-muted-foreground">
+              Auto-market switching • 700-tick analysis • Strict signal conditions
+              {lastScanTime && ` • Last scan: ${lastScanTime.toLocaleTimeString()}`}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={runAnalysis}
+              disabled={isAnalyzing}
+            >
+              {isAnalyzing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
+              Analyze Now
+            </Button>
+            <Button 
+              variant="destructive" 
+              size="sm" 
+              onClick={clearAll}
+            >
+              <Trash2 className="w-4 h-4 mr-1" /> Clear
+            </Button>
+            <Button variant="destructive" size="sm" onClick={stopAllBots} disabled={!bots.some(b => b.isRunning)}>
+              <StopCircle className="w-4 h-4 mr-1" /> Stop All
+            </Button>
+          </div>
+        </div>
+
+        {/* Global Stats */}
+        <div className="grid grid-cols-5 gap-3 text-sm mb-3">
+          <div className="bg-muted/30 rounded-lg p-2">
+            <div className="text-muted-foreground text-xs">Balance</div>
+            <div className="font-bold text-lg">${balance?.toFixed(2) || '0.00'}</div>
+          </div>
+          <div className="bg-muted/30 rounded-lg p-2">
+            <div className="text-muted-foreground text-xs">Total P&L</div>
+            <div className={`font-bold text-lg ${totalProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
+              ${totalProfit.toFixed(2)}
+            </div>
+          </div>
+          <div className="bg-muted/30 rounded-lg p-2">
+            <div className="text-muted-foreground text-xs">Win Rate</div>
+            <div className="font-bold text-lg">{winRate}%</div>
+          </div>
+          <div className="bg-muted/30 rounded-lg p-2">
+            <div className="text-muted-foreground text-xs">Total Trades</div>
+            <div className="font-bold text-lg">{totalTrades}</div>
+          </div>
+          <div className="bg-muted/30 rounded-lg p-2">
+            <div className="text-muted-foreground text-xs">Active</div>
+            <div className="font-bold text-lg">{bots.filter(b => b.isRunning).length}/4</div>
+          </div>
+        </div>
+
+        {/* Settings */}
+        <div className="grid grid-cols-4 gap-3">
+          <div>
+            <label className="text-xs text-muted-foreground">Stake ($)</label>
+            <input 
+              type="number" 
+              value={globalStake} 
+              onChange={(e) => setGlobalStake(parseFloat(e.target.value) || 0.5)}
+              className="w-full bg-background border border-border rounded-lg px-2 py-1 text-sm"
+              step="0.1"
+              min="0.1"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Multiplier</label>
+            <input 
+              type="number" 
+              value={globalMultiplier} 
+              onChange={(e) => setGlobalMultiplier(parseFloat(e.target.value) || 2)}
+              className="w-full bg-background border border-border rounded-lg px-2 py-1 text-sm"
+              step="0.1"
+              min="1.1"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Stop Loss ($)</label>
+            <input 
+              type="number" 
+              value={globalStopLoss} 
+              onChange={(e) => setGlobalStopLoss(parseFloat(e.target.value) || 30)}
+              className="w-full bg-background border border-border rounded-lg px-2 py-1 text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Take Profit ($)</label>
+            <input 
+              type="number" 
+              value={globalTakeProfit} 
+              onChange={(e) => setGlobalTakeProfit(parseFloat(e.target.value) || 5)}
+              className="w-full bg-background border border-border rounded-lg px-2 py-1 text-sm"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Bots Grid */}
+      <div className="grid grid-cols-2 gap-3">
+        {bots.map((bot) => {
+          const marketData = marketsData[bot.currentMarket];
           
           return (
             <motion.div
-              key={`large-${i}`}
-              className={`absolute ${color} font-bold`}
-              style={{ fontSize: size, left: `${left}%` }}
-              initial={{ y: '120vh', rotate: 0 }}
-              animate={{ y: '-20vh', rotate: 360 }}
-              transition={{
-                duration: 20 + Math.random() * 30,
-                repeat: Infinity,
-                delay: Math.random() * 15,
-                ease: "linear"
-              }}
+              key={bot.id}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className={`bg-card border rounded-xl p-3 ${
+                bot.isRunning ? 'border-primary ring-1 ring-primary/20' : 'border-border'
+              }`}
             >
-              {i % 3 === 0 ? '💰' : '$'}
+              {/* Header */}
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className={`p-1.5 rounded-lg ${
+                    bot.type === 'EVEN' ? 'bg-green-500/20 text-green-400' :
+                    bot.type === 'ODD' ? 'bg-purple-500/20 text-purple-400' :
+                    bot.type === 'OVER_3' ? 'bg-blue-500/20 text-blue-400' :
+                    'bg-orange-500/20 text-orange-400'
+                  }`}>
+                    {bot.type === 'EVEN' || bot.type === 'ODD' ? 
+                      <CircleDot className="w-4 h-4" /> : 
+                      bot.type === 'OVER_3' ? <TrendingUp className="w-4 h-4" /> : 
+                      <TrendingDown className="w-4 h-4" />}
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm">{bot.name}</h4>
+                    <p className="text-[9px] text-muted-foreground">
+                      Switches: {bot.marketSwitchCount} times
+                    </p>
+                  </div>
+                </div>
+                <Badge variant={bot.isRunning ? "default" : "secondary"} className="text-[9px]">
+                  {bot.isRunning ? (bot.isPaused ? '⏸️' : '▶️') : '⏹️'}
+                </Badge>
+              </div>
+
+              {/* Current Market & Signal */}
+              <div className="bg-muted/30 rounded-lg p-2 mb-2">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-muted-foreground">Market:</span>
+                  <span className="font-mono font-bold">
+                    {getMarketDisplay(bot.currentMarket)}
+                  </span>
+                </div>
+                {marketData && (
+                  <>
+                    <div className="flex justify-between text-[10px] mt-1">
+                      <span>Signal:</span>
+                      <span className={marketData.analysis.signal === bot.type ? 'text-profit font-bold' : 'text-muted-foreground'}>
+                        {marketData.analysis.signal || 'NONE'}
+                      </span>
+                      <span>Strength:</span>
+                      <span className={marketData.analysis.confidence >= 58 ? 'text-profit' : 'text-muted-foreground'}>
+                        {marketData.analysis.confidence.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-[8px] mt-1">
+                      <span>Most: {marketData.analysis.mostAppearing}</span>
+                      <span>2nd Least: {marketData.analysis.secondLeast}</span>
+                    </div>
+                    <div className="flex justify-between text-[8px]">
+                      <span>Even: {marketData.analysis.evenPercentage.toFixed(1)}%</span>
+                      <span>Odd: {marketData.analysis.oddPercentage.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between text-[8px]">
+                      <span>Over 3: {marketData.analysis.over3Percentage.toFixed(1)}%</span>
+                      <span>Under 6: {marketData.analysis.under6Percentage.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between text-[8px]">
+                      <span>Over 5: {marketData.analysis.over5Percentage.toFixed(1)}%</span>
+                      <span>Under 5: {marketData.analysis.under5Percentage.toFixed(1)}%</span>
+                    </div>
+                    <div className="text-[8px] mt-1">
+                      Last 3: {marketData.analysis.lastThreeTicks.join(', ')}
+                      {marketData.analysis.lastThreeIdentical && ' ⚠️ Identical'}
+                    </div>
+                    <div className="text-[8px] mt-1">
+                      Last 12: {marketData.analysis.lastTwelveTicks.join(' ')}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Stats */}
+              <div className="grid grid-cols-4 gap-1 text-[10px] mb-2">
+                <div>
+                  <span className="text-muted-foreground">P&L:</span>
+                  <span className={`ml-1 font-mono ${
+                    bot.totalPnl > 0 ? 'text-profit' : bot.totalPnl < 0 ? 'text-loss' : ''
+                  }`}>
+                    ${bot.totalPnl.toFixed(2)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">W:</span>
+                  <span className="ml-1 font-mono text-profit">{bot.wins}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">L:</span>
+                  <span className="ml-1 font-mono text-loss">{bot.losses}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Stake:</span>
+                  <span className="ml-1 font-mono">${bot.currentStake.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Status */}
+              <div className="flex items-center justify-between text-[10px] mb-2">
+                <span className="text-muted-foreground">Status:</span>
+                <span className={`font-mono ${getStatusColor(bot.status)}`}>
+                  {getStatusIcon(bot.status)} {
+                    bot.status === 'trading' ? 'Trading' :
+                    bot.status === 'waiting_entry' ? 'Waiting Signal' :
+                    bot.status === 'analyzing' ? 'Analyzing' :
+                    bot.status === 'cooldown' ? `Cooldown ${bot.cooldownRemaining}` :
+                    bot.status === 'switching_market' ? 'Switching Market' :
+                    'Idle'
+                  }
+                </span>
+                {bot.cooldownRemaining > 0 && (
+                  <span className="text-purple-400">⏱️ {bot.cooldownRemaining}/3</span>
+                )}
+              </div>
+
+              {/* Controls */}
+              <div className="flex gap-1">
+                {!bot.isRunning ? (
+                  <Button
+                    onClick={() => startBot(bot.id)}
+                    disabled={!isAuthorized || balance < globalStake || activeTradeId !== null}
+                    size="sm"
+                    className="flex-1 h-7 text-xs"
+                  >
+                    <Play className="w-3 h-3 mr-1" /> Start
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      onClick={() => pauseBot(bot.id)}
+                      size="sm"
+                      variant="outline"
+                      className="flex-1 h-7 text-xs"
+                    >
+                      <Pause className="w-3 h-3 mr-1" /> {bot.isPaused ? 'Resume' : 'Pause'}
+                    </Button>
+                    <Button
+                      onClick={() => stopBot(bot.id)}
+                      size="sm"
+                      variant="destructive"
+                      className="flex-1 h-7 text-xs"
+                    >
+                      <StopCircle className="w-3 h-3 mr-1" /> Stop
+                    </Button>
+                  </>
+                )}
+              </div>
             </motion.div>
           );
         })}
-        
-        {[...Array(20)].map((_, i) => (
-          <motion.div
-            key={`sparkle-${i}`}
-            className="absolute text-yellow-300/20 text-xs"
-            style={{ left: `${Math.random() * 100}%` }}
-            initial={{ y: '80vh', scale: 0 }}
-            animate={{ y: '-5vh', scale: [0, 1, 0] }}
-            transition={{
-              duration: 10 + Math.random() * 15,
-              repeat: Infinity,
-              delay: Math.random() * 10,
-              ease: "easeInOut"
-            }}
-          >
-            ✦
-          </motion.div>
-        ))}
       </div>
 
-      {/* Main Content */}
-      <div className="relative z-10 container mx-auto px-4 py-6">
-        {/* Header */}
-        <motion.div 
-          initial={{ y: -20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="text-center mb-6"
-        >
-          <h1 className="text-4xl font-extrabold mb-2">
-            <span className="bg-gradient-to-r from-yellow-400 via-green-400 to-blue-400 text-transparent bg-clip-text drop-shadow-[0_0_15px_rgba(34,197,94,0.5)]">
-              AUTO TRADER PRO
-            </span>
-          </h1>
-          <p className="text-gray-400 text-xs">6-Bot Intelligent Trading System</p>
-        </motion.div>
-
-        {/* Master Control Button */}
-        <motion.div 
-          className="flex justify-center mb-6"
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-        >
-          <motion.button
-            onClick={masterCycleActive ? stopMasterCycle : startMasterCycle}
-            disabled={isScanning || marketSignals.length === 0}
-            className={`relative w-40 h-40 rounded-full font-bold text-lg shadow-2xl ${
-              masterCycleActive 
-                ? 'bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-400 hover:to-pink-400' 
-                : marketSignals.length > 0
-                  ? 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400'
-                  : 'bg-gradient-to-r from-gray-600 to-gray-700 cursor-not-allowed'
-            }`}
-            whileHover={{ scale: marketSignals.length > 0 ? 1.05 : 1 }}
-            whileTap={{ scale: marketSignals.length > 0 ? 0.95 : 1 }}
-            animate={masterCycleActive ? {
-              boxShadow: ['0 0 20px rgba(239,68,68,0.5)', '0 0 40px rgba(239,68,68,0.8)', '0 0 20px rgba(239,68,68,0.5)']
-            } : marketSignals.length > 0 ? {
-              boxShadow: ['0 0 20px rgba(34,197,94,0.5)', '0 0 40px rgba(34,197,94,0.8)', '0 0 20px rgba(34,197,94,0.5)']
-            } : {}}
-            transition={{ duration: 1.5, repeat: Infinity }}
-          >
-            <div className="flex flex-col items-center">
-              {masterCycleActive ? (
-                <>
-                  <StopCircle className="w-10 h-10 mb-1" />
-                  <span className="text-sm">STOP CYCLE</span>
-                  <span className="text-[8px] mt-1">TP: ${globalTakeProfit}</span>
-                </>
-              ) : (
-                <>
-                  <Rocket className="w-10 h-10 mb-1" />
-                  <span className="text-sm">MASTER</span>
-                  <span className="text-[8px]">{marketSignals.length} Signals</span>
-                </>
-              )}
-            </div>
-          </motion.button>
-        </motion.div>
-
-        {/* Control Panel */}
-        <motion.div 
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-xl p-3 mb-4"
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <Activity className="w-4 h-4 text-green-400" />
-              <h2 className="text-sm font-semibold text-white">Control Center</h2>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 bg-white/10 rounded-lg px-2 py-1">
-                <Sparkles className="w-3 h-3 text-yellow-400" />
-                <Label htmlFor="auto-trade" className="text-[8px] text-white">AUTO</Label>
-                <Switch
-                  id="auto-trade"
-                  checked={autoTradeEnabled}
-                  onCheckedChange={setAutoTradeEnabled}
-                  className="scale-75"
-                />
-              </div>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => setSoundEnabled(!soundEnabled)}
-                className="w-6 h-6 bg-white/10 border-white/20"
-              >
-                <Volume2 className={`w-3 h-3 ${soundEnabled ? 'text-green-400' : 'text-gray-400'}`} />
-              </Button>
-              <Button variant="destructive" size="sm" onClick={clearAll} className="h-6 text-[10px] px-2">
-                <Trash2 className="w-3 h-3 mr-1" /> Clear
-              </Button>
-            </div>
+      {/* Market Signals Dashboard */}
+      <div className="bg-card border border-border rounded-xl p-3">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold">📊 Live Market Signals</h3>
+          <div className="text-xs text-muted-foreground">
+            Click any digit to see Over/Under and Even/Odd comparisons
           </div>
-
-          {/* Stats Cards */}
-          <div className="grid grid-cols-5 gap-1 mb-2">
-            <div className="bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-lg p-1">
-              <div className="text-[7px] text-blue-300">Balance</div>
-              <div className="text-xs font-bold text-blue-400">${balance?.toFixed(2)}</div>
-            </div>
-            <div className="bg-gradient-to-br from-green-500/20 to-emerald-500/20 rounded-lg p-1">
-              <div className="text-[7px] text-green-300">P&L</div>
-              <div className={`text-xs font-bold ${totalProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
-                ${totalProfit.toFixed(2)}
-              </div>
-            </div>
-            <div className="bg-gradient-to-br from-yellow-500/20 to-orange-500/20 rounded-lg p-1">
-              <div className="text-[7px] text-yellow-300">Win%</div>
-              <div className="text-xs font-bold text-yellow-400">{winRate}%</div>
-            </div>
-            <div className="bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-lg p-1">
-              <div className="text-[7px] text-purple-300">Running</div>
-              <div className="text-xs font-bold text-purple-400">{runningBots}/6</div>
-            </div>
-            <div className="bg-gradient-to-br from-orange-500/20 to-red-500/20 rounded-lg p-1">
-              <div className="text-[7px] text-orange-300">Pending</div>
-              <div className="text-xs font-bold text-orange-400">{pendingEntries}</div>
-            </div>
-          </div>
-
-          {/* Settings */}
-          <div className="grid grid-cols-4 gap-1">
-            <div className="relative">
-              <span className="absolute -top-1 left-1 text-[6px] text-green-400">Stake</span>
-              <input 
-                type="number" 
-                value={globalStake} 
-                onChange={(e) => setGlobalStake(parseFloat(e.target.value) || 0.5)}
-                className="w-full bg-white/5 border border-green-500/30 rounded px-1 pt-2 pb-0.5 text-[9px] text-green-400 text-center"
-                step="0.1"
-                min="0.1"
-              />
-            </div>
-            <div className="relative">
-              <span className="absolute -top-1 left-1 text-[6px] text-blue-400">Mult</span>
-              <input 
-                type="number" 
-                value={globalMultiplier} 
-                onChange={(e) => setGlobalMultiplier(parseFloat(e.target.value) || 2)}
-                className="w-full bg-white/5 border border-blue-500/30 rounded px-1 pt-2 pb-0.5 text-[9px] text-blue-400 text-center"
-                step="0.1"
-                min="1.1"
-              />
-            </div>
-            <div className="relative">
-              <span className="absolute -top-1 left-1 text-[6px] text-red-400">SL</span>
-              <input 
-                type="number" 
-                value={globalStopLoss} 
-                onChange={(e) => setGlobalStopLoss(parseFloat(e.target.value) || 30)}
-                className="w-full bg-white/5 border border-red-500/30 rounded px-1 pt-2 pb-0.5 text-[9px] text-red-400 text-center"
-              />
-            </div>
-            <div className="relative">
-              <span className="absolute -top-1 left-1 text-[6px] text-green-400">TP</span>
-              <input 
-                type="number" 
-                value={globalTakeProfit} 
-                onChange={(e) => setGlobalTakeProfit(parseFloat(e.target.value) || 5)}
-                className="w-full bg-white/5 border border-green-500/30 rounded px-1 pt-2 pb-0.5 text-[9px] text-green-400 text-center"
-              />
-            </div>
-          </div>
-
-          {/* Scan Button */}
-          <motion.button
-            onClick={scanMarket}
-            disabled={isScanning}
-            className={`w-full mt-2 py-2 rounded-lg font-bold text-xs relative overflow-hidden ${
-              isScanning 
-                ? 'bg-gray-600 cursor-not-allowed' 
-                : 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400'
-            }`}
-            whileHover={{ scale: isScanning ? 1 : 1.01 }}
-            whileTap={{ scale: isScanning ? 1 : 0.99 }}
-          >
-            {isScanning ? (
-              <div className="flex items-center justify-center">
-                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                Scanning... {scanProgress}%
-              </div>
-            ) : (
-              <div className="flex items-center justify-center">
-                <RefreshCw className="w-3 h-3 mr-1" />
-                SCAN MARKETS
-              </div>
-            )}
-            {isScanning && (
-              <motion.div 
-                className="absolute bottom-0 left-0 h-0.5 bg-gradient-to-r from-green-400 to-blue-400"
-                initial={{ width: 0 }}
-                animate={{ width: `${scanProgress}%` }}
-                transition={{ duration: 0.3 }}
-              />
-            )}
-          </motion.button>
-        </motion.div>
-
-        {/* No Signal Message */}
-        <AnimatePresence>
-          {noSignal && !isScanning && (
-            <motion.div 
-              initial={{ opacity: 0, y: -10 }} 
-              animate={{ opacity: 1, y: 0 }} 
-              exit={{ opacity: 0, y: -10 }} 
-              className="mb-3"
-            >
-              <div className="bg-red-500/10 backdrop-blur-xl rounded-lg p-3 border border-red-500/30 text-center">
-                <AlertCircle className="w-6 h-6 text-red-400 mx-auto mb-1" />
-                <h2 className="text-sm font-bold text-red-400">NO SIGNAL FOUND</h2>
-                <p className="text-[8px] text-gray-400">Click SCAN to analyze markets</p>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Active Signals */}
-        {marketSignals.length > 0 && (
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-lg p-2 mb-3"
-          >
-            <div className="flex items-center gap-1 mb-1">
-              <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-              <h3 className="text-[10px] font-semibold text-white">Signals ({marketSignals.filter(s => s.status === 'triggered').length}/{marketSignals.length})</h3>
-            </div>
-            <div className="grid grid-cols-3 gap-1">
-              {marketSignals.map((signal) => {
-                const bot = BOT_STRATEGIES.find(b => b.id === signal.botId)!;
-                const botState = bots.find(b => b.type === bot.type);
-                const isPending = botState?.pendingEntry;
-                
-                return (
-                  <motion.div 
-                    key={`${signal.market}_${signal.botId}`} 
-                    className={`rounded p-1 ${
-                      signal.status === 'triggered' 
-                        ? isPending
-                          ? 'bg-gradient-to-r from-yellow-500/20 to-amber-500/20 border border-yellow-500'
-                          : 'bg-gradient-to-r from-green-500/20 to-emerald-500/20 border border-green-500'
-                        : 'bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-500/30'
-                    }`}
-                  >
-                    <div className="flex justify-between items-center">
-                      <span className="text-[8px] font-bold text-blue-400">{getMarketDisplay(signal.market)}</span>
-                      <span className={`text-[6px] px-1 rounded-full font-bold ${
-                        signal.status === 'triggered' 
-                          ? isPending ? 'bg-yellow-500 text-black' : 'bg-green-500 text-white'
-                          : 'bg-yellow-500 text-black'
-                      }`}>
-                        {signal.status === 'triggered' ? (isPending ? 'NEXT' : 'READY') : 'WAIT'}
-                      </span>
-                    </div>
-                    <div className="text-[6px] text-gray-400">Bot: {signal.botName}</div>
-                  </motion.div>
-                );
-              })}
-            </div>
-          </motion.div>
-        )}
-
-        {/* Bots Grid */}
-        <div className="grid grid-cols-3 gap-2 mb-3">
-          {bots.map((bot) => {
-            const botStrategy = BOT_STRATEGIES.find(s => s.type === bot.type);
-            const signal = marketSignals.find(s => s.botId === botStrategy?.id);
-            
-            return (
-              <motion.div
-                key={bot.id}
-                className={`backdrop-blur-xl border rounded-lg p-2 ${
-                  bot.pendingEntry
-                    ? 'bg-gradient-to-br from-yellow-500/30 to-amber-500/30 border-yellow-500 ring-1 ring-yellow-500/50'
-                    : bot.isRunning
-                      ? 'bg-gradient-to-br from-green-500/30 to-emerald-500/30 border-green-500 ring-1 ring-green-500/50'
-                      : bot.signal 
-                        ? `bg-gradient-to-br from-${botStrategy?.color}-500/20 to-${botStrategy?.color}-600/20 border-${botStrategy?.color}-500/30`
-                        : 'bg-white/5 border-white/10'
-                }`}
-                animate={bot.pendingEntry ? {
-                  boxShadow: ['0 0 0px rgba(234,179,8,0)', '0 0 8px rgba(234,179,8,0.5)', '0 0 0px rgba(234,179,8,0)'],
-                } : bot.isRunning ? {
-                  boxShadow: ['0 0 0px rgba(34,197,94,0)', '0 0 8px rgba(34,197,94,0.5)', '0 0 0px rgba(34,197,94,0)'],
-                } : {}}
-                transition={{ duration: 1.5, repeat: bot.pendingEntry || bot.isRunning ? Infinity : 0 }}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-1">
-                    <div className={`p-0.5 rounded bg-${botStrategy?.color}-500/30`}>
-                      {botStrategy?.icon}
-                    </div>
-                    <span className="text-[9px] font-bold text-white">{bot.name}</span>
-                    {bot.pendingEntry && <Zap className="w-2.5 h-2.5 text-yellow-400" />}
-                    {bot.isRunning && <Activity className="w-2.5 h-2.5 text-green-400 animate-pulse" />}
-                  </div>
-                  <Badge variant={bot.isRunning ? "default" : "secondary"} className="text-[5px] px-1 py-0 h-3">
-                    {bot.isRunning ? (bot.isPaused ? '⏸️' : '▶️') : '⏹️'}
+        </div>
+        <div className="grid grid-cols-1 gap-2 max-h-[500px] overflow-y-auto">
+          {Object.entries(marketsData).length > 0 ? (
+            Object.entries(marketsData).map(([symbol, data]) => (
+              <div key={symbol} className="bg-muted/30 rounded p-2">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="font-bold text-xs">{getMarketDisplay(symbol)}</span>
+                  <Badge className={`text-[8px] ${
+                    data.analysis.signal === 'EVEN' ? 'bg-green-500' :
+                    data.analysis.signal === 'ODD' ? 'bg-purple-500' :
+                    data.analysis.signal === 'OVER_3' ? 'bg-blue-500' :
+                    data.analysis.signal === 'UNDER_6' ? 'bg-orange-500' :
+                    'bg-gray-500'
+                  }`}>
+                    {data.analysis.signal || 'NO SIGNAL'} {data.analysis.confidence > 0 ? `(${data.analysis.confidence.toFixed(1)}%)` : ''}
                   </Badge>
                 </div>
-
-                <div className="grid grid-cols-2 gap-0.5 text-[7px] mb-1">
-                  <div>
-                    <span className="text-gray-400">Mkt:</span>
-                    <span className="ml-1 text-blue-400">{bot.selectedMarket ? getMarketDisplay(bot.selectedMarket) : '—'}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Last:</span>
-                    <span className="ml-1 font-mono text-white">{bot.lastDigit ?? '—'}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">P&L:</span>
-                    <span className={`ml-1 ${bot.totalPnl > 0 ? 'text-profit' : bot.totalPnl < 0 ? 'text-loss' : ''}`}>
-                      ${bot.totalPnl.toFixed(2)}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Stake:</span>
-                    <span className="ml-1 text-yellow-400">${bot.currentStake.toFixed(2)}</span>
+                
+                {/* Last 12 Digits */}
+                <div className="mb-1">
+                  <span className="text-[8px] text-muted-foreground">Last 12:</span>
+                  <div className="flex gap-0.5 mt-0.5">
+                    {data.analysis.lastTwelveTicks.map((digit, idx) => (
+                      <span 
+                        key={idx} 
+                        className={`text-[8px] font-mono px-1 py-0.5 rounded ${
+                          digit === data.analysis.mostAppearing ? 'bg-green-500/20 text-green-400' :
+                          digit === data.analysis.secondLeast ? 'bg-red-500/20 text-red-400' : ''
+                        }`}
+                      >
+                        {digit}
+                      </span>
+                    ))}
                   </div>
                 </div>
 
-                <div className="flex gap-1">
-                  {!bot.isRunning ? (
-                    <Button 
-                      onClick={() => startBot(bot.id)} 
-                      disabled={!bot.selectedMarket} 
-                      size="sm" 
-                      className={`flex-1 h-5 text-[7px] ${
-                        bot.pendingEntry
-                          ? 'bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-400 hover:to-amber-400'
-                          : bot.signal 
-                            ? 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400'
-                            : 'bg-gray-600'
-                      }`}
-                    >
-                      <Play className="w-2 h-2 mr-0.5" />
-                      {bot.pendingEntry ? 'EXECUTE' : (bot.signal ? 'TRADE' : 'START')}
-                    </Button>
-                  ) : (
-                    <>
-                      <Button 
-                        onClick={() => togglePauseBot(bot.id)} 
-                        size="sm" 
-                        variant="outline" 
-                        className="flex-1 h-5 text-[7px] border-white/20"
-                      >
-                        {bot.isPaused ? 'RESUME' : 'PAUSE'}
-                      </Button>
-                      <Button 
-                        onClick={() => stopBot(bot.id)} 
-                        size="sm" 
-                        variant="destructive" 
-                        className="flex-1 h-5 text-[7px]"
-                      >
-                        STOP
-                      </Button>
-                    </>
-                  )}
+                {/* Most Appearing and Second Least */}
+                <div className="grid grid-cols-2 gap-2 text-[8px] mb-1">
+                  <div className="bg-green-500/10 rounded p-1">
+                    <span className="text-muted-foreground">Most Appearing:</span>
+                    <span className="ml-1 font-bold text-green-400">{data.analysis.mostAppearing}</span>
+                    <span className="ml-1 text-[6px]">({data.analysis.percentages[data.analysis.mostAppearing]?.toFixed(1)}%)</span>
+                  </div>
+                  <div className="bg-red-500/10 rounded p-1">
+                    <span className="text-muted-foreground">2nd Least:</span>
+                    <span className="ml-1 font-bold text-red-400">{data.analysis.secondLeast}</span>
+                    <span className="ml-1 text-[6px]">({data.analysis.percentages[data.analysis.secondLeast]?.toFixed(1)}%)</span>
+                  </div>
                 </div>
-              </motion.div>
-            );
-          })}
-        </div>
 
-        {/* Trade Log */}
-        <motion.div 
-          className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-lg p-2"
-        >
-          <div className="flex items-center justify-between mb-1">
-            <div className="flex items-center gap-1">
-              <Activity className="w-3 h-3 text-green-400" />
-              <h3 className="text-[10px] font-semibold text-white">Trade History</h3>
-            </div>
-            {pendingEntries > 0 && (
-              <div className="text-[6px] bg-yellow-500/20 text-yellow-400 px-1.5 py-0.5 rounded-full">
-                {pendingEntries} pending
-              </div>
-            )}
-          </div>
-          
-          <div className="space-y-0.5 max-h-32 overflow-y-auto">
-            {trades.length === 0 ? (
-              <p className="text-[8px] text-center py-2 text-gray-500">No trades yet</p>
-            ) : (
-              trades.map((trade, idx) => (
-                <motion.div 
-                  key={idx} 
-                  className="grid grid-cols-7 gap-0.5 text-[7px] py-0.5 px-1 border-b border-white/10 last:border-0 hover:bg-white/5 rounded"
-                >
-                  <span className="text-gray-400">{trade.time.slice(-5)}</span>
-                  <span className="font-bold text-blue-400">{getMarketDisplay(trade.market)}</span>
-                  <span className="text-center text-yellow-400">${trade.stake.toFixed(2)}</span>
-                  <span className="text-center font-mono">
-                    <span className="text-yellow-400">{trade.entryDigit}</span>
-                    {trade.exitDigit && (
-                      <>
-                        <span className="text-gray-500 mx-0.5">→</span>
-                        <span className={trade.result === 'Win' ? 'text-profit' : 'text-loss'}>
-                          {trade.exitDigit}
+                {/* Digit Grid with Percentages */}
+                <div className="mb-1">
+                  <span className="text-[8px] text-muted-foreground">Digit Distribution (hover/click for details):</span>
+                  <div className="grid grid-cols-10 gap-0.5 mt-0.5">
+                    {[0,1,2,3,4,5,6,7,8,9].map(digit => (
+                      <DigitButton 
+                        key={digit} 
+                        digit={digit} 
+                        percentage={data.analysis.percentages[digit] || 0}
+                        counts={data.analysis.counts[digit] || 0}
+                        marketData={data}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Group Comparisons */}
+                <div className="grid grid-cols-2 gap-1 text-[8px]">
+                  <div className="bg-blue-500/10 rounded p-1">
+                    <div className="flex justify-between">
+                      <span>Even/Odd:</span>
+                      <span className={data.analysis.evenPercentage > data.analysis.oddPercentage ? 'text-profit' : 'text-loss'}>
+                        {data.analysis.evenPercentage.toFixed(1)}% / {data.analysis.oddPercentage.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Over/Under 5:</span>
+                      <span className={data.analysis.over5Percentage > data.analysis.under5Percentage ? 'text-profit' : 'text-loss'}>
+                        {data.analysis.over5Percentage.toFixed(1)}% / {data.analysis.under5Percentage.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="bg-purple-500/10 rounded p-1">
+                    <div className="flex justify-between">
+                      <span>Over 3/Under 6:</span>
+                      <span>{data.analysis.over3Percentage.toFixed(1)}% / {data.analysis.under6Percentage.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Confidence:</span>
+                      <span className={data.analysis.confidence >= 58 ? 'text-profit' : 'text-muted-foreground'}>
+                        {data.analysis.confidence.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Selected Digit Comparison */}
+                {data.analysis.percentages[selectedDigitForComparison] && (
+                  <div className="mt-1 text-[8px] bg-primary/10 rounded p-1">
+                    <div className="font-bold">Digit {selectedDigitForComparison} Analysis:</div>
+                    <div className="grid grid-cols-2 gap-1">
+                      <div>
+                        <span>Over {selectedDigitForComparison}: </span>
+                        <span className="font-mono">
+                          {Array.from({ length: 9 - selectedDigitForComparison }, (_, i) => selectedDigitForComparison + i + 1)
+                            .reduce((sum, d) => sum + (data.analysis.percentages[d] || 0), 0).toFixed(1)}%
                         </span>
-                      </>
-                    )}
+                      </div>
+                      <div>
+                        <span>Under {selectedDigitForComparison}: </span>
+                        <span className="font-mono">
+                          {Array.from({ length: selectedDigitForComparison }, (_, i) => i)
+                            .reduce((sum, d) => sum + (data.analysis.percentages[d] || 0), 0).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div>
+                        <span>Even/Odd comparison: </span>
+                        <span className="font-mono">
+                          {selectedDigitForComparison % 2 === 0 ? 
+                            ((data.analysis.evenPercentage - (data.analysis.percentages[selectedDigitForComparison] || 0)) / (data.analysis.evenPercentage || 1) * 100).toFixed(1) :
+                            ((data.analysis.oddPercentage - (data.analysis.percentages[selectedDigitForComparison] || 0)) / (data.analysis.oddPercentage || 1) * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))
+          ) : (
+            <p className="text-muted-foreground text-center py-4">No market data yet. Click Analyze Now or wait for ticks.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Trade Log */}
+      <div className="bg-card border border-border rounded-xl p-3">
+        <h3 className="text-sm font-semibold mb-2">📋 Live Trade Log</h3>
+        <div className="space-y-1 max-h-[300px] overflow-y-auto">
+          {trades.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-4">No trades yet</p>
+          ) : (
+            trades.map((trade, idx) => (
+              <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-border/50 last:border-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">{trade.time}</span>
+                  <Badge variant="outline" className="text-[8px] px-1 py-0">{trade.bot}</Badge>
+                  <span className="font-mono text-[10px]">
+                    {trade.market.includes('1HZ') ? '⚡' : 
+                     trade.market.includes('BOOM') ? '💥' :
+                     trade.market.includes('CRASH') ? '📉' :
+                     trade.market.includes('RDBEAR') ? '🐻' :
+                     trade.market.includes('RDBULL') ? '🐂' :
+                     trade.market.includes('JD') ? '🦘' : '📊'} {trade.market}
                   </span>
-                  <span className="text-center text-[5px] uppercase text-gray-400">
-                    {trade.contract}
+                </div>
+                <div className="flex items-center gap-3">
+                  {trade.signalType && (
+                    <Badge className="text-[7px] px-1 py-0 bg-opacity-50">
+                      {trade.signalType}
+                    </Badge>
+                  )}
+                  <span className="font-mono text-[10px]">
+                    Last: {trade.lastDigit !== undefined ? trade.lastDigit : '—'}
                   </span>
-                  <span className={`text-right font-mono ${
+                  <span className="font-mono">${trade.stake.toFixed(2)}</span>
+                  <span className={`font-mono w-16 text-right ${
                     trade.result === 'Win' ? 'text-profit' : trade.result === 'Loss' ? 'text-loss' : ''
                   }`}>
                     {trade.result === 'Win' ? `+$${trade.pnl.toFixed(2)}` : 
-                     trade.result === 'Loss' ? `-$${Math.abs(trade.pnl.toFixed(2))}` : 
-                     '...'}
+                     trade.result === 'Loss' ? `-$${Math.abs(trade.pnl).toFixed(2)}` : 
+                     '⏳'}
                   </span>
-                  {trade.result === 'Win' ? (
-                    <CheckCircle2 className="w-2.5 h-2.5 text-profit" />
-                  ) : trade.result === 'Loss' ? (
-                    <XCircle className="w-2.5 h-2.5 text-loss" />
-                  ) : (
-                    <Loader2 className="w-2.5 h-2.5 animate-spin text-yellow-400" />
-                  )}
-                </motion.div>
-              ))
-            )}
-          </div>
-        </motion.div>
-
-        {/* Footer Stats */}
-        <div className="grid grid-cols-4 gap-1 mt-2">
-          <div className="bg-white/5 backdrop-blur rounded p-1 text-center">
-            <span className="text-[6px] text-gray-400">Trades: {totalTrades}</span>
-          </div>
-          <div className="bg-white/5 backdrop-blur rounded p-1 text-center">
-            <span className="text-[6px] text-gray-400">W: {totalWins} | L: {totalTrades - totalWins}</span>
-          </div>
-          <div className="bg-white/5 backdrop-blur rounded p-1 text-center">
-            <span className="text-[6px] text-gray-400">Auto: {autoTradeEnabled ? 'ON' : 'OFF'}</span>
-          </div>
-          <div className="bg-white/5 backdrop-blur rounded p-1 text-center">
-            <span className="text-[6px] text-gray-400">Master: {masterCycleActive ? 'ACTIVE' : 'IDLE'}</span>
-          </div>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>
