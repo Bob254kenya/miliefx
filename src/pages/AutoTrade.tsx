@@ -26,6 +26,7 @@ interface MarketAnalysis {
   previousDigit: number;
   volatilityScore?: number;
   recommendedBot?: string;
+  signalStrength?: number; // New field for ranking markets
 }
 
 interface BotState {
@@ -65,12 +66,25 @@ interface TradeLog {
   signalType?: string;
 }
 
+interface ScannedMarket {
+  symbol: string;
+  score: number;
+  analysis: MarketAnalysis;
+  signals: Record<string, boolean>;
+}
+
 const VOLATILITY_MARKETS = [
   'R_10', 'R_25', 'R_50', 'R_75', 'R_100',
   '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V',
   'BOOM300', 'BOOM500', 'BOOM1000',
   'CRASH300', 'CRASH500', 'CRASH1000',
   'RDBEAR', 'RDBULL', 'JD10', 'JD25', 'JD50', 'JD75', 'JD100'
+];
+
+// New constant for auto-scan markets (volatility indices only)
+const AUTO_SCAN_MARKETS = [
+  'R_10', 'R_25', 'R_50', 'R_75', 'R_100',
+  '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ100V'
 ];
 
 function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number }> {
@@ -134,9 +148,53 @@ const analyzeMarket = (digits: number[]): MarketAnalysis => {
   const lastDigit = digits.length > 0 ? digits[digits.length - 1] : 0;
   const previousDigit = digits.length > 1 ? digits[digits.length - 2] : 0;
   
+  // Calculate volatility score and signal strength for ranking
   let volatilityScore = 0;
   let recommendedBot = '';
+  let signalStrength = 0;
   
+  // Calculate signal strength based on multiple factors
+  // Higher score = better trading opportunity
+  
+  // Factor 1: Digit distribution (more concentrated = better)
+  const top3Count = sortedDigits.slice(0, 3).reduce((sum, d) => sum + counts[d], 0);
+  const concentrationScore = (top3Count / 700) * 100; // Percentage of top 3 digits
+  
+  // Factor 2: Pattern strength for different bot types
+  let patternScore = 0;
+  
+  // Check Over 3 pattern (two consecutive digits ≤ 3)
+  const over3Pattern = checkOver3Entry(digits);
+  if (over3Pattern) patternScore += 25;
+  
+  // Check Under 6 pattern (two consecutive digits ≥ 6)
+  const under6Pattern = checkUnder6Entry(digits);
+  if (under6Pattern) patternScore += 25;
+  
+  // Check Over 1 pattern (two consecutive digits ≤ 1)
+  const over1Pattern = checkOver1Entry(digits);
+  if (over1Pattern) patternScore += 25;
+  
+  // Check Under 8 pattern (two consecutive digits ≥ 8)
+  const under8Pattern = checkUnder8Entry(digits);
+  if (under8Pattern) patternScore += 25;
+  
+  // Check Even pattern (three consecutive odds)
+  const evenPattern = checkEvenEntry(digits);
+  if (evenPattern) patternScore += 25;
+  
+  // Check Odd pattern (three consecutive evens)
+  const oddPattern = checkOddEntry(digits);
+  if (oddPattern) patternScore += 25;
+  
+  // Factor 3: Volatility (higher volatility = more opportunities)
+  const digitRange = Math.max(...sortedDigits) - Math.min(...sortedDigits);
+  const volatilityFactor = (digitRange / 9) * 20;
+  
+  // Combine scores (max theoretical score: 100)
+  signalStrength = Math.min(100, concentrationScore * 0.4 + patternScore * 0.4 + volatilityFactor * 0.2);
+  
+  // Original volatility score calculation (kept for compatibility)
   if (sortedDigits[0] >= 4) {
     const isMostEven = sortedDigits[0] % 2 === 0;
     if (isMostEven) {
@@ -179,7 +237,8 @@ const analyzeMarket = (digits: number[]): MarketAnalysis => {
     lastDigit,
     previousDigit,
     volatilityScore,
-    recommendedBot
+    recommendedBot,
+    signalStrength: Math.round(signalStrength) // Round to whole number
   };
 };
 
@@ -245,6 +304,13 @@ export default function AutoTrade() {
   const [selectedMarketForScan, setSelectedMarketForScan] = useState<string>('R_100');
   const [autoStartAll, setAutoStartAll] = useState(false);
   
+  // New state for auto market scanning (internal only - not displayed)
+  const [scannedMarkets, setScannedMarkets] = useState<ScannedMarket[]>([]);
+  const [bestMarket, setBestMarket] = useState<string | null>(null);
+  const [bestScore, setBestScore] = useState<number>(0);
+  const [isAutoScanning, setIsAutoScanning] = useState(false);
+  const autoScanIntervalRef = useRef<NodeJS.Timeout>();
+  
   const [trades, setTrades] = useState<TradeLog[]>([]);
   const tradeIdRef = useRef(0);
   const marketDigitsRef = useRef<Record<string, number[]>>({});
@@ -263,6 +329,124 @@ export default function AutoTrade() {
       }));
     }
   }, [digits, selectedMarketForScan]);
+
+  // Auto-scan all markets function (runs in background)
+  const autoScanAllMarkets = useCallback(async (): Promise<ScannedMarket[]> => {
+    const scanned: ScannedMarket[] = [];
+    
+    for (const market of AUTO_SCAN_MARKETS) {
+      try {
+        // Get market digits (request if not available)
+        let marketDigits = marketDigitsRef.current[market];
+        
+        if (!marketDigits || marketDigits.length < 700) {
+          // We need to fetch more data for this market
+          // For now, use available data or skip
+          continue;
+        }
+        
+        const analysis = analyzeMarket(marketDigits);
+        analysis.symbol = market;
+        
+        const signals = checkAllSignals(marketDigits);
+        
+        // Calculate overall score for this market
+        const signalCount = Object.values(signals).filter(v => v).length;
+        const score = (analysis.signalStrength || 0) + (signalCount * 10);
+        
+        scanned.push({
+          symbol: market,
+          score,
+          analysis,
+          signals
+        });
+      } catch (error) {
+        console.error(`Error scanning market ${market}:`, error);
+      }
+    }
+    
+    // Sort by score (highest first)
+    scanned.sort((a, b) => b.score - a.score);
+    
+    return scanned;
+  }, []);
+
+  // Background scanner that runs continuously
+  const startBackgroundScanner = useCallback(async () => {
+    if (isAutoScanning) return;
+    
+    setIsAutoScanning(true);
+    
+    const scan = async () => {
+      try {
+        const scanned = await autoScanAllMarkets();
+        setScannedMarkets(scanned);
+        
+        if (scanned.length > 0) {
+          const newBestMarket = scanned[0];
+          setBestMarket(newBestMarket.symbol);
+          setBestScore(newBestMarket.score);
+          
+          // Update the selected market for all bots that are running or about to run
+          setBots(prev => prev.map(bot => ({
+            ...bot,
+            selectedMarket: newBestMarket.symbol
+          })));
+          
+          // Also update the manual scan market selector
+          setSelectedMarketForScan(newBestMarket.symbol);
+          
+          // Update market analysis and signals
+          const newAnalysis: Record<string, MarketAnalysis> = {};
+          const newSignals: Record<string, Record<string, boolean>> = {};
+          
+          scanned.forEach(m => {
+            newAnalysis[m.symbol] = m.analysis;
+            newSignals[m.symbol] = m.signals;
+          });
+          
+          setMarketAnalysis(prev => ({ ...prev, ...newAnalysis }));
+          setMarketSignals(prev => ({ ...prev, ...newSignals }));
+        }
+      } catch (error) {
+        console.error('Background scan error:', error);
+      }
+    };
+    
+    // Run initial scan
+    await scan();
+    
+    // Set up interval to scan every 30 seconds (or after each trade cycle)
+    autoScanIntervalRef.current = setInterval(scan, 30000);
+    
+  }, [autoScanAllMarkets]);
+
+  const stopBackgroundScanner = useCallback(() => {
+    if (autoScanIntervalRef.current) {
+      clearInterval(autoScanIntervalRef.current);
+    }
+    setIsAutoScanning(false);
+  }, []);
+
+  // Auto-start background scanner when bot starts running
+  useEffect(() => {
+    const anyBotRunning = bots.some(b => b.isRunning);
+    
+    if (anyBotRunning && !isAutoScanning) {
+      startBackgroundScanner();
+    } else if (!anyBotRunning && isAutoScanning) {
+      stopBackgroundScanner();
+    }
+  }, [bots, isAutoScanning, startBackgroundScanner, stopBackgroundScanner]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (autoScanIntervalRef.current) {
+        clearInterval(autoScanIntervalRef.current);
+      }
+    };
+  }, []);
 
   const [bots, setBots] = useState<BotState[]>([
     { 
@@ -328,6 +512,7 @@ export default function AutoTrade() {
     });
   }, [bots]);
 
+  // Modified scan function to also update best market
   const scanMarket = useCallback(async () => {
     if (isScanning) return;
     
@@ -359,7 +544,11 @@ export default function AutoTrade() {
       const signals: Record<string, Record<string, boolean>> = {};
       const volatilityMarkets: Record<string, { score: number, type: string }> = {};
       
-      for (const market of VOLATILITY_MARKETS) {
+      // Scan all markets including new ones
+      const allMarkets = [...VOLATILITY_MARKETS, ...AUTO_SCAN_MARKETS];
+      const uniqueMarkets = [...new Set(allMarkets)];
+      
+      for (const market of uniqueMarkets) {
         const marketDigits = marketDigitsRef.current[market] || [];
         if (marketDigits.length >= 700) {
           analysis[market] = analyzeMarket(marketDigits);
@@ -413,6 +602,31 @@ export default function AutoTrade() {
       setMarketAnalysis(analysis);
       setMarketSignals(signals);
       
+      // Find best market based on signal strength
+      const marketScores: { market: string; score: number }[] = [];
+      
+      Object.entries(analysis).forEach(([market, data]) => {
+        if (data.signalStrength) {
+          marketScores.push({ market, score: data.signalStrength });
+        }
+      });
+      
+      marketScores.sort((a, b) => b.score - a.score);
+      
+      if (marketScores.length > 0) {
+        const best = marketScores[0];
+        setBestMarket(best.market);
+        setBestScore(best.score);
+        
+        // Update selected market for all bots
+        setBots(prev => prev.map(bot => ({
+          ...bot,
+          selectedMarket: best.market
+        })));
+        
+        setSelectedMarketForScan(best.market);
+      }
+      
       const bestMarkets: Record<string, string> = {};
       const overMarkets = Object.entries(volatilityMarkets)
         .filter(([_, data]) => data.type === 'OVER')
@@ -436,7 +650,7 @@ export default function AutoTrade() {
         }
       });
       
-      const remainingMarkets = VOLATILITY_MARKETS.filter(m => 
+      const remainingMarkets = uniqueMarkets.filter(m => 
         !Object.values(bestMarkets).includes(m) && marketDigitsRef.current[m]?.length >= 700
       );
       
@@ -445,9 +659,10 @@ export default function AutoTrade() {
         bestMarkets['odd'] = remainingMarkets[1];
       }
       
+      // Only update markets for bots that don't have a market assigned yet
       setBots(prev => prev.map(bot => ({
         ...bot,
-        selectedMarket: bestMarkets[bot.type] || bot.selectedMarket || Object.keys(marketDigitsRef.current)[0]
+        selectedMarket: bestMarkets[bot.type] || bot.selectedMarket || bestMarket || Object.keys(marketDigitsRef.current)[0]
       })));
       
       playScanSound();
@@ -466,7 +681,7 @@ export default function AutoTrade() {
         clearTimeout(scanTimeoutRef.current);
       }
     }
-  }, [isScanning]);
+  }, [isScanning, bestMarket]);
 
   const clearAll = () => {
     setTrades([]);
@@ -484,6 +699,9 @@ export default function AutoTrade() {
       recoveryMode: false,
       signal: false
     })));
+    setScannedMarkets([]);
+    setBestMarket(null);
+    setBestScore(0);
     tradeIdRef.current = 0;
     toast.success('All data cleared');
   };
@@ -524,7 +742,7 @@ export default function AutoTrade() {
     let cooldownRemaining = 0;
     let recoveryMode = false;
 
-    const currentMarket = bot.selectedMarket;
+    let currentMarket = bot.selectedMarket;
 
     while (botRunningRefs.current[botId]) {
       if (botPausedRefs.current[botId]) {
@@ -550,6 +768,17 @@ export default function AutoTrade() {
         await new Promise(r => setTimeout(r, 1000));
         cooldownRemaining--;
         continue;
+      }
+
+      // After each trade cycle, check if we should switch to a better market
+      if (scannedMarkets.length > 0 && scannedMarkets[0].symbol !== currentMarket) {
+        // Switch to better market
+        currentMarket = scannedMarkets[0].symbol;
+        setBots(prev => prev.map(b => b.id === botId ? { 
+          ...b, 
+          selectedMarket: currentMarket
+        } : b));
+        toast.info(`${bot.name} switching to better market: ${currentMarket}`);
       }
 
       const marketDigits = marketDigitsRef.current[currentMarket] || [];
@@ -701,7 +930,7 @@ export default function AutoTrade() {
     } : b));
     
     botRunningRefs.current[botId] = false;
-  }, [isAuthorized, balance, globalStake, globalMultiplier, globalStopLoss, globalTakeProfit, activeTradeId, bots]);
+  }, [isAuthorized, balance, globalStake, globalMultiplier, globalStopLoss, globalTakeProfit, activeTradeId, bots, scannedMarkets]);
 
   const startBot = (botId: string) => {
     const bot = bots.find(b => b.id === botId);
