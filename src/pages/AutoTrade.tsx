@@ -7,7 +7,7 @@ import { useTickLoader } from '@/hooks/useTickLoader';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Play, StopCircle, Pause, TrendingUp, TrendingDown, CircleDot, RefreshCw, Trash2 } from 'lucide-react';
+import { Loader2, Play, StopCircle, Pause, TrendingUp, TrendingDown, CircleDot, RefreshCw, Trash2, DollarSign } from 'lucide-react';
 
 interface MarketAnalysis {
   symbol: string;
@@ -24,6 +24,8 @@ interface MarketAnalysis {
   under8Count: number;
   lastDigit: number;
   previousDigit: number;
+  volatilityScore?: number;
+  recommendedBot?: string;
 }
 
 interface BotState {
@@ -82,6 +84,31 @@ function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number
   });
 }
 
+// Play scanning sound
+const playScanSound = () => {
+  try {
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // A5 note
+    oscillator.frequency.exponentialRampToValueAtTime(440, audioContext.currentTime + 0.2); // A4 note
+    
+    gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + 0.2);
+  } catch (e) {
+    // Browser might not support audio context, ignore
+    console.log('Audio not supported');
+  }
+};
+
 // Market analysis functions
 const analyzeMarket = (digits: number[]): MarketAnalysis => {
   if (digits.length < 700) return {} as MarketAnalysis;
@@ -108,6 +135,44 @@ const analyzeMarket = (digits: number[]): MarketAnalysis => {
   const lastDigit = digits.length > 0 ? digits[digits.length - 1] : 0;
   const previousDigit = digits.length > 1 ? digits[digits.length - 2] : 0;
   
+  // Calculate volatility score and recommended bot
+  let volatilityScore = 0;
+  let recommendedBot = '';
+  
+  // Check conditions for Over bot (most appearing >= 4)
+  if (sortedDigits[0] >= 4) {
+    // Check if most appearing digit is even or odd
+    const isMostEven = sortedDigits[0] % 2 === 0;
+    if (isMostEven) {
+      // If most is even, second most should be even for Over bot
+      if (sortedDigits[1] % 2 === 0) {
+        volatilityScore = 9;
+        recommendedBot = 'OVER';
+      }
+    } else {
+      // If most is odd, second most should be odd for Over bot
+      if (sortedDigits[1] % 2 === 1) {
+        volatilityScore = 9;
+        recommendedBot = 'OVER';
+      }
+    }
+  }
+  
+  // Check conditions for Under bot (least appearing <= 5)
+  if (sortedDigits[9] <= 5) {
+    // Check if least appearing digit is even or odd
+    const isLeastEven = sortedDigits[9] % 2 === 0;
+    if (isLeastEven) {
+      // If least is even, conditions for Under bot
+      volatilityScore = Math.max(volatilityScore, 8);
+      recommendedBot = 'UNDER';
+    } else {
+      // If least is odd, conditions for Under bot
+      volatilityScore = Math.max(volatilityScore, 8);
+      recommendedBot = 'UNDER';
+    }
+  }
+  
   return {
     symbol: '',
     mostAppearing: sortedDigits[0],
@@ -122,7 +187,9 @@ const analyzeMarket = (digits: number[]): MarketAnalysis => {
     over1Count,
     under8Count,
     lastDigit,
-    previousDigit
+    previousDigit,
+    volatilityScore,
+    recommendedBot
   };
 };
 
@@ -182,6 +249,7 @@ export default function AutoTrade() {
   const [marketAnalysis, setMarketAnalysis] = useState<Record<string, MarketAnalysis>>({});
   const [marketSignals, setMarketSignals] = useState<Record<string, Record<string, boolean>>>({});
   const [isScanning, setIsScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
   const [globalStake, setGlobalStake] = useState<number>(0.5);
   const [globalMultiplier, setGlobalMultiplier] = useState<number>(2);
   const [globalStopLoss, setGlobalStopLoss] = useState<number>(30);
@@ -191,6 +259,7 @@ export default function AutoTrade() {
   const [trades, setTrades] = useState<TradeLog[]>([]);
   const tradeIdRef = useRef(0);
   const marketDigitsRef = useRef<Record<string, number[]>>({});
+  const scanTimeoutRef = useRef<NodeJS.Timeout>();
 
   const { digits, prices, isLoading, tickCount } = useTickLoader(selectedMarketForScan, 1000);
 
@@ -251,15 +320,40 @@ export default function AutoTrade() {
   const botRunningRefs = useRef<Record<string, boolean>>({});
   const botPausedRefs = useRef<Record<string, boolean>>({});
 
-  // Scan all markets
+  // Scan all markets with 20-second animation
   const scanMarket = useCallback(async () => {
     if (isScanning) return;
     
     setIsScanning(true);
+    setScanProgress(0);
+    playScanSound();
+    
+    // Clear previous timeout if any
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current);
+    }
     
     try {
+      // Progress animation for 20 seconds
+      const startTime = Date.now();
+      const duration = 20000; // 20 seconds
+      
+      const updateProgress = () => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min((elapsed / duration) * 100, 100);
+        setScanProgress(progress);
+        
+        if (elapsed < duration) {
+          scanTimeoutRef.current = setTimeout(updateProgress, 100);
+        }
+      };
+      
+      scanTimeoutRef.current = setTimeout(updateProgress, 100);
+      
+      // Perform actual scanning
       const analysis: Record<string, MarketAnalysis> = {};
       const signals: Record<string, Record<string, boolean>> = {};
+      const volatilityMarkets: Record<string, { score: number, type: string }> = {};
       
       for (const market of VOLATILITY_MARKETS) {
         const marketDigits = marketDigitsRef.current[market] || [];
@@ -269,75 +363,113 @@ export default function AutoTrade() {
           
           // Check all signals for this market
           signals[market] = checkAllSignals(marketDigits);
+          
+          // Calculate volatility score based on digit patterns
+          const sortedDigits = [...Array(10).keys()].sort((a, b) => {
+            const countA = marketDigits.filter(d => d === a).length;
+            const countB = marketDigits.filter(d => d === b).length;
+            return countB - countA;
+          });
+          
+          const mostAppearing = sortedDigits[0];
+          const leastAppearing = sortedDigits[9];
+          const secondMost = sortedDigits[1];
+          
+          let volatilityScore = 0;
+          let recommendedType = '';
+          
+          // Check Over bot condition (most appearing >= 4)
+          if (mostAppearing >= 4) {
+            const isMostEven = mostAppearing % 2 === 0;
+            if (isMostEven && secondMost % 2 === 0) {
+              volatilityScore = 9;
+              recommendedType = 'OVER';
+            } else if (!isMostEven && secondMost % 2 === 1) {
+              volatilityScore = 9;
+              recommendedType = 'OVER';
+            }
+          }
+          
+          // Check Under bot condition (least appearing <= 5)
+          if (leastAppearing <= 5) {
+            const isLeastEven = leastAppearing % 2 === 0;
+            if (isLeastEven) {
+              volatilityScore = Math.max(volatilityScore, 8);
+              recommendedType = 'UNDER';
+            } else {
+              volatilityScore = Math.max(volatilityScore, 8);
+              recommendedType = 'UNDER';
+            }
+          }
+          
+          if (volatilityScore > 0) {
+            volatilityMarkets[market] = { score: volatilityScore, type: recommendedType };
+          }
         }
       }
+      
+      // Wait for 20 seconds to complete
+      await new Promise(resolve => setTimeout(resolve, Math.max(0, duration - (Date.now() - startTime))));
       
       setMarketAnalysis(analysis);
       setMarketSignals(signals);
       
-      // Find the best market for each bot type based on recent signals
+      // Auto-select best markets based on volatility
       const bestMarkets: Record<string, string> = {};
+      const overMarkets = Object.entries(volatilityMarkets)
+        .filter(([_, data]) => data.type === 'OVER')
+        .sort((a, b) => b[1].score - a[1].score);
       
-      for (const bot of bots) {
-        let bestMarket = '';
-        let maxSignalCount = 0;
-        
-        for (const [market, marketDigits] of Object.entries(marketDigitsRef.current)) {
-          if (marketDigits.length < 700) continue;
-          
-          // Check how many times this signal appeared in last 100 ticks
-          const last100 = marketDigits.slice(-100);
-          let signalCount = 0;
-          
-          for (let i = 2; i < last100.length; i++) {
-            const window = last100.slice(0, i);
-            switch (bot.type) {
-              case 'over3':
-                if (checkOver3Entry(window)) signalCount++;
-                break;
-              case 'under6':
-                if (checkUnder6Entry(window)) signalCount++;
-                break;
-              case 'even':
-                if (checkEvenEntry(window)) signalCount++;
-                break;
-              case 'odd':
-                if (checkOddEntry(window)) signalCount++;
-                break;
-              case 'over1':
-                if (checkOver1Entry(window)) signalCount++;
-                break;
-              case 'under8':
-                if (checkUnder8Entry(window)) signalCount++;
-                break;
-            }
-          }
-          
-          if (signalCount > maxSignalCount) {
-            maxSignalCount = signalCount;
-            bestMarket = market;
-          }
+      const underMarkets = Object.entries(volatilityMarkets)
+        .filter(([_, data]) => data.type === 'UNDER')
+        .sort((a, b) => b[1].score - a[1].score);
+      
+      // Assign OVER bots
+      const overBots = ['over3', 'over1'];
+      overBots.forEach((botType, index) => {
+        if (overMarkets[index]) {
+          bestMarkets[botType] = overMarkets[index][0];
         }
-        
-        if (bestMarket) {
-          bestMarkets[bot.type] = bestMarket;
+      });
+      
+      // Assign UNDER bots
+      const underBots = ['under6', 'under8'];
+      underBots.forEach((botType, index) => {
+        if (underMarkets[index]) {
+          bestMarkets[botType] = underMarkets[index][0];
         }
+      });
+      
+      // Assign EVEN/ODD bots based on remaining markets
+      const remainingMarkets = VOLATILITY_MARKETS.filter(m => 
+        !Object.values(bestMarkets).includes(m) && marketDigitsRef.current[m]?.length >= 700
+      );
+      
+      if (remainingMarkets.length >= 2) {
+        bestMarkets['even'] = remainingMarkets[0];
+        bestMarkets['odd'] = remainingMarkets[1];
       }
       
-      // Auto-select markets for bots based on best performing
+      // Update bots with selected markets
       setBots(prev => prev.map(bot => ({
         ...bot,
-        selectedMarket: bestMarkets[bot.type] || bot.selectedMarket
+        selectedMarket: bestMarkets[bot.type] || bot.selectedMarket || Object.keys(marketDigitsRef.current)[0]
       })));
       
-      toast.success('Market scan complete - Best markets selected for each bot');
+      // Play completion sound
+      playScanSound();
+      toast.success(`Scan complete! Found ${Object.keys(volatilityMarkets).length} volatile markets`);
     } catch (error) {
       console.error('Scan error:', error);
       toast.error('Scan failed');
     } finally {
       setIsScanning(false);
+      setScanProgress(100);
+      if (scanTimeoutRef.current) {
+        clearTimeout(scanTimeoutRef.current);
+      }
     }
-  }, [isScanning, bots]);
+  }, [isScanning]);
 
   // Clear all data
   const clearAll = () => {
@@ -648,6 +780,38 @@ export default function AutoTrade() {
         <div className="flex items-center justify-between mb-3">
           <h1 className="text-xl font-bold">🤖 6-Bot Trading System</h1>
           <div className="flex items-center gap-2">
+            {/* Dollar Icon Scanner */}
+            <div className="relative flex items-center">
+              <motion.div
+                animate={isScanning ? {
+                  rotate: 360,
+                  scale: [1, 1.2, 1],
+                } : {}}
+                transition={isScanning ? {
+                  rotate: {
+                    duration: 2,
+                    repeat: Infinity,
+                    ease: "linear"
+                  },
+                  scale: {
+                    duration: 1,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  }
+                } : {}}
+                className="cursor-pointer mr-2"
+                onClick={scanMarket}
+              >
+                <DollarSign className={`w-6 h-6 ${isScanning ? 'text-yellow-400' : 'text-green-400'}`} />
+              </motion.div>
+              {isScanning && (
+                <div className="absolute -top-1 -right-1 w-3 h-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
+                </div>
+              )}
+            </div>
+            
             <Select value={selectedMarketForScan} onValueChange={setSelectedMarketForScan}>
               <SelectTrigger className="w-[180px] h-8">
                 <SelectValue placeholder="Select market" />
@@ -667,7 +831,7 @@ export default function AutoTrade() {
               disabled={isScanning}
             >
               {isScanning ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
-              Scan All Markets
+              Scan Markets (20s)
             </Button>
             <Button 
               variant="destructive" 
@@ -681,6 +845,24 @@ export default function AutoTrade() {
             </Button>
           </div>
         </div>
+
+        {/* Scan Progress Bar */}
+        {isScanning && (
+          <div className="mb-3">
+            <div className="flex justify-between text-xs text-muted-foreground mb-1">
+              <span>Scanning markets for volatility...</span>
+              <span>{Math.round(scanProgress)}%</span>
+            </div>
+            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+              <motion.div 
+                className="h-full bg-gradient-to-r from-yellow-400 to-green-400"
+                initial={{ width: 0 }}
+                animate={{ width: `${scanProgress}%` }}
+                transition={{ duration: 0.1 }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Global Stats */}
         <div className="grid grid-cols-6 gap-3 text-sm">
@@ -821,6 +1003,14 @@ export default function AutoTrade() {
                       <span>2nd: {marketData.secondMost}</span>
                       <span>Least: {marketData.leastAppearing}</span>
                     </div>
+                    {marketData.volatilityScore && (
+                      <div className="flex justify-between mt-1 text-[8px]">
+                        <span className="text-yellow-400">Volatility: {marketData.volatilityScore}/10</span>
+                        {marketData.recommendedBot && (
+                          <span className="text-green-400">Rec: {marketData.recommendedBot}</span>
+                        )}
+                      </div>
+                    )}
                     <div className="flex justify-between mt-1 text-[8px]">
                       <span>Last: {marketData.lastDigit}</span>
                       <span>Prev: {marketData.previousDigit}</span>
@@ -931,7 +1121,7 @@ export default function AutoTrade() {
           })}
           {Object.keys(marketSignals).length === 0 && (
             <p className="text-xs text-muted-foreground col-span-4 text-center py-2">
-              No active signals. Click "Scan All Markets" to start.
+              No active signals. Click the dollar icon to scan.
             </p>
           )}
         </div>
