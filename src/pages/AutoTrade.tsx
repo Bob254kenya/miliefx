@@ -6,12 +6,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTickLoader } from '@/hooks/useTickLoader';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, Play, StopCircle, Pause, TrendingUp, TrendingDown, CircleDot, RefreshCw, Trash2, AlertCircle, ArrowRight, Zap } from 'lucide-react';
+import { Loader2, Play, StopCircle, Pause, TrendingUp, TrendingDown, CircleDot, RefreshCw, Trash2, AlertCircle, ArrowRight, Zap, BarChart2, Percent, Hash, Activity } from 'lucide-react';
 
 interface DigitAnalysis {
   counts: Record<number, number>;
   percentages: Record<number, number>;
   mostAppearing: number;
+  secondMost: number;
+  thirdMost: number;
+  leastAppearing: number;
   secondLeast: number;
   evenPercentage: number;
   oddPercentage: number;
@@ -19,11 +22,18 @@ interface DigitAnalysis {
   under5Percentage: number;
   over3Percentage: number;
   under6Percentage: number;
+  over7Percentage: number;
+  under2Percentage: number;
   lastTwelveTicks: number[];
   lastThreeTicks: number[];
   lastThreeIdentical: boolean;
-  signal: 'EVEN' | 'ODD' | 'OVER_3' | 'UNDER_6' | 'NONE';
+  signal: 'EVEN' | 'ODD' | 'OVER_3' | 'UNDER_6' | 'OVER_5' | 'UNDER_5' | 'OVER_7' | 'UNDER_2' | 'NONE';
   confidence: number;
+  comparison: {
+    evenVsOdd: { even: number; odd: number; advantage: 'EVEN' | 'ODD' | 'BALANCED' };
+    over5VsUnder5: { over5: number; under5: number; advantage: 'OVER_5' | 'UNDER_5' | 'BALANCED' };
+    over3VsUnder6: { over3: number; under6: number; advantage: 'OVER_3' | 'UNDER_6' | 'BALANCED' };
+  };
 }
 
 interface MarketData {
@@ -36,7 +46,7 @@ interface MarketData {
 interface BotState {
   id: string;
   name: string;
-  type: 'EVEN' | 'ODD' | 'OVER_3' | 'UNDER_6';
+  type: 'EVEN' | 'ODD' | 'OVER_3' | 'UNDER_6' | 'OVER_5' | 'UNDER_5' | 'OVER_7' | 'UNDER_2';
   isRunning: boolean;
   isPaused: boolean;
   currentStake: number;
@@ -89,11 +99,17 @@ function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number
 
 // Advanced digit analysis function
 const analyzeDigits = (digits: number[]): DigitAnalysis => {
-  if (digits.length < 100) {
+  if (digits.length < 700) {
+    const emptyCounts: Record<number, number> = {};
+    for (let i = 0; i <= 9; i++) emptyCounts[i] = 0;
+    
     return {
-      counts: {},
-      percentages: {},
+      counts: emptyCounts,
+      percentages: emptyCounts,
       mostAppearing: -1,
+      secondMost: -1,
+      thirdMost: -1,
+      leastAppearing: -1,
       secondLeast: -1,
       evenPercentage: 0,
       oddPercentage: 0,
@@ -101,11 +117,18 @@ const analyzeDigits = (digits: number[]): DigitAnalysis => {
       under5Percentage: 0,
       over3Percentage: 0,
       under6Percentage: 0,
+      over7Percentage: 0,
+      under2Percentage: 0,
       lastTwelveTicks: [],
       lastThreeTicks: [],
       lastThreeIdentical: false,
       signal: 'NONE',
-      confidence: 0
+      confidence: 0,
+      comparison: {
+        evenVsOdd: { even: 0, odd: 0, advantage: 'BALANCED' },
+        over5VsUnder5: { over5: 0, under5: 0, advantage: 'BALANCED' },
+        over3VsUnder6: { over3: 0, under6: 0, advantage: 'BALANCED' }
+      }
     };
   }
 
@@ -125,20 +148,25 @@ const analyzeDigits = (digits: number[]): DigitAnalysis => {
     percentages[i] = (counts[i] / 700) * 100;
   }
   
-  // Sort digits
+  // Sort digits by frequency
   const sortedByCount = [...Array(10).keys()].sort((a, b) => counts[b] - counts[a]);
   const sortedByLeast = [...Array(10).keys()].sort((a, b) => counts[a] - counts[b]);
   
   const mostAppearing = sortedByCount[0];
-  const secondLeast = sortedByLeast[1]; // Second least appearing digit
+  const secondMost = sortedByCount[1];
+  const thirdMost = sortedByCount[2];
+  const leastAppearing = sortedByLeast[0];
+  const secondLeast = sortedByLeast[1];
   
   // Calculate group percentages
   const evenDigits = [0,2,4,6,8];
   const oddDigits = [1,3,5,7,9];
-  const over5Digits = [6,7,8,9];
+  const over5Digits = [5,6,7,8,9];
   const under5Digits = [0,1,2,3,4];
   const over3Digits = [4,5,6,7,8,9];
   const under6Digits = [0,1,2,3,4,5];
+  const over7Digits = [7,8,9];
+  const under2Digits = [0,1];
   
   const evenCount = evenDigits.reduce((sum, d) => sum + counts[d], 0);
   const oddCount = oddDigits.reduce((sum, d) => sum + counts[d], 0);
@@ -146,6 +174,8 @@ const analyzeDigits = (digits: number[]): DigitAnalysis => {
   const under5Count = under5Digits.reduce((sum, d) => sum + counts[d], 0);
   const over3Count = over3Digits.reduce((sum, d) => sum + counts[d], 0);
   const under6Count = under6Digits.reduce((sum, d) => sum + counts[d], 0);
+  const over7Count = over7Digits.reduce((sum, d) => sum + counts[d], 0);
+  const under2Count = under2Digits.reduce((sum, d) => sum + counts[d], 0);
   
   const evenPercentage = (evenCount / 700) * 100;
   const oddPercentage = (oddCount / 700) * 100;
@@ -153,68 +183,116 @@ const analyzeDigits = (digits: number[]): DigitAnalysis => {
   const under5Percentage = (under5Count / 700) * 100;
   const over3Percentage = (over3Count / 700) * 100;
   const under6Percentage = (under6Count / 700) * 100;
+  const over7Percentage = (over7Count / 700) * 100;
+  const under2Percentage = (under2Count / 700) * 100;
   
-  // Check last three pattern
+  // Calculate comparisons
+  const evenVsOddAdvantage = evenPercentage > oddPercentage + 5 ? 'EVEN' : oddPercentage > evenPercentage + 5 ? 'ODD' : 'BALANCED';
+  const over5VsUnder5Advantage = over5Percentage > under5Percentage + 5 ? 'OVER_5' : under5Percentage > over5Percentage + 5 ? 'UNDER_5' : 'BALANCED';
+  const over3VsUnder6Advantage = over3Percentage > under6Percentage + 5 ? 'OVER_3' : under6Percentage > over3Percentage + 5 ? 'UNDER_6' : 'BALANCED';
+  
+  // Check last three pattern for entry signals
   const lastThreeOver3 = lastThree.filter(d => d > 3).length >= 2;
   const lastThreeUnder6 = lastThree.filter(d => d < 6).length >= 2;
   const lastThreeEven = lastThree.filter(d => d % 2 === 0).length >= 2;
   const lastThreeOdd = lastThree.filter(d => d % 2 === 1).length >= 2;
+  const lastThreeOver5 = lastThree.filter(d => d > 4).length >= 2;
+  const lastThreeUnder5 = lastThree.filter(d => d < 5).length >= 2;
+  const lastThreeOver7 = lastThree.filter(d => d > 6).length >= 2;
+  const lastThreeUnder2 = lastThree.filter(d => d < 2).length >= 2;
   
   // Determine signal based on strict conditions
-  let signal: 'EVEN' | 'ODD' | 'OVER_3' | 'UNDER_6' | 'NONE' = 'NONE';
+  let signal: 'EVEN' | 'ODD' | 'OVER_3' | 'UNDER_6' | 'OVER_5' | 'UNDER_5' | 'OVER_7' | 'UNDER_2' | 'NONE' = 'NONE';
   let confidence = 0;
   
   // Check EVEN conditions
   if (
-    evenPercentage >= 58 &&
-    oddPercentage <= 42 &&
+    evenPercentage >= 55 &&
     mostAppearing % 2 === 0 &&
-    lastThreeEven &&
-    secondLeast % 2 === 1 &&
-    Math.abs(evenPercentage - 50) > 5
+    secondMost % 2 === 0 &&
+    lastThreeEven
   ) {
     signal = 'EVEN';
     confidence = evenPercentage;
   }
   // Check ODD conditions
   else if (
-    oddPercentage >= 58 &&
-    evenPercentage <= 42 &&
+    oddPercentage >= 55 &&
     mostAppearing % 2 === 1 &&
-    lastThreeOdd &&
-    secondLeast % 2 === 0 &&
-    Math.abs(oddPercentage - 50) > 5
+    secondMost % 2 === 1 &&
+    lastThreeOdd
   ) {
     signal = 'ODD';
     confidence = oddPercentage;
   }
   // Check OVER 3 conditions
   else if (
-    over3Percentage >= 60 &&
+    over3Percentage >= 55 &&
     mostAppearing > 3 &&
-    lastThreeOver3 &&
-    secondLeast < 4 &&
-    Math.abs(over3Percentage - 50) > 5
+    secondMost > 3 &&
+    lastThreeOver3
   ) {
     signal = 'OVER_3';
     confidence = over3Percentage;
   }
   // Check UNDER 6 conditions
   else if (
-    under6Percentage >= 60 &&
+    under6Percentage >= 55 &&
     mostAppearing < 6 &&
-    lastThreeUnder6 &&
-    secondLeast > 5 &&
-    Math.abs(under6Percentage - 50) > 5
+    secondMost < 6 &&
+    lastThreeUnder6
   ) {
     signal = 'UNDER_6';
     confidence = under6Percentage;
+  }
+  // Check OVER 5 conditions
+  else if (
+    over5Percentage >= 55 &&
+    mostAppearing > 4 &&
+    secondMost > 4 &&
+    lastThreeOver5
+  ) {
+    signal = 'OVER_5';
+    confidence = over5Percentage;
+  }
+  // Check UNDER 5 conditions
+  else if (
+    under5Percentage >= 55 &&
+    mostAppearing < 5 &&
+    secondMost < 5 &&
+    lastThreeUnder5
+  ) {
+    signal = 'UNDER_5';
+    confidence = under5Percentage;
+  }
+  // Check OVER 7 conditions
+  else if (
+    over7Percentage >= 40 &&
+    mostAppearing > 6 &&
+    secondMost > 6 &&
+    lastThreeOver7
+  ) {
+    signal = 'OVER_7';
+    confidence = over7Percentage;
+  }
+  // Check UNDER 2 conditions
+  else if (
+    under2Percentage >= 30 &&
+    mostAppearing < 2 &&
+    secondMost < 2 &&
+    lastThreeUnder2
+  ) {
+    signal = 'UNDER_2';
+    confidence = under2Percentage;
   }
   
   return {
     counts,
     percentages,
     mostAppearing,
+    secondMost,
+    thirdMost,
+    leastAppearing,
     secondLeast,
     evenPercentage,
     oddPercentage,
@@ -222,11 +300,18 @@ const analyzeDigits = (digits: number[]): DigitAnalysis => {
     under5Percentage,
     over3Percentage,
     under6Percentage,
+    over7Percentage,
+    under2Percentage,
     lastTwelveTicks: lastTwelve,
     lastThreeTicks: lastThree,
     lastThreeIdentical,
     signal,
-    confidence
+    confidence,
+    comparison: {
+      evenVsOdd: { even: evenPercentage, odd: oddPercentage, advantage: evenVsOddAdvantage },
+      over5VsUnder5: { over5: over5Percentage, under5: under5Percentage, advantage: over5VsUnder5Advantage },
+      over3VsUnder6: { over3: over3Percentage, under6: under6Percentage, advantage: over3VsUnder6Advantage }
+    }
   };
 };
 
@@ -252,8 +337,8 @@ const findBestMarketForBot = (
 
 export default function AutoTrade() {
   const { isAuthorized, activeAccount, balance } = useAuth();
-  const { digits, selectedMarket, setSelectedMarket } = useTickLoader();
   const [activeTradeId, setActiveTradeId] = useState<string | null>(null);
+  const [selectedMarket, setSelectedMarket] = useState<string>('R_100');
   const [marketsData, setMarketsData] = useState<Record<string, MarketData>>({});
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [globalStake, setGlobalStake] = useState<number>(0.5);
@@ -261,14 +346,36 @@ export default function AutoTrade() {
   const [globalStopLoss, setGlobalStopLoss] = useState<number>(30);
   const [globalTakeProfit, setGlobalTakeProfit] = useState<number>(5);
   const [lastScanTime, setLastScanTime] = useState<Date | null>(null);
-  const [selectedDigitForComparison, setSelectedDigitForComparison] = useState<number>(5);
+  const [selectedDigit, setSelectedDigit] = useState<number>(5);
   
   const [trades, setTrades] = useState<TradeLog[]>([]);
   const tradeIdRef = useRef(0);
   const marketDigitsRef = useRef<Record<string, number[]>>({});
   const analysisIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize bots
+  const { digits, prices, isLoading, tickCount } = useTickLoader(selectedMarket, 1000);
+
+  // Update market digits
+  useEffect(() => {
+    if (digits.length > 0) {
+      marketDigitsRef.current[selectedMarket] = digits;
+      
+      // Also update other markets with simulated data for demo
+      // In production, you would fetch real data for all markets
+      VOLATILITY_MARKETS.forEach(market => {
+        if (market !== selectedMarket && !marketDigitsRef.current[market]) {
+          // Generate some random but plausible data for other markets
+          const simulatedDigits = Array.from({ length: 1000 }, () => Math.floor(Math.random() * 10));
+          marketDigitsRef.current[market] = simulatedDigits;
+        }
+      });
+      
+      // Trigger analysis
+      analyzeAllMarkets();
+    }
+  }, [digits, selectedMarket]);
+
+  // Initialize bots with more types
   const [bots, setBots] = useState<BotState[]>([
     { 
       id: 'bot1', name: 'EVEN BOT', type: 'EVEN', isRunning: false, isPaused: false, 
@@ -293,44 +400,35 @@ export default function AutoTrade() {
       currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, 
       currentMarket: 'R_100', status: 'idle', consecutiveLosses: 0, 
       cooldownRemaining: 0, marketSwitchCount: 0, signalStrength: 0
+    },
+    { 
+      id: 'bot5', name: 'OVER 5 BOT', type: 'OVER_5', isRunning: false, isPaused: false, 
+      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, 
+      currentMarket: 'R_100', status: 'idle', consecutiveLosses: 0, 
+      cooldownRemaining: 0, marketSwitchCount: 0, signalStrength: 0
+    },
+    { 
+      id: 'bot6', name: 'UNDER 5 BOT', type: 'UNDER_5', isRunning: false, isPaused: false, 
+      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, 
+      currentMarket: 'R_100', status: 'idle', consecutiveLosses: 0, 
+      cooldownRemaining: 0, marketSwitchCount: 0, signalStrength: 0
+    },
+    { 
+      id: 'bot7', name: 'OVER 7 BOT', type: 'OVER_7', isRunning: false, isPaused: false, 
+      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, 
+      currentMarket: 'R_100', status: 'idle', consecutiveLosses: 0, 
+      cooldownRemaining: 0, marketSwitchCount: 0, signalStrength: 0
+    },
+    { 
+      id: 'bot8', name: 'UNDER 2 BOT', type: 'UNDER_2', isRunning: false, isPaused: false, 
+      currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, 
+      currentMarket: 'R_100', status: 'idle', consecutiveLosses: 0, 
+      cooldownRemaining: 0, marketSwitchCount: 0, signalStrength: 0
     }
   ]);
 
   const botRunningRefs = useRef<Record<string, boolean>>({});
   const botPausedRefs = useRef<Record<string, boolean>>({});
-
-  // Initialize market digits for all volatility markets
-  useEffect(() => {
-    // Initialize all markets with empty arrays
-    VOLATILITY_MARKETS.forEach(market => {
-      if (!marketDigitsRef.current[market]) {
-        marketDigitsRef.current[market] = [];
-      }
-    });
-  }, []);
-
-  // Update digits for the selected market
-  useEffect(() => {
-    if (digits.length > 0 && selectedMarket) {
-      // Update the current selected market with real digits
-      marketDigitsRef.current[selectedMarket] = [...digits];
-      
-      // For other markets, we need to simulate or fetch data
-      // This is a placeholder - in production, you'd need to fetch ticks for all markets
-      VOLATILITY_MARKETS.forEach(market => {
-        if (market !== selectedMarket && marketDigitsRef.current[market].length < 700) {
-          // Simulate some data for other markets to demonstrate functionality
-          if (marketDigitsRef.current[market].length === 0) {
-            const simulatedDigits = Array(700).fill(0).map(() => Math.floor(Math.random() * 10));
-            marketDigitsRef.current[market] = simulatedDigits;
-          }
-        }
-      });
-      
-      // Trigger analysis when digits update
-      analyzeAllMarkets();
-    }
-  }, [digits, selectedMarket]);
 
   // Continuous analysis every 10 seconds
   useEffect(() => {
@@ -357,7 +455,7 @@ export default function AutoTrade() {
     
     for (const market of VOLATILITY_MARKETS) {
       const marketDigits = marketDigitsRef.current[market] || [];
-      if (marketDigits.length >= 100) {
+      if (marketDigits.length >= 700) {
         const analysis = analyzeDigits(marketDigits);
         newMarketsData[market] = {
           symbol: market,
@@ -374,7 +472,7 @@ export default function AutoTrade() {
     // Auto-switch bots to best markets
     setBots(prev => prev.map(bot => {
       const bestMarket = findBestMarketForBot(newMarketsData, bot.type);
-      if (bestMarket && bestMarket.market !== bot.currentMarket && bot.isRunning) {
+      if (bestMarket && bestMarket.market !== bot.currentMarket) {
         return {
           ...bot,
           currentMarket: bestMarket.market,
@@ -396,6 +494,10 @@ export default function AutoTrade() {
       case 'ODD': return { contract: 'DIGITODD' };
       case 'OVER_3': return { contract: 'DIGITOVER', barrier: 3 };
       case 'UNDER_6': return { contract: 'DIGITUNDER', barrier: 6 };
+      case 'OVER_5': return { contract: 'DIGITOVER', barrier: 5 };
+      case 'UNDER_5': return { contract: 'DIGITUNDER', barrier: 5 };
+      case 'OVER_7': return { contract: 'DIGITOVER', barrier: 7 };
+      case 'UNDER_2': return { contract: 'DIGITUNDER', barrier: 2 };
       default: return { contract: 'DIGITEVEN' };
     }
   };
@@ -512,7 +614,7 @@ export default function AutoTrade() {
       }
 
       // Check if signal is strong enough
-      if (analysis.confidence < 58) {
+      if (analysis.confidence < 55) {
         await new Promise(r => setTimeout(r, 1000));
         continue;
       }
@@ -731,502 +833,537 @@ export default function AutoTrade() {
     }
   };
 
-  // Digit button component for market signals
-  const DigitButton = ({ digit, percentage, counts, marketData }: { digit: number; percentage: number; counts: number; marketData: MarketData }) => {
-    const isSelected = digit === selectedDigitForComparison;
-    const analysis = marketData.analysis;
-    
-    // Calculate comparisons
-    const overSelectedPercentage = digit < 9 ? 
-      Array.from({ length: 9 - digit }, (_, i) => digit + i + 1).reduce((sum, d) => sum + (analysis.percentages[d] || 0), 0) : 0;
-    const underSelectedPercentage = digit > 0 ?
-      Array.from({ length: digit }, (_, i) => i).reduce((sum, d) => sum + (analysis.percentages[d] || 0), 0) : 0;
-    
-    const evenComparison = digit % 2 === 0 ? 
-      ((analysis.evenPercentage - (analysis.percentages[digit] || 0)) / (analysis.evenPercentage || 1) * 100).toFixed(1) :
-      ((analysis.oddPercentage - (analysis.percentages[digit] || 0)) / (analysis.oddPercentage || 1) * 100).toFixed(1);
-    
-    const oddEvenType = digit % 2 === 0 ? 'Even' : 'Odd';
-    const overUnderType = digit > selectedDigitForComparison ? 'Over' : digit < selectedDigitForComparison ? 'Under' : 'Equal';
-    
-    return (
-      <button
-        onClick={() => setSelectedDigitForComparison(digit)}
-        className={`relative p-1 rounded text-[8px] font-mono transition-all ${
-          isSelected ? 'ring-2 ring-primary bg-primary/20' : 'hover:bg-muted'
-        }`}
-      >
-        <div className="flex flex-col items-center">
-          <span className="font-bold text-xs">{digit}</span>
-          <span className="text-[6px]">{percentage.toFixed(1)}%</span>
-          <span className="text-[6px] text-muted-foreground">({counts})</span>
-        </div>
-        {isSelected && (
-          <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-popover border border-border rounded p-1 text-[6px] whitespace-nowrap z-10">
-            <div>Over {digit}: {overSelectedPercentage.toFixed(1)}%</div>
-            <div>Under {digit}: {underSelectedPercentage.toFixed(1)}%</div>
-            <div>{oddEvenType}: {evenComparison}%</div>
-          </div>
-        )}
-      </button>
-    );
-  };
-
   return (
-    <div className="space-y-4 p-4 bg-background min-h-screen">
-      {/* Header */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h1 className="text-xl font-bold">🤖 Advanced Signal-Based Trading System</h1>
-            <p className="text-xs text-muted-foreground">
-              Auto-market switching • 700-tick analysis • Strict signal conditions
-              {lastScanTime && ` • Last scan: ${lastScanTime.toLocaleTimeString()}`}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={runAnalysis}
-              disabled={isAnalyzing}
-            >
-              {isAnalyzing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
-              Analyze Now
-            </Button>
-            <Button 
-              variant="destructive" 
-              size="sm" 
-              onClick={clearAll}
-            >
-              <Trash2 className="w-4 h-4 mr-1" /> Clear
-            </Button>
-            <Button variant="destructive" size="sm" onClick={stopAllBots} disabled={!bots.some(b => b.isRunning)}>
-              <StopCircle className="w-4 h-4 mr-1" /> Stop All
-            </Button>
-          </div>
-        </div>
+    <div className="space-y-4 p-4 bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 min-h-screen text-white">
+      {/* Animated background with dollar signs */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden opacity-5">
+        {[...Array(20)].map((_, i) => (
+          <motion.div
+            key={i}
+            className="absolute text-green-500 font-bold text-4xl"
+            initial={{
+              x: Math.random() * window.innerWidth,
+              y: -100,
+              rotate: 0
+            }}
+            animate={{
+              y: window.innerHeight + 100,
+              rotate: 360
+            }}
+            transition={{
+              duration: 15 + Math.random() * 20,
+              repeat: Infinity,
+              delay: Math.random() * 10,
+              ease: "linear"
+            }}
+          >
+            $
+          </motion.div>
+        ))}
+      </div>
 
-        {/* Global Stats */}
-        <div className="grid grid-cols-5 gap-3 text-sm mb-3">
-          <div className="bg-muted/30 rounded-lg p-2">
-            <div className="text-muted-foreground text-xs">Balance</div>
-            <div className="font-bold text-lg">${balance?.toFixed(2) || '0.00'}</div>
-          </div>
-          <div className="bg-muted/30 rounded-lg p-2">
-            <div className="text-muted-foreground text-xs">Total P&L</div>
-            <div className={`font-bold text-lg ${totalProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
-              ${totalProfit.toFixed(2)}
+      {/* Main content */}
+      <div className="relative z-10">
+        {/* Header */}
+        <div className="bg-white/10 backdrop-blur-lg border border-white/20 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h1 className="text-xl font-bold bg-gradient-to-r from-yellow-400 to-green-400 text-transparent bg-clip-text">
+                🤖 Advanced Signal-Based Trading System
+              </h1>
+              <p className="text-xs text-gray-300">
+                Auto-market switching • 700-tick analysis • 8 bot strategies
+                {lastScanTime && ` • Last scan: ${lastScanTime.toLocaleTimeString()}`}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={runAnalysis}
+                disabled={isAnalyzing}
+                className="bg-white/10 border-white/20 hover:bg-white/20"
+              >
+                {isAnalyzing ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
+                Analyze Now
+              </Button>
+              <Button 
+                variant="destructive" 
+                size="sm" 
+                onClick={clearAll}
+                className="bg-red-500/20 hover:bg-red-500/30"
+              >
+                <Trash2 className="w-4 h-4 mr-1" /> Clear
+              </Button>
+              <Button variant="destructive" size="sm" onClick={stopAllBots} disabled={!bots.some(b => b.isRunning)} className="bg-red-500/20 hover:bg-red-500/30">
+                <StopCircle className="w-4 h-4 mr-1" /> Stop All
+              </Button>
             </div>
           </div>
-          <div className="bg-muted/30 rounded-lg p-2">
-            <div className="text-muted-foreground text-xs">Win Rate</div>
-            <div className="font-bold text-lg">{winRate}%</div>
+
+          {/* Global Stats */}
+          <div className="grid grid-cols-5 gap-3 text-sm mb-3">
+            <div className="bg-white/5 rounded-lg p-2">
+              <div className="text-gray-400 text-xs">Balance</div>
+              <div className="font-bold text-lg text-green-400">${balance?.toFixed(2) || '0.00'}</div>
+            </div>
+            <div className="bg-white/5 rounded-lg p-2">
+              <div className="text-gray-400 text-xs">Total P&L</div>
+              <div className={`font-bold text-lg ${totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                ${totalProfit.toFixed(2)}
+              </div>
+            </div>
+            <div className="bg-white/5 rounded-lg p-2">
+              <div className="text-gray-400 text-xs">Win Rate</div>
+              <div className="font-bold text-lg text-yellow-400">{winRate}%</div>
+            </div>
+            <div className="bg-white/5 rounded-lg p-2">
+              <div className="text-gray-400 text-xs">Total Trades</div>
+              <div className="font-bold text-lg text-blue-400">{totalTrades}</div>
+            </div>
+            <div className="bg-white/5 rounded-lg p-2">
+              <div className="text-gray-400 text-xs">Active</div>
+              <div className="font-bold text-lg text-purple-400">{bots.filter(b => b.isRunning).length}/8</div>
+            </div>
           </div>
-          <div className="bg-muted/30 rounded-lg p-2">
-            <div className="text-muted-foreground text-xs">Total Trades</div>
-            <div className="font-bold text-lg">{totalTrades}</div>
-          </div>
-          <div className="bg-muted/30 rounded-lg p-2">
-            <div className="text-muted-foreground text-xs">Active</div>
-            <div className="font-bold text-lg">{bots.filter(b => b.isRunning).length}/4</div>
+
+          {/* Settings */}
+          <div className="grid grid-cols-4 gap-3">
+            <div>
+              <label className="text-xs text-gray-400">Stake ($)</label>
+              <input 
+                type="number" 
+                value={globalStake} 
+                onChange={(e) => setGlobalStake(parseFloat(e.target.value) || 0.5)}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-sm text-white"
+                step="0.1"
+                min="0.1"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400">Multiplier</label>
+              <input 
+                type="number" 
+                value={globalMultiplier} 
+                onChange={(e) => setGlobalMultiplier(parseFloat(e.target.value) || 2)}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-sm text-white"
+                step="0.1"
+                min="1.1"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400">Stop Loss ($)</label>
+              <input 
+                type="number" 
+                value={globalStopLoss} 
+                onChange={(e) => setGlobalStopLoss(parseFloat(e.target.value) || 30)}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-sm text-white"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-gray-400">Take Profit ($)</label>
+              <input 
+                type="number" 
+                value={globalTakeProfit} 
+                onChange={(e) => setGlobalTakeProfit(parseFloat(e.target.value) || 5)}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-sm text-white"
+              />
+            </div>
           </div>
         </div>
 
-        {/* Settings */}
-        <div className="grid grid-cols-4 gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground">Stake ($)</label>
-            <input 
-              type="number" 
-              value={globalStake} 
-              onChange={(e) => setGlobalStake(parseFloat(e.target.value) || 0.5)}
-              className="w-full bg-background border border-border rounded-lg px-2 py-1 text-sm"
-              step="0.1"
-              min="0.1"
-            />
+        {/* Digit Selector */}
+        <div className="bg-white/10 backdrop-blur-lg border border-white/20 rounded-xl p-3 mt-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Hash className="w-4 h-4 text-yellow-400" />
+            <h3 className="text-sm font-semibold">Digit Analysis - Selected: {selectedDigit}</h3>
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground">Multiplier</label>
-            <input 
-              type="number" 
-              value={globalMultiplier} 
-              onChange={(e) => setGlobalMultiplier(parseFloat(e.target.value) || 2)}
-              className="w-full bg-background border border-border rounded-lg px-2 py-1 text-sm"
-              step="0.1"
-              min="1.1"
-            />
+          <div className="flex gap-1 mb-3">
+            {[0,1,2,3,4,5,6,7,8,9].map((digit) => (
+              <Button
+                key={digit}
+                size="sm"
+                variant={selectedDigit === digit ? "default" : "outline"}
+                onClick={() => setSelectedDigit(digit)}
+                className={`flex-1 ${selectedDigit === digit ? 'bg-yellow-500' : 'bg-white/5 border-white/10'}`}
+              >
+                {digit}
+              </Button>
+            ))}
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground">Stop Loss ($)</label>
-            <input 
-              type="number" 
-              value={globalStopLoss} 
-              onChange={(e) => setGlobalStopLoss(parseFloat(e.target.value) || 30)}
-              className="w-full bg-background border border-border rounded-lg px-2 py-1 text-sm"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">Take Profit ($)</label>
-            <input 
-              type="number" 
-              value={globalTakeProfit} 
-              onChange={(e) => setGlobalTakeProfit(parseFloat(e.target.value) || 5)}
-              className="w-full bg-background border border-border rounded-lg px-2 py-1 text-sm"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Bots Grid */}
-      <div className="grid grid-cols-2 gap-3">
-        {bots.map((bot) => {
-          const marketData = marketsData[bot.currentMarket];
           
-          return (
-            <motion.div
-              key={bot.id}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className={`bg-card border rounded-xl p-3 ${
-                bot.isRunning ? 'border-primary ring-1 ring-primary/20' : 'border-border'
-              }`}
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <div className={`p-1.5 rounded-lg ${
-                    bot.type === 'EVEN' ? 'bg-green-500/20 text-green-400' :
-                    bot.type === 'ODD' ? 'bg-purple-500/20 text-purple-400' :
-                    bot.type === 'OVER_3' ? 'bg-blue-500/20 text-blue-400' :
-                    'bg-orange-500/20 text-orange-400'
-                  }`}>
-                    {bot.type === 'EVEN' || bot.type === 'ODD' ? 
-                      <CircleDot className="w-4 h-4" /> : 
-                      bot.type === 'OVER_3' ? <TrendingUp className="w-4 h-4" /> : 
-                      <TrendingDown className="w-4 h-4" />}
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-sm">{bot.name}</h4>
-                    <p className="text-[9px] text-muted-foreground">
-                      Switches: {bot.marketSwitchCount} times
-                    </p>
-                  </div>
+          {/* Show comparison for selected digit */}
+          {marketsData[selectedMarket] && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-white/5 rounded p-2">
+                <div className="text-xs text-gray-400">OVER {selectedDigit}</div>
+                <div className="text-lg font-bold text-blue-400">
+                  {marketsData[selectedMarket].analysis.percentages[selectedDigit]?.toFixed(1)}%
                 </div>
-                <Badge variant={bot.isRunning ? "default" : "secondary"} className="text-[9px]">
-                  {bot.isRunning ? (bot.isPaused ? '⏸️' : '▶️') : '⏹️'}
-                </Badge>
+                <div className="text-[8px] text-gray-400">Count: {marketsData[selectedMarket].analysis.counts[selectedDigit]}</div>
               </div>
-
-              {/* Current Market & Signal */}
-              <div className="bg-muted/30 rounded-lg p-2 mb-2">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-muted-foreground">Market:</span>
-                  <span className="font-mono font-bold">
-                    {getMarketDisplay(bot.currentMarket)}
-                  </span>
+              <div className="bg-white/5 rounded p-2">
+                <div className="text-xs text-gray-400">UNDER {selectedDigit}</div>
+                <div className="text-lg font-bold text-orange-400">
+                  {(100 - (marketsData[selectedMarket].analysis.percentages[selectedDigit] || 0)).toFixed(1)}%
                 </div>
-                {marketData && (
-                  <>
-                    <div className="flex justify-between text-[10px] mt-1">
-                      <span>Signal:</span>
-                      <span className={marketData.analysis.signal === bot.type ? 'text-profit font-bold' : 'text-muted-foreground'}>
-                        {marketData.analysis.signal || 'NONE'}
-                      </span>
-                      <span>Strength:</span>
-                      <span className={marketData.analysis.confidence >= 58 ? 'text-profit' : 'text-muted-foreground'}>
-                        {marketData.analysis.confidence.toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-[8px] mt-1">
-                      <span>Most: {marketData.analysis.mostAppearing}</span>
-                      <span>2nd Least: {marketData.analysis.secondLeast}</span>
-                    </div>
-                    <div className="flex justify-between text-[8px]">
-                      <span>Even: {marketData.analysis.evenPercentage.toFixed(1)}%</span>
-                      <span>Odd: {marketData.analysis.oddPercentage.toFixed(1)}%</span>
-                    </div>
-                    <div className="flex justify-between text-[8px]">
-                      <span>Over 3: {marketData.analysis.over3Percentage.toFixed(1)}%</span>
-                      <span>Under 6: {marketData.analysis.under6Percentage.toFixed(1)}%</span>
-                    </div>
-                    <div className="flex justify-between text-[8px]">
-                      <span>Over 5: {marketData.analysis.over5Percentage.toFixed(1)}%</span>
-                      <span>Under 5: {marketData.analysis.under5Percentage.toFixed(1)}%</span>
-                    </div>
-                    <div className="text-[8px] mt-1">
-                      Last 3: {marketData.analysis.lastThreeTicks.join(', ')}
-                      {marketData.analysis.lastThreeIdentical && ' ⚠️ Identical'}
-                    </div>
-                    <div className="text-[8px] mt-1">
-                      Last 12: {marketData.analysis.lastTwelveTicks.join(' ')}
-                    </div>
-                  </>
-                )}
+                <div className="text-[8px] text-gray-400">Others: {700 - (marketsData[selectedMarket].analysis.counts[selectedDigit] || 0)}</div>
               </div>
-
-              {/* Stats */}
-              <div className="grid grid-cols-4 gap-1 text-[10px] mb-2">
-                <div>
-                  <span className="text-muted-foreground">P&L:</span>
-                  <span className={`ml-1 font-mono ${
-                    bot.totalPnl > 0 ? 'text-profit' : bot.totalPnl < 0 ? 'text-loss' : ''
-                  }`}>
-                    ${bot.totalPnl.toFixed(2)}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">W:</span>
-                  <span className="ml-1 font-mono text-profit">{bot.wins}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">L:</span>
-                  <span className="ml-1 font-mono text-loss">{bot.losses}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Stake:</span>
-                  <span className="ml-1 font-mono">${bot.currentStake.toFixed(2)}</span>
-                </div>
-              </div>
-
-              {/* Status */}
-              <div className="flex items-center justify-between text-[10px] mb-2">
-                <span className="text-muted-foreground">Status:</span>
-                <span className={`font-mono ${getStatusColor(bot.status)}`}>
-                  {getStatusIcon(bot.status)} {
-                    bot.status === 'trading' ? 'Trading' :
-                    bot.status === 'waiting_entry' ? 'Waiting Signal' :
-                    bot.status === 'analyzing' ? 'Analyzing' :
-                    bot.status === 'cooldown' ? `Cooldown ${bot.cooldownRemaining}` :
-                    bot.status === 'switching_market' ? 'Switching Market' :
-                    'Idle'
-                  }
-                </span>
-                {bot.cooldownRemaining > 0 && (
-                  <span className="text-purple-400">⏱️ {bot.cooldownRemaining}/3</span>
-                )}
-              </div>
-
-              {/* Controls */}
-              <div className="flex gap-1">
-                {!bot.isRunning ? (
-                  <Button
-                    onClick={() => startBot(bot.id)}
-                    disabled={!isAuthorized || balance < globalStake || activeTradeId !== null}
-                    size="sm"
-                    className="flex-1 h-7 text-xs"
-                  >
-                    <Play className="w-3 h-3 mr-1" /> Start
-                  </Button>
-                ) : (
-                  <>
-                    <Button
-                      onClick={() => pauseBot(bot.id)}
-                      size="sm"
-                      variant="outline"
-                      className="flex-1 h-7 text-xs"
-                    >
-                      <Pause className="w-3 h-3 mr-1" /> {bot.isPaused ? 'Resume' : 'Pause'}
-                    </Button>
-                    <Button
-                      onClick={() => stopBot(bot.id)}
-                      size="sm"
-                      variant="destructive"
-                      className="flex-1 h-7 text-xs"
-                    >
-                      <StopCircle className="w-3 h-3 mr-1" /> Stop
-                    </Button>
-                  </>
-                )}
-              </div>
-            </motion.div>
-          );
-        })}
-      </div>
-
-      {/* Market Signals Dashboard */}
-      <div className="bg-card border border-border rounded-xl p-3">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-sm font-semibold">📊 Live Market Signals</h3>
-          <div className="text-xs text-muted-foreground">
-            Click any digit to see Over/Under and Even/Odd comparisons
-          </div>
+            </div>
+          )}
         </div>
-        <div className="grid grid-cols-1 gap-2 max-h-[500px] overflow-y-auto">
-          {Object.entries(marketsData).length > 0 ? (
-            Object.entries(marketsData).map(([symbol, data]) => (
-              <div key={symbol} className="bg-muted/30 rounded p-2">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="font-bold text-xs">{getMarketDisplay(symbol)}</span>
-                  <Badge className={`text-[8px] ${
-                    data.analysis.signal === 'EVEN' ? 'bg-green-500' :
-                    data.analysis.signal === 'ODD' ? 'bg-purple-500' :
-                    data.analysis.signal === 'OVER_3' ? 'bg-blue-500' :
-                    data.analysis.signal === 'UNDER_6' ? 'bg-orange-500' :
-                    'bg-gray-500'
-                  }`}>
-                    {data.analysis.signal || 'NO SIGNAL'} {data.analysis.confidence > 0 ? `(${data.analysis.confidence.toFixed(1)}%)` : ''}
+
+        {/* Bots Grid */}
+        <div className="grid grid-cols-4 gap-3 mt-3">
+          {bots.map((bot) => {
+            const marketData = marketsData[bot.currentMarket];
+            
+            return (
+              <motion.div
+                key={bot.id}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className={`bg-white/10 backdrop-blur-lg border rounded-xl p-3 ${
+                  bot.isRunning ? 'border-green-500 ring-1 ring-green-500/50' : 'border-white/20'
+                }`}
+              >
+                {/* Header */}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className={`p-1.5 rounded-lg ${
+                      bot.type === 'EVEN' ? 'bg-green-500/20 text-green-400' :
+                      bot.type === 'ODD' ? 'bg-purple-500/20 text-purple-400' :
+                      bot.type === 'OVER_3' ? 'bg-blue-500/20 text-blue-400' :
+                      bot.type === 'UNDER_6' ? 'bg-orange-500/20 text-orange-400' :
+                      bot.type === 'OVER_5' ? 'bg-cyan-500/20 text-cyan-400' :
+                      bot.type === 'UNDER_5' ? 'bg-pink-500/20 text-pink-400' :
+                      bot.type === 'OVER_7' ? 'bg-indigo-500/20 text-indigo-400' :
+                      'bg-amber-500/20 text-amber-400'
+                    }`}>
+                      {bot.type.includes('OVER') ? <TrendingUp className="w-4 h-4" /> :
+                       bot.type.includes('UNDER') ? <TrendingDown className="w-4 h-4" /> :
+                       <CircleDot className="w-4 h-4" />}
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm">{bot.name}</h4>
+                      <p className="text-[9px] text-gray-400">
+                        Switches: {bot.marketSwitchCount}
+                      </p>
+                    </div>
+                  </div>
+                  <Badge variant={bot.isRunning ? "default" : "secondary"} className="text-[9px]">
+                    {bot.isRunning ? (bot.isPaused ? '⏸️' : '▶️') : '⏹️'}
                   </Badge>
                 </div>
-                
-                {/* Last 12 Digits */}
-                <div className="mb-1">
-                  <span className="text-[8px] text-muted-foreground">Last 12:</span>
-                  <div className="flex gap-0.5 mt-0.5">
-                    {data.analysis.lastTwelveTicks.map((digit, idx) => (
-                      <span 
-                        key={idx} 
-                        className={`text-[8px] font-mono px-1 py-0.5 rounded ${
-                          digit === data.analysis.mostAppearing ? 'bg-green-500/20 text-green-400' :
-                          digit === data.analysis.secondLeast ? 'bg-red-500/20 text-red-400' : ''
-                        }`}
-                      >
-                        {digit}
-                      </span>
-                    ))}
-                  </div>
-                </div>
 
-                {/* Most Appearing and Second Least */}
-                <div className="grid grid-cols-2 gap-2 text-[8px] mb-1">
-                  <div className="bg-green-500/10 rounded p-1">
-                    <span className="text-muted-foreground">Most Appearing:</span>
-                    <span className="ml-1 font-bold text-green-400">{data.analysis.mostAppearing}</span>
-                    <span className="ml-1 text-[6px]">({data.analysis.percentages[data.analysis.mostAppearing]?.toFixed(1)}%)</span>
+                {/* Current Market & Signal */}
+                <div className="bg-white/5 rounded-lg p-2 mb-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-gray-400">Market:</span>
+                    <span className="font-mono font-bold text-blue-400">
+                      {getMarketDisplay(bot.currentMarket)}
+                    </span>
                   </div>
-                  <div className="bg-red-500/10 rounded p-1">
-                    <span className="text-muted-foreground">2nd Least:</span>
-                    <span className="ml-1 font-bold text-red-400">{data.analysis.secondLeast}</span>
-                    <span className="ml-1 text-[6px]">({data.analysis.percentages[data.analysis.secondLeast]?.toFixed(1)}%)</span>
-                  </div>
-                </div>
-
-                {/* Digit Grid with Percentages */}
-                <div className="mb-1">
-                  <span className="text-[8px] text-muted-foreground">Digit Distribution (hover/click for details):</span>
-                  <div className="grid grid-cols-10 gap-0.5 mt-0.5">
-                    {[0,1,2,3,4,5,6,7,8,9].map(digit => (
-                      <DigitButton 
-                        key={digit} 
-                        digit={digit} 
-                        percentage={data.analysis.percentages[digit] || 0}
-                        counts={data.analysis.counts[digit] || 0}
-                        marketData={data}
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                {/* Group Comparisons */}
-                <div className="grid grid-cols-2 gap-1 text-[8px]">
-                  <div className="bg-blue-500/10 rounded p-1">
-                    <div className="flex justify-between">
-                      <span>Even/Odd:</span>
-                      <span className={data.analysis.evenPercentage > data.analysis.oddPercentage ? 'text-profit' : 'text-loss'}>
-                        {data.analysis.evenPercentage.toFixed(1)}% / {data.analysis.oddPercentage.toFixed(1)}%
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Over/Under 5:</span>
-                      <span className={data.analysis.over5Percentage > data.analysis.under5Percentage ? 'text-profit' : 'text-loss'}>
-                        {data.analysis.over5Percentage.toFixed(1)}% / {data.analysis.under5Percentage.toFixed(1)}%
-                      </span>
-                    </div>
-                  </div>
-                  <div className="bg-purple-500/10 rounded p-1">
-                    <div className="flex justify-between">
-                      <span>Over 3/Under 6:</span>
-                      <span>{data.analysis.over3Percentage.toFixed(1)}% / {data.analysis.under6Percentage.toFixed(1)}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Confidence:</span>
-                      <span className={data.analysis.confidence >= 58 ? 'text-profit' : 'text-muted-foreground'}>
-                        {data.analysis.confidence.toFixed(1)}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Selected Digit Comparison */}
-                {data.analysis.percentages[selectedDigitForComparison] && (
-                  <div className="mt-1 text-[8px] bg-primary/10 rounded p-1">
-                    <div className="font-bold">Digit {selectedDigitForComparison} Analysis:</div>
-                    <div className="grid grid-cols-2 gap-1">
-                      <div>
-                        <span>Over {selectedDigitForComparison}: </span>
-                        <span className="font-mono">
-                          {Array.from({ length: 9 - selectedDigitForComparison }, (_, i) => selectedDigitForComparison + i + 1)
-                            .reduce((sum, d) => sum + (data.analysis.percentages[d] || 0), 0).toFixed(1)}%
+                  {marketData && (
+                    <>
+                      <div className="flex justify-between text-[10px] mt-1">
+                        <span className="text-gray-400">Signal:</span>
+                        <span className={marketData.analysis.signal === bot.type ? 'text-green-400 font-bold' : 'text-gray-400'}>
+                          {marketData.analysis.signal || 'NONE'}
+                        </span>
+                        <span className="text-gray-400">Strength:</span>
+                        <span className={marketData.analysis.confidence >= 55 ? 'text-green-400' : 'text-gray-400'}>
+                          {marketData.analysis.confidence.toFixed(1)}%
                         </span>
                       </div>
-                      <div>
-                        <span>Under {selectedDigitForComparison}: </span>
-                        <span className="font-mono">
-                          {Array.from({ length: selectedDigitForComparison }, (_, i) => i)
-                            .reduce((sum, d) => sum + (data.analysis.percentages[d] || 0), 0).toFixed(1)}%
-                        </span>
+                      <div className="grid grid-cols-2 gap-1 text-[8px] mt-1">
+                        <div>Most: {marketData.analysis.mostAppearing}</div>
+                        <div>2nd: {marketData.analysis.secondMost}</div>
+                        <div>3rd: {marketData.analysis.thirdMost}</div>
+                        <div>Least: {marketData.analysis.leastAppearing}</div>
                       </div>
-                      <div>
-                        <span>Even/Odd comparison: </span>
-                        <span className="font-mono">
-                          {selectedDigitForComparison % 2 === 0 ? 
-                            ((data.analysis.evenPercentage - (data.analysis.percentages[selectedDigitForComparison] || 0)) / (data.analysis.evenPercentage || 1) * 100).toFixed(1) :
-                            ((data.analysis.oddPercentage - (data.analysis.percentages[selectedDigitForComparison] || 0)) / (data.analysis.oddPercentage || 1) * 100).toFixed(1)}%
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))
-          ) : (
-            <p className="text-muted-foreground text-center py-4">No market data yet. Click Analyze Now or wait for ticks.</p>
-          )}
-        </div>
-      </div>
-
-      {/* Trade Log */}
-      <div className="bg-card border border-border rounded-xl p-3">
-        <h3 className="text-sm font-semibold mb-2">📋 Live Trade Log</h3>
-        <div className="space-y-1 max-h-[300px] overflow-y-auto">
-          {trades.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-4">No trades yet</p>
-          ) : (
-            trades.map((trade, idx) => (
-              <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-border/50 last:border-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">{trade.time}</span>
-                  <Badge variant="outline" className="text-[8px] px-1 py-0">{trade.bot}</Badge>
-                  <span className="font-mono text-[10px]">
-                    {trade.market.includes('1HZ') ? '⚡' : 
-                     trade.market.includes('BOOM') ? '💥' :
-                     trade.market.includes('CRASH') ? '📉' :
-                     trade.market.includes('RDBEAR') ? '🐻' :
-                     trade.market.includes('RDBULL') ? '🐂' :
-                     trade.market.includes('JD') ? '🦘' : '📊'} {trade.market}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  {trade.signalType && (
-                    <Badge className="text-[7px] px-1 py-0 bg-opacity-50">
-                      {trade.signalType}
-                    </Badge>
+                    </>
                   )}
-                  <span className="font-mono text-[10px]">
-                    Last: {trade.lastDigit !== undefined ? trade.lastDigit : '—'}
-                  </span>
-                  <span className="font-mono">${trade.stake.toFixed(2)}</span>
-                  <span className={`font-mono w-16 text-right ${
-                    trade.result === 'Win' ? 'text-profit' : trade.result === 'Loss' ? 'text-loss' : ''
-                  }`}>
-                    {trade.result === 'Win' ? `+$${trade.pnl.toFixed(2)}` : 
-                     trade.result === 'Loss' ? `-$${Math.abs(trade.pnl).toFixed(2)}` : 
-                     '⏳'}
+                </div>
+
+                {/* Stats */}
+                <div className="grid grid-cols-4 gap-1 text-[10px] mb-2">
+                  <div>
+                    <span className="text-gray-400">P&L:</span>
+                    <span className={`ml-1 font-mono ${
+                      bot.totalPnl > 0 ? 'text-green-400' : bot.totalPnl < 0 ? 'text-red-400' : ''
+                    }`}>
+                      ${bot.totalPnl.toFixed(2)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">W:</span>
+                    <span className="ml-1 font-mono text-green-400">{bot.wins}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">L:</span>
+                    <span className="ml-1 font-mono text-red-400">{bot.losses}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">Stake:</span>
+                    <span className="ml-1 font-mono text-yellow-400">${bot.currentStake.toFixed(2)}</span>
+                  </div>
+                </div>
+
+                {/* Status */}
+                <div className="flex items-center justify-between text-[10px] mb-2">
+                  <span className="text-gray-400">Status:</span>
+                  <span className={`font-mono ${getStatusColor(bot.status)}`}>
+                    {getStatusIcon(bot.status)} {
+                      bot.status === 'trading' ? 'Trading' :
+                      bot.status === 'waiting_entry' ? 'Waiting Signal' :
+                      bot.status === 'analyzing' ? 'Analyzing' :
+                      bot.status === 'cooldown' ? `Cooldown ${bot.cooldownRemaining}` :
+                      bot.status === 'switching_market' ? 'Switching' :
+                      'Idle'
+                    }
                   </span>
                 </div>
-              </div>
-            ))
-          )}
+
+                {/* Controls */}
+                <div className="flex gap-1">
+                  {!bot.isRunning ? (
+                    <Button
+                      onClick={() => startBot(bot.id)}
+                      disabled={!isAuthorized || balance < globalStake || activeTradeId !== null}
+                      size="sm"
+                      className="flex-1 h-7 text-xs bg-gradient-to-r from-green-500 to-green-600 hover:from-green-400 hover:to-green-500"
+                    >
+                      <Play className="w-3 h-3 mr-1" /> Start
+                    </Button>
+                  ) : (
+                    <>
+                      <Button
+                        onClick={() => pauseBot(bot.id)}
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 h-7 text-xs border-white/20 hover:bg-white/10"
+                      >
+                        <Pause className="w-3 h-3 mr-1" /> {bot.isPaused ? 'Resume' : 'Pause'}
+                      </Button>
+                      <Button
+                        onClick={() => stopBot(bot.id)}
+                        size="sm"
+                        variant="destructive"
+                        className="flex-1 h-7 text-xs bg-red-500/20 hover:bg-red-500/30"
+                      >
+                        <StopCircle className="w-3 h-3 mr-1" /> Stop
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+
+        {/* Market Signals Dashboard */}
+        <div className="bg-white/10 backdrop-blur-lg border border-white/20 rounded-xl p-3 mt-3">
+          <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+            <BarChart2 className="w-4 h-4 text-green-400" />
+            📊 Live Market Signals
+          </h3>
+          <div className="grid grid-cols-2 gap-2 max-h-96 overflow-y-auto">
+            {Object.entries(marketsData).length > 0 ? (
+              Object.entries(marketsData).map(([symbol, data]) => (
+                <div key={symbol} className="bg-white/5 rounded p-3 text-xs">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-bold text-blue-400">{getMarketDisplay(symbol)}</span>
+                    <Badge className={`text-[8px] ${
+                      data.analysis.signal === 'EVEN' ? 'bg-green-500' :
+                      data.analysis.signal === 'ODD' ? 'bg-purple-500' :
+                      data.analysis.signal === 'OVER_3' ? 'bg-blue-500' :
+                      data.analysis.signal === 'UNDER_6' ? 'bg-orange-500' :
+                      data.analysis.signal === 'OVER_5' ? 'bg-cyan-500' :
+                      data.analysis.signal === 'UNDER_5' ? 'bg-pink-500' :
+                      data.analysis.signal === 'OVER_7' ? 'bg-indigo-500' :
+                      data.analysis.signal === 'UNDER_2' ? 'bg-amber-500' :
+                      'bg-gray-500'
+                    }`}>
+                      {data.analysis.signal || 'NO SIGNAL'}
+                    </Badge>
+                  </div>
+                  
+                  {/* Last 12 digits */}
+                  <div className="mb-2">
+                    <div className="text-[8px] text-gray-400 mb-1">Last 12 digits:</div>
+                    <div className="flex gap-1">
+                      {data.analysis.lastTwelveTicks.map((digit, idx) => (
+                        <span key={idx} className={`w-4 h-4 flex items-center justify-center text-[8px] font-bold rounded ${
+                          digit > 5 ? 'bg-blue-500/30 text-blue-300' : 
+                          digit < 5 ? 'bg-orange-500/30 text-orange-300' : 
+                          'bg-purple-500/30 text-purple-300'
+                        }`}>
+                          {digit}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Digit buttons with percentages */}
+                  <div className="grid grid-cols-5 gap-1 mb-2">
+                    {[0,1,2,3,4,5,6,7,8,9].map((digit) => (
+                      <div key={digit} className="text-center">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className={`w-full h-6 text-[10px] p-0 ${
+                            digit === data.analysis.mostAppearing ? 'bg-green-500/30 text-green-300' :
+                            digit === data.analysis.leastAppearing ? 'bg-red-500/30 text-red-300' :
+                            'bg-white/5'
+                          }`}
+                        >
+                          {digit}
+                        </Button>
+                        <div className="text-[6px] mt-1 text-gray-400">
+                          {data.analysis.percentages[digit]?.toFixed(1)}%
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Most appearing and second least */}
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div className="bg-white/5 rounded p-1">
+                      <div className="text-[8px] text-gray-400">Most Appearing</div>
+                      <div className="text-sm font-bold text-green-400">{data.analysis.mostAppearing}</div>
+                      <div className="text-[6px] text-gray-400">{data.analysis.percentages[data.analysis.mostAppearing]?.toFixed(1)}%</div>
+                    </div>
+                    <div className="bg-white/5 rounded p-1">
+                      <div className="text-[8px] text-gray-400">Second Least</div>
+                      <div className="text-sm font-bold text-orange-400">{data.analysis.secondLeast}</div>
+                      <div className="text-[6px] text-gray-400">{data.analysis.percentages[data.analysis.secondLeast]?.toFixed(1)}%</div>
+                    </div>
+                  </div>
+
+                  {/* Comparisons */}
+                  <div className="space-y-1">
+                    {/* Even vs Odd */}
+                    <div className="bg-white/5 rounded p-1">
+                      <div className="flex justify-between items-center text-[8px]">
+                        <span className="text-gray-400">Even vs Odd:</span>
+                        <span className={data.analysis.comparison.evenVsOdd.advantage === 'EVEN' ? 'text-green-400' : 
+                                       data.analysis.comparison.evenVsOdd.advantage === 'ODD' ? 'text-purple-400' : 
+                                       'text-gray-400'}>
+                          {data.analysis.comparison.evenVsOdd.advantage}
+                        </span>
+                      </div>
+                      <div className="flex gap-2 mt-1">
+                        <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-green-400" style={{ width: `${data.analysis.evenPercentage}%` }} />
+                        </div>
+                        <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-purple-400" style={{ width: `${data.analysis.oddPercentage}%` }} />
+                        </div>
+                      </div>
+                      <div className="flex justify-between text-[6px] mt-1">
+                        <span>Even: {data.analysis.evenPercentage.toFixed(1)}%</span>
+                        <span>Odd: {data.analysis.oddPercentage.toFixed(1)}%</span>
+                      </div>
+                    </div>
+
+                    {/* Over 5 vs Under 5 */}
+                    <div className="bg-white/5 rounded p-1">
+                      <div className="flex justify-between items-center text-[8px]">
+                        <span className="text-gray-400">Over 5 vs Under 5:</span>
+                        <span className={data.analysis.comparison.over5VsUnder5.advantage === 'OVER_5' ? 'text-blue-400' : 
+                                       data.analysis.comparison.over5VsUnder5.advantage === 'UNDER_5' ? 'text-orange-400' : 
+                                       'text-gray-400'}>
+                          {data.analysis.comparison.over5VsUnder5.advantage}
+                        </span>
+                      </div>
+                      <div className="flex gap-2 mt-1">
+                        <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-blue-400" style={{ width: `${data.analysis.over5Percentage}%` }} />
+                        </div>
+                        <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-orange-400" style={{ width: `${data.analysis.under5Percentage}%` }} />
+                        </div>
+                      </div>
+                      <div className="flex justify-between text-[6px] mt-1">
+                        <span>Over 5: {data.analysis.over5Percentage.toFixed(1)}%</span>
+                        <span>Under 5: {data.analysis.under5Percentage.toFixed(1)}%</span>
+                      </div>
+                    </div>
+
+                    {/* Over 3 vs Under 6 */}
+                    <div className="bg-white/5 rounded p-1">
+                      <div className="flex justify-between items-center text-[8px]">
+                        <span className="text-gray-400">Over 3 vs Under 6:</span>
+                        <span className={data.analysis.comparison.over3VsUnder6.advantage === 'OVER_3' ? 'text-cyan-400' : 
+                                       data.analysis.comparison.over3VsUnder6.advantage === 'UNDER_6' ? 'text-pink-400' : 
+                                       'text-gray-400'}>
+                          {data.analysis.comparison.over3VsUnder6.advantage}
+                        </span>
+                      </div>
+                      <div className="flex gap-2 mt-1">
+                        <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-cyan-400" style={{ width: `${data.analysis.over3Percentage}%` }} />
+                        </div>
+                        <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-pink-400" style={{ width: `${data.analysis.under6Percentage}%` }} />
+                        </div>
+                      </div>
+                      <div className="flex justify-between text-[6px] mt-1">
+                        <span>Over 3: {data.analysis.over3Percentage.toFixed(1)}%</span>
+                        <span>Under 6: {data.analysis.under6Percentage.toFixed(1)}%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-gray-400 col-span-2 text-center py-4">No market data yet. Click Analyze Now.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Trade Log */}
+        <div className="bg-white/10 backdrop-blur-lg border border-white/20 rounded-xl p-3 mt-3">
+          <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+            <Activity className="w-4 h-4 text-green-400" />
+            📋 Live Trade Log
+          </h3>
+          <div className="space-y-1 max-h-[300px] overflow-y-auto">
+            {trades.length === 0 ? (
+              <p className="text-xs text-gray-400 text-center py-4">No trades yet</p>
+            ) : (
+              trades.map((trade, idx) => (
+                <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-white/10 last:border-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-400">{trade.time}</span>
+                    <Badge variant="outline" className="text-[8px] px-1 py-0 border-white/20">{trade.bot}</Badge>
+                    <span className="font-mono text-[10px] text-blue-400">
+                      {getMarketDisplay(trade.market)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {trade.signalType && (
+                      <Badge className="text-[7px] px-1 py-0 bg-opacity-50">
+                        {trade.signalType}
+                      </Badge>
+                    )}
+                    <span className="font-mono text-[10px] text-yellow-400">
+                      Last: {trade.lastDigit !== undefined ? trade.lastDigit : '—'}
+                    </span>
+                    <span className="font-mono text-white">${trade.stake.toFixed(2)}</span>
+                    <span className={`font-mono w-16 text-right ${
+                      trade.result === 'Win' ? 'text-green-400' : trade.result === 'Loss' ? 'text-red-400' : 'text-yellow-400'
+                    }`}>
+                      {trade.result === 'Win' ? `+$${trade.pnl.toFixed(2)}` : 
+                       trade.result === 'Loss' ? `-$${Math.abs(trade.pnl).toFixed(2)}` : 
+                       '⏳'}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </div>
     </div>
