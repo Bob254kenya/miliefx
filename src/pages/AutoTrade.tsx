@@ -92,8 +92,8 @@ const playScanSound = () => {
     const gainNode = audioContext.createGain();
     
     oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // A5 note
-    oscillator.frequency.exponentialRampToValueAtTime(440, audioContext.currentTime + 0.2); // A4 note
+    oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(440, audioContext.currentTime + 0.2);
     
     gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
     gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
@@ -104,7 +104,6 @@ const playScanSound = () => {
     oscillator.start();
     oscillator.stop(audioContext.currentTime + 0.2);
   } catch (e) {
-    // Browser might not support audio context, ignore
     console.log('Audio not supported');
   }
 };
@@ -135,22 +134,17 @@ const analyzeMarket = (digits: number[]): MarketAnalysis => {
   const lastDigit = digits.length > 0 ? digits[digits.length - 1] : 0;
   const previousDigit = digits.length > 1 ? digits[digits.length - 2] : 0;
   
-  // Calculate volatility score and recommended bot
   let volatilityScore = 0;
   let recommendedBot = '';
   
-  // Check conditions for Over bot (most appearing >= 4)
   if (sortedDigits[0] >= 4) {
-    // Check if most appearing digit is even or odd
     const isMostEven = sortedDigits[0] % 2 === 0;
     if (isMostEven) {
-      // If most is even, second most should be even for Over bot
       if (sortedDigits[1] % 2 === 0) {
         volatilityScore = 9;
         recommendedBot = 'OVER';
       }
     } else {
-      // If most is odd, second most should be odd for Over bot
       if (sortedDigits[1] % 2 === 1) {
         volatilityScore = 9;
         recommendedBot = 'OVER';
@@ -158,16 +152,12 @@ const analyzeMarket = (digits: number[]): MarketAnalysis => {
     }
   }
   
-  // Check conditions for Under bot (least appearing <= 5)
   if (sortedDigits[9] <= 5) {
-    // Check if least appearing digit is even or odd
     const isLeastEven = sortedDigits[9] % 2 === 0;
     if (isLeastEven) {
-      // If least is even, conditions for Under bot
       volatilityScore = Math.max(volatilityScore, 8);
       recommendedBot = 'UNDER';
     } else {
-      // If least is odd, conditions for Under bot
       volatilityScore = Math.max(volatilityScore, 8);
       recommendedBot = 'UNDER';
     }
@@ -193,7 +183,7 @@ const analyzeMarket = (digits: number[]): MarketAnalysis => {
   };
 };
 
-// Entry condition checks for ALL bots on ALL markets
+// Entry condition checks
 const checkOver3Entry = (digits: number[]): boolean => {
   if (digits.length < 2) return false;
   const lastTwo = digits.slice(-2);
@@ -230,7 +220,6 @@ const checkOddEntry = (digits: number[]): boolean => {
   return lastThree.every(d => d % 2 === 0);
 };
 
-// New function to check all signals for a market
 const checkAllSignals = (digits: number[]): Record<string, boolean> => {
   return {
     over3: checkOver3Entry(digits),
@@ -263,12 +252,11 @@ export default function AutoTrade() {
 
   const { digits, prices, isLoading, tickCount } = useTickLoader(selectedMarketForScan, 1000);
 
-  // Update market digits for all markets
+  // Update market digits
   useEffect(() => {
     if (digits.length > 0) {
       marketDigitsRef.current[selectedMarketForScan] = digits;
       
-      // Check signals for this market
       const signals = checkAllSignals(digits);
       setMarketSignals(prev => ({
         ...prev,
@@ -320,7 +308,7 @@ export default function AutoTrade() {
   const botRunningRefs = useRef<Record<string, boolean>>({});
   const botPausedRefs = useRef<Record<string, boolean>>({});
 
-  // Scan all markets with 20-second animation
+  // Scan all markets
   const scanMarket = useCallback(async () => {
     if (isScanning) return;
     
@@ -328,15 +316,13 @@ export default function AutoTrade() {
     setScanProgress(0);
     playScanSound();
     
-    // Clear previous timeout if any
     if (scanTimeoutRef.current) {
       clearTimeout(scanTimeoutRef.current);
     }
     
     try {
-      // Progress animation for 20 seconds
       const startTime = Date.now();
-      const duration = 20000; // 20 seconds
+      const duration = 20000;
       
       const updateProgress = () => {
         const elapsed = Date.now() - startTime;
@@ -350,7 +336,6 @@ export default function AutoTrade() {
       
       scanTimeoutRef.current = setTimeout(updateProgress, 100);
       
-      // Perform actual scanning
       const analysis: Record<string, MarketAnalysis> = {};
       const signals: Record<string, Record<string, boolean>> = {};
       const volatilityMarkets: Record<string, { score: number, type: string }> = {};
@@ -361,10 +346,8 @@ export default function AutoTrade() {
           analysis[market] = analyzeMarket(marketDigits);
           analysis[market].symbol = market;
           
-          // Check all signals for this market
           signals[market] = checkAllSignals(marketDigits);
           
-          // Calculate volatility score based on digit patterns
           const sortedDigits = [...Array(10).keys()].sort((a, b) => {
             const countA = marketDigits.filter(d => d === a).length;
             const countB = marketDigits.filter(d => d === b).length;
@@ -378,7 +361,6 @@ export default function AutoTrade() {
           let volatilityScore = 0;
           let recommendedType = '';
           
-          // Check Over bot condition (most appearing >= 4)
           if (mostAppearing >= 4) {
             const isMostEven = mostAppearing % 2 === 0;
             if (isMostEven && secondMost % 2 === 0) {
@@ -390,7 +372,6 @@ export default function AutoTrade() {
             }
           }
           
-          // Check Under bot condition (least appearing <= 5)
           if (leastAppearing <= 5) {
             const isLeastEven = leastAppearing % 2 === 0;
             if (isLeastEven) {
@@ -408,13 +389,11 @@ export default function AutoTrade() {
         }
       }
       
-      // Wait for 20 seconds to complete
       await new Promise(resolve => setTimeout(resolve, Math.max(0, duration - (Date.now() - startTime))));
       
       setMarketAnalysis(analysis);
       setMarketSignals(signals);
       
-      // Auto-select best markets based on volatility
       const bestMarkets: Record<string, string> = {};
       const overMarkets = Object.entries(volatilityMarkets)
         .filter(([_, data]) => data.type === 'OVER')
@@ -424,7 +403,6 @@ export default function AutoTrade() {
         .filter(([_, data]) => data.type === 'UNDER')
         .sort((a, b) => b[1].score - a[1].score);
       
-      // Assign OVER bots
       const overBots = ['over3', 'over1'];
       overBots.forEach((botType, index) => {
         if (overMarkets[index]) {
@@ -432,7 +410,6 @@ export default function AutoTrade() {
         }
       });
       
-      // Assign UNDER bots
       const underBots = ['under6', 'under8'];
       underBots.forEach((botType, index) => {
         if (underMarkets[index]) {
@@ -440,7 +417,6 @@ export default function AutoTrade() {
         }
       });
       
-      // Assign EVEN/ODD bots based on remaining markets
       const remainingMarkets = VOLATILITY_MARKETS.filter(m => 
         !Object.values(bestMarkets).includes(m) && marketDigitsRef.current[m]?.length >= 700
       );
@@ -450,13 +426,11 @@ export default function AutoTrade() {
         bestMarkets['odd'] = remainingMarkets[1];
       }
       
-      // Update bots with selected markets
       setBots(prev => prev.map(bot => ({
         ...bot,
         selectedMarket: bestMarkets[bot.type] || bot.selectedMarket || Object.keys(marketDigitsRef.current)[0]
       })));
       
-      // Play completion sound
       playScanSound();
       toast.success(`Scan complete! Found ${Object.keys(volatilityMarkets).length} volatile markets`);
     } catch (error) {
@@ -497,8 +471,9 @@ export default function AutoTrade() {
     const bot = bots.find(b => b.id === botId);
     if (!bot || !isAuthorized) return;
 
+    // Check balance from auth context
     if (balance < globalStake) {
-      toast.error(`Insufficient balance for ${bot.name}`);
+      toast.error(`Insufficient balance for ${bot.name}. Current balance: $${balance?.toFixed(2) || '0.00'}`);
       stopBot(botId);
       return;
     }
@@ -537,7 +512,6 @@ export default function AutoTrade() {
         continue;
       }
 
-      // Check stop loss / take profit
       if (totalPnl <= -globalStopLoss) {
         toast.error(`${bot.name}: Stop Loss! $${totalPnl.toFixed(2)}`);
         break;
@@ -547,7 +521,6 @@ export default function AutoTrade() {
         break;
       }
 
-      // Handle cooldown
       if (cooldownRemaining > 0) {
         setBots(prev => prev.map(b => b.id === botId ? { 
           ...b, 
@@ -559,11 +532,9 @@ export default function AutoTrade() {
         continue;
       }
 
-      // Get current market digits
       const marketDigits = marketDigitsRef.current[currentMarket] || [];
       const lastDigit = marketDigits.length > 0 ? marketDigits[marketDigits.length - 1] : undefined;
 
-      // Check signal for this bot type
       let currentSignal = false;
       switch (bot.type) {
         case 'over3': currentSignal = checkOver3Entry(marketDigits); break;
@@ -574,13 +545,11 @@ export default function AutoTrade() {
         case 'under8': currentSignal = checkUnder8Entry(marketDigits); break;
       }
 
-      // Update bot signal status
       setBots(prev => prev.map(b => b.id === botId ? { 
         ...b, 
         signal: currentSignal 
       } : b));
 
-      // Entry condition check (only if not in recovery mode and not already triggered)
       let shouldEnter = false;
       if (!entryTriggered && !recoveryMode) {
         shouldEnter = currentSignal;
@@ -657,14 +626,10 @@ export default function AutoTrade() {
           losses++;
           consecutiveLosses++;
           
-          // Martingale
           stake = Math.round(stake * globalMultiplier * 100) / 100;
-          
-          // Enter recovery mode after loss
           recoveryMode = true;
           entryTriggered = false;
           
-          // Cooldown for even/odd bots
           if (bot.type === 'even' || bot.type === 'odd') {
             cooldownRemaining = 5;
           }
@@ -755,32 +720,30 @@ export default function AutoTrade() {
     })));
   };
 
-  // Get market display name
   const getMarketDisplay = (market: string) => {
     if (market.startsWith('1HZ')) return `⚡ ${market}`;
     if (market.startsWith('R_')) return `📈 ${market}`;
     if (market.startsWith('BOOM')) return `💥 ${market}`;
     if (market.startsWith('CRASH')) return `📉 ${market}`;
+    if (market === 'RDBEAR') return `🐻 ${market}`;
+    if (market === 'RDBULL') return `🐂 ${market}`;
+    if (market.startsWith('JD')) return `🦘 ${market}`;
     return market;
   };
 
-  // Calculate totals
   const totalProfit = bots.reduce((sum, bot) => sum + bot.totalPnl, 0);
   const totalTrades = bots.reduce((sum, bot) => sum + bot.trades, 0);
   const totalWins = bots.reduce((sum, bot) => sum + bot.wins, 0);
   const winRate = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(1) : '0';
-
-  // Get active signals count
   const activeSignals = bots.filter(b => b.signal).length;
 
   return (
     <div className="space-y-4 p-4 bg-background min-h-screen">
-      {/* Header with totals */}
+      {/* Header */}
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
           <h1 className="text-xl font-bold">🤖 6-Bot Trading System</h1>
           <div className="flex items-center gap-2">
-            {/* Dollar Icon Scanner */}
             <div className="relative flex items-center">
               <motion.div
                 animate={isScanning ? {
@@ -788,16 +751,8 @@ export default function AutoTrade() {
                   scale: [1, 1.2, 1],
                 } : {}}
                 transition={isScanning ? {
-                  rotate: {
-                    duration: 2,
-                    repeat: Infinity,
-                    ease: "linear"
-                  },
-                  scale: {
-                    duration: 1,
-                    repeat: Infinity,
-                    ease: "easeInOut"
-                  }
+                  rotate: { duration: 2, repeat: Infinity, ease: "linear" },
+                  scale: { duration: 1, repeat: Infinity, ease: "easeInOut" }
                 } : {}}
                 className="cursor-pointer mr-2"
                 onClick={scanMarket}
@@ -846,7 +801,7 @@ export default function AutoTrade() {
           </div>
         </div>
 
-        {/* Scan Progress Bar */}
+        {/* Scan Progress */}
         {isScanning && (
           <div className="mb-3">
             <div className="flex justify-between text-xs text-muted-foreground mb-1">
@@ -864,11 +819,11 @@ export default function AutoTrade() {
           </div>
         )}
 
-        {/* Global Stats */}
+        {/* Stats */}
         <div className="grid grid-cols-6 gap-3 text-sm">
           <div className="bg-muted/30 rounded-lg p-2">
             <div className="text-muted-foreground text-xs">Balance</div>
-            <div className="font-bold text-lg">${balance?.toFixed(2) || '0.00'}</div>
+            <div className="font-bold text-lg text-green-400">${balance?.toFixed(2) || '0.00'}</div>
           </div>
           <div className="bg-muted/30 rounded-lg p-2">
             <div className="text-muted-foreground text-xs">Total P&L</div>
@@ -956,7 +911,6 @@ export default function AutoTrade() {
                 bot.isRunning ? 'border-primary ring-1 ring-primary/20' : 'border-border'
               } ${bot.signal ? 'ring-2 ring-yellow-500/50' : ''}`}
             >
-              {/* Header */}
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <div className={`p-1.5 rounded-lg ${
@@ -988,7 +942,6 @@ export default function AutoTrade() {
                 </div>
               </div>
 
-              {/* Market & Analysis */}
               <div className="bg-muted/30 rounded-lg p-2 mb-2 text-[10px]">
                 <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">Market:</span>
@@ -1022,7 +975,6 @@ export default function AutoTrade() {
                 )}
               </div>
 
-              {/* Stats */}
               <div className="grid grid-cols-3 gap-1 text-[10px] mb-2">
                 <div>
                   <span className="text-muted-foreground">P&L:</span>
@@ -1042,7 +994,6 @@ export default function AutoTrade() {
                 </div>
               </div>
 
-              {/* Status */}
               <div className="flex items-center justify-between text-[9px] mb-2">
                 <span className="text-muted-foreground">Status:</span>
                 <span className={`font-mono ${
@@ -1060,7 +1011,6 @@ export default function AutoTrade() {
                 <span className="font-mono">${bot.currentStake.toFixed(2)}</span>
               </div>
 
-              {/* Controls */}
               <div className="flex gap-1">
                 {!bot.isRunning ? (
                   <Button
@@ -1097,7 +1047,7 @@ export default function AutoTrade() {
         })}
       </div>
 
-      {/* Live Signals Panel */}
+      {/* Live Signals */}
       <div className="bg-card border border-border rounded-xl p-3">
         <h3 className="text-sm font-semibold mb-2">📡 Live Signals - All Markets</h3>
         <div className="grid grid-cols-4 gap-2 max-h-[200px] overflow-y-auto">
@@ -1140,7 +1090,7 @@ export default function AutoTrade() {
                   <span className="text-muted-foreground">{trade.time}</span>
                   <Badge variant="outline" className="text-[8px] px-1 py-0">{trade.bot}</Badge>
                   <span className="font-mono text-[10px]">
-                    {trade.market.includes('1HZ') ? '⚡' : trade.market.includes('BOOM') ? '💥' : '📊'} {trade.market}
+                    {getMarketDisplay(trade.market)}
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
