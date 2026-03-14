@@ -6,7 +6,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTickLoader } from '@/hooks/useTickLoader';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, Play, StopCircle, Pause, TrendingUp, TrendingDown, CircleDot, RefreshCw, Trash2, DollarSign, Sparkles, Scan, Volume2, AlertTriangle } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Loader2, Play, StopCircle, Pause, TrendingUp, TrendingDown, CircleDot, RefreshCw, Trash2, DollarSign, Sparkles, Scan, Volume2, AlertTriangle, CheckCircle2, Clock, Radio, Activity } from 'lucide-react';
 
 // Types
 interface DigitAnalysis {
@@ -65,6 +66,13 @@ interface TradeLog {
   pnl: number;
   bot: string;
   lastDigit?: number;
+}
+
+interface ScannedMarket {
+  name: string;
+  digits: number[];
+  analysis: DigitAnalysis;
+  signals: BotType[];
 }
 
 // Constants
@@ -303,10 +311,14 @@ export default function AutoTrade() {
   const { isAuthorized, balance } = useAuth();
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
+  const [scanTimeRemaining, setScanTimeRemaining] = useState(30);
   const [scanStatus, setScanStatus] = useState('');
+  const [currentScanningMarket, setCurrentScanningMarket] = useState('');
+  const [scannedMarkets, setScannedMarkets] = useState<ScannedMarket[]>([]);
   const [signals, setSignals] = useState<BotSignal[]>([]);
   const [marketDigits, setMarketDigits] = useState<Record<string, number[]>>({});
   const [activeTradeId, setActiveTradeId] = useState<string | null>(null);
+  const [showMarketSelector, setShowMarketSelector] = useState(false);
   
   // Bot states
   const [bots, setBots] = useState<BotState[]>(
@@ -344,6 +356,7 @@ export default function AutoTrade() {
   const botRunningRefs = useRef<Record<string, boolean>>({});
   const botPausedRefs = useRef<Record<string, boolean>>({});
   const voiceSystem = VoiceAlertSystem.getInstance();
+  const scanTimerRef = useRef<NodeJS.Timeout>();
 
   // Fetch ticks for a market
   const fetchMarketTicks = async (market: string): Promise<number[]> => {
@@ -356,21 +369,47 @@ export default function AutoTrade() {
     }
   };
 
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (scanTimerRef.current) {
+        clearInterval(scanTimerRef.current);
+      }
+    };
+  }, []);
+
   // Scan all markets
   const scanAllMarkets = useCallback(async () => {
     if (isScanning) return;
     
     setIsScanning(true);
     setScanProgress(0);
+    setScanTimeRemaining(30);
     setSignals([]);
+    setScannedMarkets([]);
+    setShowMarketSelector(false);
     
     const newSignals: BotSignal[] = [];
+    const scannedList: ScannedMarket[] = [];
     const totalMarkets = VOLATILITY_MARKETS.length;
     const digitsRecord: Record<string, number[]> = {};
+    
+    // Start 30-second timer
+    const startTime = Date.now();
+    scanTimerRef.current = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      const remaining = Math.max(0, 30 - elapsed);
+      setScanTimeRemaining(remaining);
+      
+      if (remaining <= 0) {
+        clearInterval(scanTimerRef.current);
+      }
+    }, 100);
     
     try {
       for (let i = 0; i < VOLATILITY_MARKETS.length; i++) {
         const market = VOLATILITY_MARKETS[i];
+        setCurrentScanningMarket(market);
         setScanStatus(`Scanning ${market}... (${i + 1}/${totalMarkets})`);
         setScanProgress(((i + 1) / totalMarkets) * 100);
         
@@ -382,9 +421,13 @@ export default function AutoTrade() {
           digitsRecord[market] = digits;
           const analysis = analyzeDigits(digits);
           
+          const marketSignals: BotType[] = [];
+          
           // Check each bot type against market conditions
           for (const [botType, config] of Object.entries(BOT_CONFIGS)) {
             if (config.marketCheck(analysis)) {
+              marketSignals.push(botType as BotType);
+              
               newSignals.push({
                 id: `${market}-${botType}-${Date.now()}`,
                 market,
@@ -396,20 +439,35 @@ export default function AutoTrade() {
               });
             }
           }
+          
+          scannedList.push({
+            name: market,
+            digits,
+            analysis,
+            signals: marketSignals
+          });
         }
         
         // Small delay to prevent rate limiting
         await new Promise(r => setTimeout(r, 100));
       }
       
+      // Ensure we wait for full 30 seconds
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 30000) {
+        await new Promise(r => setTimeout(r, 30000 - elapsed));
+      }
+      
       setMarketDigits(digitsRecord);
+      setScannedMarkets(scannedList);
       setSignals(newSignals);
+      setShowMarketSelector(true);
       
       if (newSignals.length > 0) {
         voiceSystem.signalFound();
-        toast.success(`Found ${newSignals.length} trading signals!`);
+        toast.success(`Scan complete! Found ${newSignals.length} trading signals across ${scannedList.length} markets!`);
       } else {
-        toast.info('No signals found in any market');
+        toast.info('Scan complete. No signals found in any market.');
       }
       
     } catch (error) {
@@ -419,6 +477,10 @@ export default function AutoTrade() {
       setIsScanning(false);
       setScanProgress(100);
       setScanStatus('');
+      setCurrentScanningMarket('');
+      if (scanTimerRef.current) {
+        clearInterval(scanTimerRef.current);
+      }
     }
   }, [isScanning]);
 
@@ -688,6 +750,8 @@ export default function AutoTrade() {
   const clearAll = () => {
     setTrades([]);
     setSignals([]);
+    setScannedMarkets([]);
+    setShowMarketSelector(false);
     setBots(prev => prev.map(bot => ({
       ...bot,
       totalPnl: 0,
@@ -711,6 +775,18 @@ export default function AutoTrade() {
   const totalTrades = bots.reduce((sum, bot) => sum + bot.trades, 0);
   const totalWins = bots.reduce((sum, bot) => sum + bot.wins, 0);
   const winRate = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(1) : '0';
+
+  // Get market display name
+  const getMarketDisplay = (market: string) => {
+    if (market.startsWith('1HZ')) return `⚡ ${market}`;
+    if (market.startsWith('R_')) return `📈 ${market}`;
+    if (market.startsWith('BOOM')) return `💥 ${market}`;
+    if (market.startsWith('CRASH')) return `📉 ${market}`;
+    if (market.startsWith('JD')) return `🦘 ${market}`;
+    if (market === 'RDBEAR') return '🐻 Bear Market';
+    if (market === 'RDBULL') return '🐂 Bull Market';
+    return market;
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white">
@@ -754,57 +830,193 @@ export default function AutoTrade() {
             <div className="text-xl font-bold text-blue-400">{bots.filter(b => b.isRunning).length}/6</div>
           </div>
           <div className="text-center">
-            <div className="text-gray-400 text-sm">Signals</div>
-            <div className="text-xl font-bold text-purple-400">{signals.length}</div>
+            <div className="text-gray-400 text-sm">Markets</div>
+            <div className="text-xl font-bold text-purple-400">{scannedMarkets.length}</div>
           </div>
         </motion.div>
 
-        {/* Scan Control */}
+        {/* Scanner Section - Redesigned */}
         <motion.div 
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="flex flex-col items-center space-y-4"
+          className="relative"
         >
-          <Button
-            onClick={scanAllMarkets}
-            disabled={isScanning}
-            size="lg"
-            className="relative w-64 h-64 rounded-full bg-gradient-to-r from-green-500 to-yellow-500 hover:from-green-600 hover:to-yellow-600 text-white font-bold text-xl shadow-2xl shadow-green-500/20"
-          >
-            <div className="absolute inset-2 rounded-full bg-gray-900 flex items-center justify-center">
-              {isScanning ? (
-                <div className="text-center">
-                  <Loader2 className="w-12 h-12 animate-spin mx-auto mb-2" />
-                  <span className="text-sm">SCANNING...</span>
-                </div>
-              ) : (
-                <div className="text-center">
-                  <Scan className="w-12 h-12 mx-auto mb-2" />
-                  <span>SCAN</span>
-                  <span className="block text-xs mt-1 text-gray-400">All Markets</span>
-                </div>
+          {/* Scanner Container */}
+          <div className="bg-gray-800/50 backdrop-blur border-2 border-green-500/30 rounded-2xl p-8 shadow-2xl shadow-green-500/10">
+            <div className="flex flex-col items-center space-y-6">
+              {/* Scanner Title */}
+              <div className="text-center space-y-2">
+                <h2 className="text-2xl font-semibold text-green-400 flex items-center justify-center gap-2">
+                  <Radio className="w-6 h-6 animate-pulse" />
+                  Market Scanner Control
+                  <Activity className="w-6 h-6 animate-pulse" />
+                </h2>
+                <p className="text-gray-400 text-sm">Click the button below to scan all 25+ markets for trading opportunities</p>
+              </div>
+
+              {/* Main Scanner Button */}
+              <div className="relative">
+                {/* Animated Rings */}
+                {!isScanning && !showMarketSelector && (
+                  <>
+                    <motion.div
+                      animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.5, 0.3] }}
+                      transition={{ duration: 2, repeat: Infinity }}
+                      className="absolute inset-0 rounded-full bg-green-500/20 blur-xl"
+                    />
+                    <motion.div
+                      animate={{ scale: [1, 1.1, 1], opacity: [0.2, 0.4, 0.2] }}
+                      transition={{ duration: 2, repeat: Infinity, delay: 0.5 }}
+                      className="absolute inset-0 rounded-full bg-yellow-500/20 blur-lg"
+                    />
+                  </>
+                )}
+
+                <Button
+                  onClick={scanAllMarkets}
+                  disabled={isScanning}
+                  className={`relative w-48 h-48 rounded-full text-white font-bold text-xl shadow-2xl transition-all duration-300 ${
+                    isScanning 
+                      ? 'bg-gradient-to-r from-green-600 to-yellow-600 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-green-500 to-yellow-500 hover:from-green-600 hover:to-yellow-600 hover:scale-105'
+                  }`}
+                >
+                  <div className="absolute inset-2 rounded-full bg-gray-900 flex items-center justify-center">
+                    {isScanning ? (
+                      <div className="text-center">
+                        <Loader2 className="w-12 h-12 animate-spin mx-auto mb-2 text-green-400" />
+                        <span className="text-sm text-green-400">SCANNING...</span>
+                        <span className="block text-xs text-yellow-400 mt-1">{scanTimeRemaining}s</span>
+                      </div>
+                    ) : showMarketSelector ? (
+                      <div className="text-center">
+                        <CheckCircle2 className="w-12 h-12 mx-auto mb-2 text-green-400" />
+                        <span className="text-sm text-green-400">SCAN</span>
+                        <span className="block text-xs text-gray-400 mt-1">COMPLETE</span>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <Scan className="w-12 h-12 mx-auto mb-2 text-green-400" />
+                        <span className="text-sm text-green-400">START</span>
+                        <span className="block text-xs text-gray-400 mt-1">30 SECOND SCAN</span>
+                      </div>
+                    )}
+                  </div>
+                </Button>
+              </div>
+
+              {/* Progress Bar */}
+              {isScanning && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="w-full max-w-md space-y-3"
+                >
+                  <div className="flex justify-between text-sm">
+                    <span className="text-green-400 flex items-center gap-1">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      {currentScanningMarket}
+                    </span>
+                    <span className="text-yellow-400 font-mono">{Math.round(scanProgress)}%</span>
+                  </div>
+                  
+                  <div className="relative h-4 bg-gray-700 rounded-full overflow-hidden">
+                    <motion.div 
+                      className="absolute inset-0 bg-gradient-to-r from-green-400 via-yellow-400 to-green-400"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${scanProgress}%` }}
+                      transition={{ duration: 0.3 }}
+                    />
+                  </div>
+
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-gray-400 flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
+                      Time remaining
+                    </span>
+                    <span className="text-green-400 font-mono font-bold">{scanTimeRemaining}s</span>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Scan Results Summary */}
+              {showMarketSelector && !isScanning && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="w-full max-w-2xl"
+                >
+                  <div className="bg-gray-900/50 border border-green-500/20 rounded-xl p-4">
+                    <h3 className="text-lg font-semibold text-green-400 mb-3 flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5" />
+                      Scan Complete - Choose Your Market
+                    </h3>
+                    
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="text-center p-3 bg-gray-800 rounded-lg">
+                        <div className="text-2xl font-bold text-green-400">{scannedMarkets.length}</div>
+                        <div className="text-xs text-gray-400">Markets Scanned</div>
+                      </div>
+                      <div className="text-center p-3 bg-gray-800 rounded-lg">
+                        <div className="text-2xl font-bold text-yellow-400">{signals.length}</div>
+                        <div className="text-xs text-gray-400">Signals Found</div>
+                      </div>
+                      <div className="text-center p-3 bg-gray-800 rounded-lg">
+                        <div className="text-2xl font-bold text-purple-400">
+                          {scannedMarkets.filter(m => m.signals.length > 0).length}
+                        </div>
+                        <div className="text-xs text-gray-400">Active Markets</div>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
               )}
             </div>
-          </Button>
-
-          {/* Scan Progress */}
-          {isScanning && (
-            <div className="w-full max-w-md space-y-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-green-400">{scanStatus}</span>
-                <span className="text-yellow-400">{Math.round(scanProgress)}%</span>
-              </div>
-              <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
-                <motion.div 
-                  className="h-full bg-gradient-to-r from-green-400 to-yellow-400"
-                  initial={{ width: 0 }}
-                  animate={{ width: `${scanProgress}%` }}
-                  transition={{ duration: 0.3 }}
-                />
-              </div>
-            </div>
-          )}
+          </div>
         </motion.div>
+
+        {/* Market Selector Dropdown - Appears after scan */}
+        <AnimatePresence>
+          {showMarketSelector && !isScanning && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="bg-gray-800/50 backdrop-blur border border-green-500/20 rounded-xl p-4"
+            >
+              <h2 className="text-lg font-semibold mb-3 text-green-400 flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-yellow-400" />
+                Available Markets ({scannedMarkets.length})
+              </h2>
+              
+              <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 max-h-60 overflow-y-auto p-2">
+                {scannedMarkets.map((market) => (
+                  <motion.button
+                    key={market.name}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => {
+                      // Handle market selection - you can add your logic here
+                      toast.info(`Selected ${market.name}`);
+                    }}
+                    className={`p-3 rounded-lg border transition-all ${
+                      market.signals.length > 0
+                        ? 'bg-green-500/10 border-green-500/30 hover:bg-green-500/20'
+                        : 'bg-gray-700/50 border-gray-600/30 hover:bg-gray-600/50'
+                    }`}
+                  >
+                    <div className="text-xs font-mono">{getMarketDisplay(market.name)}</div>
+                    {market.signals.length > 0 && (
+                      <Badge className="mt-1 bg-green-500/20 text-green-400 text-[8px]">
+                        {market.signals.length} signal{market.signals.length > 1 ? 's' : ''}
+                      </Badge>
+                    )}
+                  </motion.button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Settings Panel */}
         <motion.div 
@@ -905,7 +1117,7 @@ export default function AutoTrade() {
                     <div>
                       <h3 className="font-bold text-sm">{bot.name}</h3>
                       <p className="text-xs text-gray-400">
-                        {bot.selectedMarket || 'No market'}
+                        {bot.selectedMarket ? getMarketDisplay(bot.selectedMarket) : 'No market'}
                       </p>
                     </div>
                   </div>
@@ -1016,7 +1228,7 @@ export default function AutoTrade() {
                     <Badge variant="outline" className="border-green-500/30 text-green-400">
                       {trade.bot}
                     </Badge>
-                    <span className="text-gray-300">{trade.market}</span>
+                    <span className="text-gray-300">{getMarketDisplay(trade.market)}</span>
                   </div>
                   <div className="flex items-center gap-4">
                     <span className="font-mono text-green-400">${trade.stake.toFixed(2)}</span>
