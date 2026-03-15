@@ -4,7 +4,6 @@ import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { copyTradingService } from '@/services/copy-trading-service';
 import { getLastDigit } from '@/services/analysis';
 import { useAuth } from '@/contexts/AuthContext';
-import { useLossRequirement } from '@/hooks/useLossRequirement';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -36,18 +35,18 @@ const CONTRACT_TYPES = [
 
 const needsBarrier = (ct: string) => ['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct);
 
-type BotStatus = 'idle' | 'trading_m1' | 'recovery' | 'waiting_pattern' | 'pattern_matched' | 'virtual_hook';
+type BotStatus = 'idle' | 'trading_m1' | 'recovery' | 'waiting_pattern' | 'pattern_matched';
 
 interface LogEntry {
   id: number;
   time: string;
-  market: 'M1' | 'M2' | 'VH';
+  market: 'M1' | 'M2';
   symbol: string;
   contract: string;
   stake: number;
   martingaleStep: number;
   exitDigit: string;
-  result: 'Win' | 'Loss' | 'Pending' | 'V-Win' | 'V-Loss';
+  result: 'Win' | 'Loss' | 'Pending';
   pnl: number;
   balance: number;
   switchInfo: string;
@@ -86,34 +85,8 @@ function waitForNextTick(symbol: string): Promise<{ quote: number }> {
   });
 }
 
-/* ── Simulate a virtual contract result based on actual next tick ── */
-function simulateVirtualContract(
-  contractType: string, barrier: string, symbol: string
-): Promise<{ won: boolean; digit: number }> {
-  return new Promise((resolve) => {
-    const unsub = derivApi.onMessage((data: any) => {
-      if (data.tick && data.tick.symbol === symbol) {
-        unsub();
-        const digit = getLastDigit(data.tick.quote);
-        const b = parseInt(barrier) || 0;
-        let won = false;
-        switch (contractType) {
-          case 'DIGITEVEN': won = digit % 2 === 0; break;
-          case 'DIGITODD': won = digit % 2 !== 0; break;
-          case 'DIGITMATCH': won = digit === b; break;
-          case 'DIGITDIFF': won = digit !== b; break;
-          case 'DIGITOVER': won = digit > b; break;
-          case 'DIGITUNDER': won = digit < b; break;
-        }
-        resolve({ won, digit });
-      }
-    });
-  });
-}
-
 export default function ProScannerBot() {
   const { isAuthorized, balance, activeAccount } = useAuth();
-  const { recordLoss } = useLossRequirement();
   const location = useLocation();
 
   /* ── Market 1 config ── */
@@ -127,22 +100,6 @@ export default function ProScannerBot() {
   const [m2Contract, setM2Contract] = useState('DIGITODD');
   const [m2Barrier, setM2Barrier] = useState('5');
   const [m2Symbol, setM2Symbol] = useState('R_50');
-
-  /* ── Virtual Hook M1 ── */
-  const [m1HookEnabled, setM1HookEnabled] = useState(false);
-  const [m1VirtualLossCount, setM1VirtualLossCount] = useState('3');
-  const [m1RealCount, setM1RealCount] = useState('2');
-
-  /* ── Virtual Hook M2 ── */
-  const [m2HookEnabled, setM2HookEnabled] = useState(false);
-  const [m2VirtualLossCount, setM2VirtualLossCount] = useState('3');
-  const [m2RealCount, setM2RealCount] = useState('2');
-
-  /* ── Virtual Hook stats ── */
-  const [vhFakeWins, setVhFakeWins] = useState(0);
-  const [vhFakeLosses, setVhFakeLosses] = useState(0);
-  const [vhConsecLosses, setVhConsecLosses] = useState(0);
-  const [vhStatus, setVhStatus] = useState<'idle' | 'waiting' | 'confirmed' | 'failed'>('idle');
 
   /* ── Risk ── */
   const [stake, setStake] = useState('0.35');
@@ -313,13 +270,17 @@ export default function ProScannerBot() {
     setLogEntries([]);
     setWins(0); setLosses(0); setTotalStaked(0); setNetProfit(0);
     setMartingaleStepState(0);
-    setVhFakeWins(0); setVhFakeLosses(0); setVhConsecLosses(0); setVhStatus('idle');
     setTicksCaptured(0); setTicksMissed(0);
   }, []);
 
   /* ═══════════════ MAIN BOT LOOP ═══════════════ */
   const startBot = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
+    if (!activeAccount) {
+      toast.error("No account connected");
+      return;
+    }
+    
     const baseStake = parseFloat(stake);
     if (baseStake < 0.35) { toast.error('Min stake $0.35'); return; }
     if (!m1Enabled && !m2Enabled) { toast.error('Enable at least one market'); return; }
@@ -332,7 +293,6 @@ export default function ProScannerBot() {
     setBotStatus('trading_m1');
     setCurrentStakeState(baseStake);
     setMartingaleStepState(0);
-    setVhFakeWins(0); setVhFakeLosses(0); setVhConsecLosses(0); setVhStatus('idle');
 
     let cStake = baseStake;
     let mStep = 0;
@@ -355,9 +315,6 @@ export default function ProScannerBot() {
 
       let tradeSymbol: string;
       const cfg = getConfig(mkt);
-      const hookEnabled = mkt === 1 ? m1HookEnabled : m2HookEnabled;
-      const requiredLosses = parseInt(mkt === 1 ? m1VirtualLossCount : m2VirtualLossCount) || 3;
-      const realCount = parseInt(mkt === 1 ? m1RealCount : m2RealCount) || 2;
 
       /* ── Strategy gating for M2 (recovery) ── */
       if (inRecovery && strategyEnabled) {
@@ -409,74 +366,7 @@ export default function ProScannerBot() {
         tradeSymbol = cfg.symbol;
       }
 
-      /* ═══ VIRTUAL HOOK SEQUENCE — Loss-streak based ═══ */
-      if (hookEnabled) {
-        setBotStatus('virtual_hook');
-        setVhStatus('waiting');
-        setVhFakeWins(0);
-        setVhFakeLosses(0);
-        setVhConsecLosses(0);
-        let consecLosses = 0;
-        let virtualTradeNum = 0;
-
-        // Keep simulating virtual trades until we accumulate requiredLosses consecutive losses
-        while (consecLosses < requiredLosses && runningRef.current) {
-          virtualTradeNum++;
-          const vLogId = ++logIdRef.current;
-          const vNow = new Date().toLocaleTimeString();
-          addLog(vLogId, {
-            time: vNow, market: 'VH', symbol: tradeSymbol,
-            contract: cfg.contract, stake: 0, martingaleStep: 0,
-            exitDigit: '...', result: 'Pending', pnl: 0, balance: localBalance,
-            switchInfo: `Virtual #${virtualTradeNum} (losses: ${consecLosses}/${requiredLosses})`,
-          });
-
-          const vResult = await simulateVirtualContract(cfg.contract, cfg.barrier, tradeSymbol);
-          if (!runningRef.current) break;
-
-          if (vResult.won) {
-            // Win resets the consecutive loss counter
-            consecLosses = 0;
-            setVhConsecLosses(0);
-            setVhFakeWins(prev => prev + 1);
-            updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Win', switchInfo: `Virtual WIN → Losses reset (0/${requiredLosses})` });
-          } else {
-            consecLosses++;
-            setVhConsecLosses(consecLosses);
-            setVhFakeLosses(prev => prev + 1);
-            updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Loss', switchInfo: `Virtual LOSS (${consecLosses}/${requiredLosses})` });
-          }
-        }
-
-        if (!runningRef.current) break;
-
-        // Required consecutive losses reached → hook confirmed
-        setVhStatus('confirmed');
-        toast.success(`🎣 Hook confirmed! ${requiredLosses} consecutive losses detected → Executing ${realCount} real trade(s)`);
-
-        /* Execute real trades batch */
-        for (let ri = 0; ri < realCount && runningRef.current; ri++) {
-          const result = await executeRealTrade(
-            cfg, tradeSymbol, cStake, mStep, mkt, localBalance, localPnl, baseStake
-          );
-          if (!result || !runningRef.current) break;
-          localPnl = result.localPnl;
-          localBalance = result.localBalance;
-          cStake = result.cStake;
-          mStep = result.mStep;
-          inRecovery = result.inRecovery;
-
-          if (result.shouldBreak) { runningRef.current = false; break; }
-        }
-
-        // Reset after real trades
-        setVhStatus('idle');
-        setVhConsecLosses(0);
-        if (!runningRef.current) break;
-        continue;
-      }
-
-      /* ═══ NORMAL REAL TRADE (no hook) ═══ */
+      /* ═══ REAL TRADE ═══ */
       const result = await executeRealTrade(
         cfg, tradeSymbol, cStake, mStep, mkt, localBalance, localPnl, baseStake
       );
@@ -500,8 +390,7 @@ export default function ProScannerBot() {
   }, [isAuthorized, isRunning, balance, stake, m1Enabled, m2Enabled, m1Contract, m2Contract,
     m1Barrier, m2Barrier, m1Symbol, m2Symbol, martingaleOn, martingaleMultiplier, martingaleMaxSteps,
     takeProfit, stopLoss, strategyEnabled, strategyM1Enabled, m1StrategyMode, m2StrategyMode, m1PatternValid, m2PatternValid,
-    scannerActive, findScannerMatchForMarket, checkStrategyForMarket, addLog, updateLog, turboMode,
-    m1HookEnabled, m2HookEnabled, m1VirtualLossCount, m2VirtualLossCount, m1RealCount, m2RealCount]);
+    scannerActive, findScannerMatchForMarket, checkStrategyForMarket, addLog, updateLog, turboMode, activeAccount]);
 
   /* ── Execute a single real trade ── */
   const executeRealTrade = useCallback(async (
@@ -571,10 +460,6 @@ export default function ProScannerBot() {
         cStake = baseStake;
       } else {
         setLosses(prev => prev + 1);
-        // Record loss for virtual trading requirement (duration ~1 tick ≈ 5s+)
-        if (activeAccount?.is_virtual) {
-          recordLoss(cStake, tradeSymbol, 6000);
-        }
         if (!inRecovery && m2Enabled) {
           inRecovery = true;
           switchInfo = '✗ Loss → Switch to M2';
@@ -634,7 +519,6 @@ export default function ProScannerBot() {
     recovery: { icon: '🟣', label: 'RECOVERY MODE', color: 'text-purple-400' },
     waiting_pattern: { icon: '🟡', label: 'WAITING PATTERN', color: 'text-warning' },
     pattern_matched: { icon: '✅', label: 'PATTERN MATCHED', color: 'text-profit' },
-    virtual_hook: { icon: '🎣', label: 'VIRTUAL HOOK', color: 'text-primary' },
   };
 
   const status = statusConfig[botStatus];
@@ -643,13 +527,13 @@ export default function ProScannerBot() {
   /* ── Build config object for preview ── */
   const currentConfig = useMemo<BotConfig>(() => ({
     version: 1,
-    m1: { enabled: m1Enabled, symbol: m1Symbol, contract: m1Contract, barrier: m1Barrier, hookEnabled: m1HookEnabled, virtualLossCount: m1VirtualLossCount, realCount: m1RealCount },
-    m2: { enabled: m2Enabled, symbol: m2Symbol, contract: m2Contract, barrier: m2Barrier, hookEnabled: m2HookEnabled, virtualLossCount: m2VirtualLossCount, realCount: m2RealCount },
+    m1: { enabled: m1Enabled, symbol: m1Symbol, contract: m1Contract, barrier: m1Barrier },
+    m2: { enabled: m2Enabled, symbol: m2Symbol, contract: m2Contract, barrier: m2Barrier },
     risk: { stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss },
     strategy: { m1Enabled: strategyM1Enabled, m2Enabled: strategyEnabled, m1Mode: m1StrategyMode, m2Mode: m2StrategyMode, m1Pattern, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2Pattern, m2DigitCondition, m2DigitCompare, m2DigitWindow },
     scanner: { active: scannerActive },
     turbo: { enabled: turboMode },
-  }), [m1Enabled, m1Symbol, m1Contract, m1Barrier, m1HookEnabled, m1VirtualLossCount, m1RealCount, m2Enabled, m2Symbol, m2Contract, m2Barrier, m2HookEnabled, m2VirtualLossCount, m2RealCount, stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, strategyM1Enabled, strategyEnabled, m1StrategyMode, m2StrategyMode, m1Pattern, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2Pattern, m2DigitCondition, m2DigitCompare, m2DigitWindow, scannerActive, turboMode]);
+  }), [m1Enabled, m1Symbol, m1Contract, m1Barrier, m2Enabled, m2Symbol, m2Contract, m2Barrier, stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, strategyM1Enabled, strategyEnabled, m1StrategyMode, m2StrategyMode, m1Pattern, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2Pattern, m2DigitCondition, m2DigitCompare, m2DigitWindow, scannerActive, turboMode]);
 
   const handleLoadConfig = useCallback((cfg: BotConfig) => {
     if (cfg.m1) {
@@ -657,18 +541,12 @@ export default function ProScannerBot() {
       if (cfg.m1.symbol) setM1Symbol(cfg.m1.symbol);
       if (cfg.m1.contract) setM1Contract(cfg.m1.contract);
       if (cfg.m1.barrier) setM1Barrier(cfg.m1.barrier);
-      if (cfg.m1.hookEnabled !== undefined) setM1HookEnabled(cfg.m1.hookEnabled);
-      if (cfg.m1.virtualLossCount) setM1VirtualLossCount(cfg.m1.virtualLossCount);
-      if (cfg.m1.realCount) setM1RealCount(cfg.m1.realCount);
     }
     if (cfg.m2) {
       if (cfg.m2.enabled !== undefined) setM2Enabled(cfg.m2.enabled);
       if (cfg.m2.symbol) setM2Symbol(cfg.m2.symbol);
       if (cfg.m2.contract) setM2Contract(cfg.m2.contract);
       if (cfg.m2.barrier) setM2Barrier(cfg.m2.barrier);
-      if (cfg.m2.hookEnabled !== undefined) setM2HookEnabled(cfg.m2.hookEnabled);
-      if (cfg.m2.virtualLossCount) setM2VirtualLossCount(cfg.m2.virtualLossCount);
-      if (cfg.m2.realCount) setM2RealCount(cfg.m2.realCount);
     }
     if (cfg.risk) {
       if (cfg.risk.stake) setStake(cfg.risk.stake);
@@ -842,27 +720,6 @@ export default function ProScannerBot() {
                 <Input type="number" min="0" max="9" value={m1Barrier} onChange={e => setM1Barrier(e.target.value)}
                   className="h-7 text-xs bg-gray-900 border-gray-700 text-gray-200" placeholder="Barrier (0-9)" disabled={isRunning} />
               )}
-              {/* Virtual Hook M1 */}
-              <div className="border-t border-gray-700/50 pt-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[9px] font-medium text-cyan-400 flex items-center gap-1">
-                    <Anchor className="w-3 h-3" /> Virtual Hook
-                  </span>
-                  <Switch checked={m1HookEnabled} onCheckedChange={setM1HookEnabled} disabled={isRunning} />
-                </div>
-                {m1HookEnabled && (
-                  <div className="grid grid-cols-2 gap-1.5 mt-1">
-                    <div>
-                      <label className="text-[8px] text-gray-500 font-medium">V-Losses</label>
-                      <Input type="number" min="1" max="20" value={m1VirtualLossCount} onChange={e => setM1VirtualLossCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px] bg-gray-900 border-gray-700 text-gray-200" />
-                    </div>
-                    <div>
-                      <label className="text-[8px] text-gray-500 font-medium">Real Trades</label>
-                      <Input type="number" min="1" max="10" value={m1RealCount} onChange={e => setM1RealCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px] bg-gray-900 border-gray-700 text-gray-200" />
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* Market 2 */}
@@ -886,62 +743,8 @@ export default function ProScannerBot() {
                 <Input type="number" min="0" max="9" value={m2Barrier} onChange={e => setM2Barrier(e.target.value)}
                   className="h-7 text-xs bg-gray-900 border-gray-700 text-gray-200" placeholder="Barrier (0-9)" disabled={isRunning} />
               )}
-              {/* Virtual Hook M2 */}
-              <div className="border-t border-gray-700/50 pt-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[9px] font-medium text-cyan-400 flex items-center gap-1">
-                    <Anchor className="w-3 h-3" /> Virtual Hook
-                  </span>
-                  <Switch checked={m2HookEnabled} onCheckedChange={setM2HookEnabled} disabled={isRunning} />
-                </div>
-                {m2HookEnabled && (
-                  <div className="grid grid-cols-2 gap-1.5 mt-1">
-                    <div>
-                      <label className="text-[8px] text-gray-500 font-medium">V-Losses</label>
-                      <Input type="number" min="1" max="20" value={m2VirtualLossCount} onChange={e => setM2VirtualLossCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px] bg-gray-900 border-gray-700 text-gray-200" />
-                    </div>
-                    <div>
-                      <label className="text-[8px] text-gray-500 font-medium">Real Trades</label>
-                      <Input type="number" min="1" max="10" value={m2RealCount} onChange={e => setM2RealCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px] bg-gray-900 border-gray-700 text-gray-200" />
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
-
-          {/* Virtual Hook Stats */}
-          {(m1HookEnabled || m2HookEnabled) && (
-            <div className="bg-gradient-to-br from-gray-800 to-gray-900 border border-cyan-500/30 rounded-xl p-2.5 shadow-md">
-              <h3 className="text-[10px] font-semibold text-cyan-400 flex items-center gap-1 mb-1">
-                <Anchor className="w-3 h-3" /> Hook Status
-              </h3>
-              <div className="grid grid-cols-4 gap-1 text-center">
-                <div className="bg-gray-900/60 rounded p-1 border border-gray-700">
-                  <div className="text-[8px] text-gray-500 font-medium">V-Win</div>
-                  <div className="font-mono text-[10px] font-bold text-emerald-400">{vhFakeWins}</div>
-                </div>
-                <div className="bg-gray-900/60 rounded p-1 border border-gray-700">
-                  <div className="text-[8px] text-gray-500 font-medium">V-Loss</div>
-                  <div className="font-mono text-[10px] font-bold text-rose-400">{vhFakeLosses}</div>
-                </div>
-                <div className="bg-gray-900/60 rounded p-1 border border-gray-700">
-                  <div className="text-[8px] text-gray-500 font-medium">Streak</div>
-                  <div className="font-mono text-[10px] font-bold text-amber-400">{vhConsecLosses}</div>
-                </div>
-                <div className="bg-gray-900/60 rounded p-1 border border-gray-700">
-                  <div className="text-[8px] text-gray-500 font-medium">State</div>
-                  <div className={`text-[9px] font-bold ${
-                    vhStatus === 'confirmed' ? 'text-emerald-400' :
-                    vhStatus === 'waiting' ? 'text-amber-400 animate-pulse' :
-                    vhStatus === 'failed' ? 'text-rose-400' : 'text-gray-500'
-                  }`}>
-                    {vhStatus === 'confirmed' ? '✓' : vhStatus === 'waiting' ? '⏳' : vhStatus === 'failed' ? '✗' : '—'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Risk */}
           <div className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-xl p-2.5 space-y-1.5 shadow-md">
@@ -1123,8 +926,8 @@ export default function ProScannerBot() {
                   const config = {
                     version: 1,
                     botName: botName.trim(),
-                    m1: { enabled: m1Enabled, symbol: m1Symbol, contract: m1Contract, barrier: m1Barrier, hookEnabled: m1HookEnabled, virtualLossCount: m1VirtualLossCount, realCount: m1RealCount },
-                    m2: { enabled: m2Enabled, symbol: m2Symbol, contract: m2Contract, barrier: m2Barrier, hookEnabled: m2HookEnabled, virtualLossCount: m2VirtualLossCount, realCount: m2RealCount },
+                    m1: { enabled: m1Enabled, symbol: m1Symbol, contract: m1Contract, barrier: m1Barrier },
+                    m2: { enabled: m2Enabled, symbol: m2Symbol, contract: m2Contract, barrier: m2Barrier },
                     risk: { stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss },
                     strategy: {
                       m1Enabled: strategyM1Enabled, m2Enabled: strategyEnabled,
@@ -1170,17 +973,11 @@ export default function ProScannerBot() {
                         if (cfg.m1.symbol) setM1Symbol(cfg.m1.symbol);
                         if (cfg.m1.contract) setM1Contract(cfg.m1.contract);
                         if (cfg.m1.barrier) setM1Barrier(cfg.m1.barrier);
-                        if (cfg.m1.hookEnabled !== undefined) setM1HookEnabled(cfg.m1.hookEnabled);
-                        if (cfg.m1.virtualLossCount) setM1VirtualLossCount(cfg.m1.virtualLossCount);
-                        if (cfg.m1.realCount) setM1RealCount(cfg.m1.realCount);
                         // M2
                         if (cfg.m2.enabled !== undefined) setM2Enabled(cfg.m2.enabled);
                         if (cfg.m2.symbol) setM2Symbol(cfg.m2.symbol);
                         if (cfg.m2.contract) setM2Contract(cfg.m2.contract);
                         if (cfg.m2.barrier) setM2Barrier(cfg.m2.barrier);
-                        if (cfg.m2.hookEnabled !== undefined) setM2HookEnabled(cfg.m2.hookEnabled);
-                        if (cfg.m2.virtualLossCount) setM2VirtualLossCount(cfg.m2.virtualLossCount);
-                        if (cfg.m2.realCount) setM2RealCount(cfg.m2.realCount);
                         // Risk
                         if (cfg.risk.stake) setStake(cfg.risk.stake);
                         if (cfg.risk.martingaleOn !== undefined) setMartingaleOn(cfg.risk.martingaleOn);
@@ -1341,34 +1138,30 @@ export default function ProScannerBot() {
                     <tr><td colSpan={10} className="text-center text-gray-500 py-8 font-medium">No trades yet — configure and start the bot</td></tr>
                   ) : logEntries.map(e => (
                     <tr key={e.id} className={`border-t border-gray-700/50 hover:bg-gray-800/30 ${
-                      e.market === 'M1' ? 'border-l-2 border-l-emerald-500' :
-                      e.market === 'VH' ? 'border-l-2 border-l-cyan-500' :
-                      'border-l-2 border-l-purple-500'
+                      e.market === 'M1' ? 'border-l-2 border-l-emerald-500' : 'border-l-2 border-l-purple-500'
                     }`}>
                       <td className="p-1 font-mono text-[9px] text-gray-300">{e.time}</td>
                       <td className={`p-1 font-bold ${
-                        e.market === 'M1' ? 'text-emerald-400' :
-                        e.market === 'VH' ? 'text-cyan-400' :
-                        'text-purple-400'
+                        e.market === 'M1' ? 'text-emerald-400' : 'text-purple-400'
                       }`}>{e.market}</td>
                       <td className="p-1 font-mono text-[9px] text-gray-300">{e.symbol}</td>
                       <td className="p-1 text-[9px] text-gray-300">{e.contract.replace('DIGIT', '')}</td>
                       <td className="p-1 font-mono text-right text-[9px] text-gray-300">
-                        {e.market === 'VH' ? 'FAKE' : `$${e.stake.toFixed(2)}`}
-                        {e.martingaleStep > 0 && e.market !== 'VH' && <span className="text-amber-400 ml-0.5">M{e.martingaleStep}</span>}
+                        ${e.stake.toFixed(2)}
+                        {e.martingaleStep > 0 && <span className="text-amber-400 ml-0.5">M{e.martingaleStep}</span>}
                       </td>
                       <td className="p-1 text-center font-mono text-gray-300">{e.exitDigit}</td>
                       <td className="p-1 text-center">
                         <span className={`px-1 py-0.5 rounded-full text-[8px] font-bold ${
-                          e.result === 'Win' || e.result === 'V-Win' ? 'bg-emerald-500/20 text-emerald-400' :
-                          e.result === 'Loss' || e.result === 'V-Loss' ? 'bg-rose-500/20 text-rose-400' :
+                          e.result === 'Win' ? 'bg-emerald-500/20 text-emerald-400' :
+                          e.result === 'Loss' ? 'bg-rose-500/20 text-rose-400' :
                           'bg-amber-500/20 text-amber-400 animate-pulse'
                         }`}>{e.result === 'Pending' ? '...' : e.result}</span>
                       </td>
                       <td className={`p-1 font-mono text-right text-[9px] ${e.pnl > 0 ? 'text-emerald-400' : e.pnl < 0 ? 'text-rose-400' : 'text-gray-500'}`}>
-                        {e.result === 'Pending' ? '...' : e.market === 'VH' ? '-' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
+                        {e.result === 'Pending' ? '...' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
                       </td>
-                      <td className="p-1 font-mono text-right text-[9px] text-gray-300">{e.market === 'VH' ? '-' : `$${e.balance.toFixed(2)}`}</td>
+                      <td className="p-1 font-mono text-right text-[9px] text-gray-300">${e.balance.toFixed(2)}</td>
                       <td className="p-1 text-center">
                         {isRunning && (
                           <button onClick={stopBot} className="px-1 py-0.5 rounded bg-rose-600/80 hover:bg-rose-600 text-white text-[8px] font-bold transition-colors" title="Stop Bot">
