@@ -4,12 +4,12 @@ import { useLossRequirement } from '@/hooks/useLossRequirement';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { Shield, RotateCcw, Lock, Unlock } from 'lucide-react';
+import { Shield, RotateCcw, CheckCircle } from 'lucide-react';
 
 export default function SettingsPage() {
   const { activeAccount, accountInfo } = useAuth();
   const {
-    currentLossCount, requiredLosses, remaining, isUnlocked,
+    currentLossCount, requiredLosses, remaining,
     setRequiredLosses, resetProgress,
   } = useLossRequirement();
 
@@ -42,7 +42,7 @@ export default function SettingsPage() {
         ))}
       </motion.div>
 
-      {/* Loss Requirement Control Panel */}
+      {/* Virtual Trading Stats */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -51,46 +51,32 @@ export default function SettingsPage() {
       >
         <div className="flex items-center gap-2">
           <Shield className="w-5 h-5 text-primary" />
-          <h2 className="font-semibold text-foreground">Virtual Trading Progress</h2>
+          <h2 className="font-semibold text-foreground">Virtual Trading Stats</h2>
         </div>
 
-        {/* Status Badge */}
-        <div className={`flex items-center gap-2 p-3 rounded-lg border ${
-          isUnlocked
-            ? 'bg-profit/10 border-profit/30'
-            : 'bg-warning/10 border-warning/30'
-        }`}>
-          {isUnlocked ? (
-            <>
-              <Unlock className="w-4 h-4 text-profit" />
-              <span className="text-sm font-semibold text-profit">Real Trading Enabled</span>
-            </>
-          ) : (
-            <>
-              <Lock className="w-4 h-4 text-warning" />
-              <span className="text-sm font-semibold text-warning">Real Trading Locked 🔒</span>
-            </>
-          )}
+        {/* Status Badge - Always unlocked */}
+        <div className="flex items-center gap-2 p-3 rounded-lg border bg-profit/10 border-profit/30">
+          <CheckCircle className="w-4 h-4 text-profit" />
+          <span className="text-sm font-semibold text-profit">Real Trading Available</span>
         </div>
 
-        {/* Progress */}
+        {/* Progress - Now just for tracking */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Loss Progress</span>
+            <span className="text-muted-foreground">Virtual Losses Tracked</span>
             <span className="font-mono font-bold text-foreground">{currentLossCount} / {requiredLosses}</span>
           </div>
           <Progress value={progress} className="h-3" />
-          {!isUnlocked && (
-            <p className="text-xs text-muted-foreground">
-              You must experience <span className="font-bold text-foreground">{remaining}</span> more losing virtual trade{remaining !== 1 ? 's' : ''} before real trading is unlocked.
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground">
+            You've experienced <span className="font-bold text-foreground">{currentLossCount}</span> virtual loss{currentLossCount !== 1 ? 'es' : ''}. 
+            {remaining > 0 && ` ${remaining} more to reach target.`}
+          </p>
         </div>
 
         {/* Stats Grid */}
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-muted/30 rounded-lg p-3 text-center">
-            <div className="text-[10px] text-muted-foreground uppercase">Required</div>
+            <div className="text-[10px] text-muted-foreground uppercase">Target</div>
             <div className="font-mono text-lg font-bold text-foreground">{requiredLosses}</div>
           </div>
           <div className="bg-muted/30 rounded-lg p-3 text-center">
@@ -98,16 +84,16 @@ export default function SettingsPage() {
             <div className="font-mono text-lg font-bold text-loss">{currentLossCount}</div>
           </div>
           <div className="bg-muted/30 rounded-lg p-3 text-center">
-            <div className="text-[10px] text-muted-foreground uppercase">Remaining</div>
+            <div className="text-[10px] text-muted-foreground uppercase">To Target</div>
             <div className="font-mono text-lg font-bold text-warning">{remaining}</div>
           </div>
         </div>
 
         {/* Config */}
         <div className="space-y-3 border-t border-border pt-4">
-          <h3 className="text-sm font-semibold text-foreground">Loss Requirement Settings</h3>
+          <h3 className="text-sm font-semibold text-foreground">Loss Tracking Settings</h3>
           <div>
-            <label className="text-xs text-muted-foreground">Required Losses Before Real Trading</label>
+            <label className="text-xs text-muted-foreground">Target Losses for Tracking</label>
             <Input
               type="number" min="1" max="50"
               value={requiredLosses}
@@ -122,17 +108,18 @@ export default function SettingsPage() {
             className="text-xs gap-1.5"
           >
             <RotateCcw className="w-3.5 h-3.5" />
-            Reset Loss Progress
+            Reset Loss Counter
           </Button>
         </div>
 
-        {/* Anti-Gaming Info */}
+        {/* Info - Updated message */}
         <div className="bg-muted/20 border border-border/50 rounded-lg p-3 text-[11px] text-muted-foreground space-y-1">
-          <p className="font-semibold text-foreground text-xs">Anti-Gaming Protection</p>
+          <p className="font-semibold text-foreground text-xs">Virtual Trading Stats</p>
           <p>• Trades must last at least 5 seconds to count</p>
           <p>• Minimum stake of $0.35 required</p>
           <p>• Rapid duplicate trades on the same symbol are ignored</p>
           <p>• After 3 losses, trades from multiple symbols are required</p>
+          <p className="text-profit mt-2">✓ Real trading is always available - this is just for tracking</p>
         </div>
       </motion.div>
     </div>
