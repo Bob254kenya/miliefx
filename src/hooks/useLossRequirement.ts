@@ -1,24 +1,27 @@
 import { useState, useCallback, useEffect } from 'react';
 
 const STORAGE_KEY = 'loss_requirement_state';
-const MIN_TRADE_DURATION_MS = 5000;
 
 interface LossState {
   currentLossCount: number;
   requiredLosses: number;
-  tradeHistory: { timestamp: number; stake: number; symbol: string; duration: number }[];
+  tradeHistory: any[];
   unlocked: boolean;
 }
 
+// Always return unlocked state
 function loadState(): LossState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return { currentLossCount: 0, requiredLosses: 5, tradeHistory: [], unlocked: false };
+  // Ignore any existing localStorage data and force unlocked
+  return { 
+    currentLossCount: 0,      // Count starts at 0
+    requiredLosses: 0,        // No losses required!
+    tradeHistory: [], 
+    unlocked: true             // Always unlocked
+  };
 }
 
 function saveState(state: LossState) {
+  // Save but we've already overridden to be unlocked
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
@@ -27,53 +30,44 @@ export function useLossRequirement() {
 
   useEffect(() => { saveState(state); }, [state]);
 
-  const remaining = Math.max(0, state.requiredLosses - state.currentLossCount);
-  const isUnlocked = state.currentLossCount >= state.requiredLosses;
+  // Always return unlocked values
+  const remaining = 0;                    // No losses remaining
+  const isUnlocked = true;                 // Always unlocked
 
+  // Record loss but never lock trading
   const recordLoss = useCallback((stake: number, symbol: string, durationMs: number) => {
-    setState(prev => {
-      // Anti-gaming: minimum duration
-      if (durationMs < MIN_TRADE_DURATION_MS) return prev;
-      // Anti-gaming: minimum stake
-      if (stake < 0.35) return prev;
-      // Anti-gaming: no duplicate rapid trades (same symbol within 3s)
-      const now = Date.now();
-      const recent = prev.tradeHistory.filter(t => now - t.timestamp < 3000 && t.symbol === symbol);
-      if (recent.length > 0) return prev;
-      // Anti-gaming: require at least 2 different symbols across all losses
-      const allSymbols = new Set(prev.tradeHistory.map(t => t.symbol));
-      allSymbols.add(symbol);
-      // Only enforce variation after 3 losses
-      if (prev.currentLossCount >= 3 && allSymbols.size < 2) return prev;
-
-      const newCount = prev.currentLossCount + 1;
-      const newHistory = [...prev.tradeHistory, { timestamp: now, stake, symbol, duration: durationMs }].slice(-50);
-      return {
-        ...prev,
-        currentLossCount: newCount,
-        tradeHistory: newHistory,
-        unlocked: newCount >= prev.requiredLosses,
-      };
-    });
+    // Just update count but keep unlocked
+    setState(prev => ({
+      ...prev,
+      currentLossCount: prev.currentLossCount + 1,
+      unlocked: true, // Force unlocked
+      tradeHistory: [
+        ...prev.tradeHistory, 
+        { timestamp: Date.now(), stake, symbol, duration: durationMs }
+      ].slice(-50)
+    }));
   }, []);
 
+  // Set required losses but keep unlocked
   const setRequiredLosses = useCallback((n: number) => {
     setState(prev => ({
       ...prev,
-      requiredLosses: Math.max(1, n),
-      unlocked: prev.currentLossCount >= Math.max(1, n),
+      requiredLosses: n,
+      unlocked: true, // Force unlocked
     }));
   }, []);
 
+  // Reset progress but stay unlocked
   const resetProgress = useCallback(() => {
-    setState(prev => ({
-      ...prev,
+    setState({
       currentLossCount: 0,
+      requiredLosses: 0,  // No losses required
       tradeHistory: [],
-      unlocked: false,
-    }));
+      unlocked: true,      // Stay unlocked
+    });
   }, []);
 
+  // Return all values - isUnlocked is ALWAYS true
   return {
     currentLossCount: state.currentLossCount,
     requiredLosses: state.requiredLosses,
@@ -83,4 +77,4 @@ export function useLossRequirement() {
     setRequiredLosses,
     resetProgress,
   };
-}
+                                    }
