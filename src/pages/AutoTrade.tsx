@@ -1,13 +1,13 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { derivApi } from '@/services/deriv-api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTickLoader } from '@/hooks/useTickLoader';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Play, StopCircle, Pause, TrendingUp, TrendingDown, CircleDot, RefreshCw, Trash2, DollarSign, Sparkles, Scan } from 'lucide-react';
+import { Loader2, Play, StopCircle, Pause, TrendingUp, TrendingDown, CircleDot, RefreshCw, Trash2, DollarSign, Sparkles, Scan, Brain, Zap, Shield, Award, Target, Flame, ChevronRight, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface MarketAnalysis {
   symbol: string;
@@ -26,6 +26,8 @@ interface MarketAnalysis {
   previousDigit: number;
   volatilityScore?: number;
   recommendedBot?: string;
+  aiConfidence?: number;
+  patternStrength?: number;
 }
 
 interface BotState {
@@ -50,6 +52,8 @@ interface BotState {
   recoveryMode: boolean;
   signal: boolean;
   currentMarketDigits?: number[];
+  aiVolatilityScore?: number;
+  aiRecommendedAction?: string;
 }
 
 interface TradeLog {
@@ -63,6 +67,7 @@ interface TradeLog {
   bot: string;
   lastDigit?: number;
   signalType?: string;
+  aiConfidence?: number;
 }
 
 const VOLATILITY_MARKETS = [
@@ -84,7 +89,103 @@ function waitForNextTick(symbol: string): Promise<{ quote: number; epoch: number
   });
 }
 
-// Play scanning sound
+// AI Volatility Analysis Engine
+const analyzeWithAI = (digits: number[]): { volatilityScore: number; confidence: number; pattern: string; recommendation: string } => {
+  if (digits.length < 700) {
+    return { volatilityScore: 0, confidence: 0, pattern: 'Insufficient data', recommendation: 'NEUTRAL' };
+  }
+  
+  const last700 = digits.slice(-700);
+  const counts: Record<number, number> = {};
+  for (let i = 0; i <= 9; i++) counts[i] = 0;
+  last700.forEach(d => counts[d]++);
+  
+  // Calculate distribution patterns
+  const distribution = Object.values(counts);
+  const maxCount = Math.max(...distribution);
+  const minCount = Math.min(...distribution);
+  const avgCount = distribution.reduce((a, b) => a + b, 0) / distribution.length;
+  const stdDev = Math.sqrt(distribution.map(x => Math.pow(x - avgCount, 2)).reduce((a, b) => a + b, 0) / distribution.length);
+  
+  // Detect streaks and patterns
+  let maxStreak = 1;
+  let currentStreak = 1;
+  for (let i = 1; i < last700.length; i++) {
+    if (last700[i] === last700[i-1]) {
+      currentStreak++;
+      maxStreak = Math.max(maxStreak, currentStreak);
+    } else {
+      currentStreak = 1;
+    }
+  }
+  
+  // Calculate volatility score based on multiple factors
+  const distributionVolatility = (stdDev / avgCount) * 10;
+  const streakVolatility = (maxStreak / 10) * 5;
+  const rangeVolatility = ((maxCount - minCount) / 700) * 15;
+  
+  let volatilityScore = Math.min(10, (distributionVolatility + streakVolatility + rangeVolatility) / 3);
+  
+  // Determine pattern and recommendation
+  let pattern = 'NEUTRAL';
+  let recommendation = 'NEUTRAL';
+  let confidence = 0;
+  
+  // AI pattern recognition
+  const recentDigits = last700.slice(-100);
+  const evenRecent = recentDigits.filter(d => d % 2 === 0).length / 100;
+  const oddRecent = recentDigits.filter(d => d % 2 === 1).length / 100;
+  const highRecent = recentDigits.filter(d => d > 5).length / 100;
+  const lowRecent = recentDigits.filter(d => d < 5).length / 100;
+  
+  if (evenRecent > 0.65) {
+    pattern = 'STRONG EVEN BIAS';
+    recommendation = 'EVEN';
+    confidence = Math.min(100, evenRecent * 100);
+  } else if (oddRecent > 0.65) {
+    pattern = 'STRONG ODD BIAS';
+    recommendation = 'ODD';
+    confidence = Math.min(100, oddRecent * 100);
+  } else if (highRecent > 0.7) {
+    pattern = 'HIGH NUMBER DOMINANCE';
+    recommendation = 'OVER 3';
+    confidence = Math.min(100, highRecent * 100);
+  } else if (lowRecent > 0.7) {
+    pattern = 'LOW NUMBER DOMINANCE';
+    recommendation = 'UNDER 6';
+    confidence = Math.min(100, lowRecent * 100);
+  } else {
+    // Check for extreme patterns
+    const extremeLow = recentDigits.filter(d => d <= 1).length / 100;
+    const extremeHigh = recentDigits.filter(d => d >= 8).length / 100;
+    
+    if (extremeLow > 0.4) {
+      pattern = 'EXTREME LOW PATTERN';
+      recommendation = 'OVER 1';
+      confidence = Math.min(100, extremeLow * 100);
+    } else if (extremeHigh > 0.4) {
+      pattern = 'EXTREME HIGH PATTERN';
+      recommendation = 'UNDER 8';
+      confidence = Math.min(100, extremeHigh * 100);
+    } else {
+      pattern = 'RANDOM DISTRIBUTION';
+      recommendation = 'NEUTRAL';
+      confidence = 50;
+    }
+  }
+  
+  // Adjust volatility score based on confidence
+  volatilityScore = volatilityScore * (confidence / 100);
+  
+  return {
+    volatilityScore: Math.round(volatilityScore * 10) / 10,
+    confidence: Math.round(confidence),
+    pattern,
+    recommendation
+  };
+};
+
+// Play scanning sound with animation
 const playScanSound = () => {
   try {
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -108,7 +209,6 @@ const playScanSound = () => {
   }
 };
 
-// Market analysis functions
 const analyzeMarket = (digits: number[]): MarketAnalysis => {
   if (digits.length < 700) return {} as MarketAnalysis;
   
@@ -236,6 +336,7 @@ export default function AutoTrade() {
   const [selectedMarket, setSelectedMarket] = useState<string>('R_100');
   const [marketAnalysis, setMarketAnalysis] = useState<Record<string, MarketAnalysis>>({});
   const [marketSignals, setMarketSignals] = useState<Record<string, Record<string, boolean>>>({});
+  const [aiAnalysis, setAiAnalysis] = useState<Record<string, { volatilityScore: number; confidence: number; pattern: string; recommendation: string }>>({});
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [globalStake, setGlobalStake] = useState<number>(0.5);
@@ -244,6 +345,8 @@ export default function AutoTrade() {
   const [globalTakeProfit, setGlobalTakeProfit] = useState<number>(5);
   const [selectedMarketForScan, setSelectedMarketForScan] = useState<string>('R_100');
   const [autoStartAll, setAutoStartAll] = useState(false);
+  const [showAIPanel, setShowAIPanel] = useState(true);
+  const [aiThinking, setAiThinking] = useState(false);
   
   const [trades, setTrades] = useState<TradeLog[]>([]);
   const tradeIdRef = useRef(0);
@@ -261,6 +364,13 @@ export default function AutoTrade() {
         ...prev,
         [selectedMarketForScan]: signals
       }));
+
+      // Run AI analysis
+      const aiResult = analyzeWithAI(digits);
+      setAiAnalysis(prev => ({
+        ...prev,
+        [selectedMarketForScan]: aiResult
+      }));
     }
   }, [digits, selectedMarketForScan]);
 
@@ -269,37 +379,37 @@ export default function AutoTrade() {
       id: 'bot1', name: 'OVER 3 BOT', type: 'over3', isRunning: false, isPaused: false, 
       currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, contractType: 'DIGITOVER', barrier: 3,
       status: 'idle', consecutiveLosses: 0, entryTriggered: false, cooldownRemaining: 0, recoveryMode: false,
-      signal: false
+      signal: false, aiVolatilityScore: 0, aiRecommendedAction: 'NEUTRAL'
     },
     { 
       id: 'bot2', name: 'UNDER 6 BOT', type: 'under6', isRunning: false, isPaused: false, 
       currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, contractType: 'DIGITUNDER', barrier: 6,
       status: 'idle', consecutiveLosses: 0, entryTriggered: false, cooldownRemaining: 0, recoveryMode: false,
-      signal: false
+      signal: false, aiVolatilityScore: 0, aiRecommendedAction: 'NEUTRAL'
     },
     { 
       id: 'bot3', name: 'EVEN BOT', type: 'even', isRunning: false, isPaused: false, 
       currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, contractType: 'DIGITEVEN',
       status: 'idle', consecutiveLosses: 0, entryTriggered: false, cooldownRemaining: 0, recoveryMode: false,
-      signal: false
+      signal: false, aiVolatilityScore: 0, aiRecommendedAction: 'NEUTRAL'
     },
     { 
       id: 'bot4', name: 'ODD BOT', type: 'odd', isRunning: false, isPaused: false, 
       currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, contractType: 'DIGITODD',
       status: 'idle', consecutiveLosses: 0, entryTriggered: false, cooldownRemaining: 0, recoveryMode: false,
-      signal: false
+      signal: false, aiVolatilityScore: 0, aiRecommendedAction: 'NEUTRAL'
     },
     { 
       id: 'bot5', name: 'OVER 1 BOT', type: 'over1', isRunning: false, isPaused: false, 
       currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, contractType: 'DIGITOVER', barrier: 1,
       status: 'idle', consecutiveLosses: 0, entryTriggered: false, cooldownRemaining: 0, recoveryMode: false,
-      signal: false
+      signal: false, aiVolatilityScore: 0, aiRecommendedAction: 'NEUTRAL'
     },
     { 
       id: 'bot6', name: 'UNDER 8 BOT', type: 'under8', isRunning: false, isPaused: false, 
       currentStake: 0.5, totalPnl: 0, trades: 0, wins: 0, losses: 0, contractType: 'DIGITUNDER', barrier: 8,
       status: 'idle', consecutiveLosses: 0, entryTriggered: false, cooldownRemaining: 0, recoveryMode: false,
-      signal: false
+      signal: false, aiVolatilityScore: 0, aiRecommendedAction: 'NEUTRAL'
     },
   ]);
 
@@ -333,6 +443,7 @@ export default function AutoTrade() {
     
     setIsScanning(true);
     setScanProgress(0);
+    setAiThinking(true);
     playScanSound();
     
     if (scanTimeoutRef.current) {
@@ -357,7 +468,8 @@ export default function AutoTrade() {
       
       const analysis: Record<string, MarketAnalysis> = {};
       const signals: Record<string, Record<string, boolean>> = {};
-      const volatilityMarkets: Record<string, { score: number, type: string }> = {};
+      const aiResults: Record<string, { volatilityScore: number; confidence: number; pattern: string; recommendation: string }> = {};
+      const volatilityMarkets: Record<string, { score: number, type: string, aiScore: number }> = {};
       
       for (const market of VOLATILITY_MARKETS) {
         const marketDigits = marketDigitsRef.current[market] || [];
@@ -366,6 +478,10 @@ export default function AutoTrade() {
           analysis[market].symbol = market;
           
           signals[market] = checkAllSignals(marketDigits);
+          
+          // Run AI analysis
+          const aiResult = analyzeWithAI(marketDigits);
+          aiResults[market] = aiResult;
           
           const sortedDigits = [...Array(10).keys()].sort((a, b) => {
             const countA = marketDigits.filter(d => d === a).length;
@@ -402,8 +518,15 @@ export default function AutoTrade() {
             }
           }
           
-          if (volatilityScore > 0) {
-            volatilityMarkets[market] = { score: volatilityScore, type: recommendedType };
+          // Combine with AI score
+          const combinedScore = (volatilityScore + aiResult.volatilityScore) / 2;
+          
+          if (combinedScore > 5) {
+            volatilityMarkets[market] = { 
+              score: combinedScore, 
+              type: recommendedType || aiResult.recommendation,
+              aiScore: aiResult.confidence
+            };
           }
         }
       }
@@ -412,56 +535,75 @@ export default function AutoTrade() {
       
       setMarketAnalysis(analysis);
       setMarketSignals(signals);
+      setAiAnalysis(aiResults);
       
+      // AI selects best markets based on volatility and confidence
       const bestMarkets: Record<string, string> = {};
-      const overMarkets = Object.entries(volatilityMarkets)
-        .filter(([_, data]) => data.type === 'OVER')
-        .sort((a, b) => b[1].score - a[1].score);
+      const aiOverMarkets = Object.entries(volatilityMarkets)
+        .filter(([_, data]) => data.type.includes('OVER'))
+        .sort((a, b) => (b[1].score * b[1].aiScore) - (a[1].score * a[1].aiScore));
       
-      const underMarkets = Object.entries(volatilityMarkets)
-        .filter(([_, data]) => data.type === 'UNDER')
-        .sort((a, b) => b[1].score - a[1].score);
+      const aiUnderMarkets = Object.entries(volatilityMarkets)
+        .filter(([_, data]) => data.type.includes('UNDER'))
+        .sort((a, b) => (b[1].score * b[1].aiScore) - (a[1].score * a[1].aiScore));
       
+      const aiEvenMarkets = Object.entries(volatilityMarkets)
+        .filter(([_, data]) => data.type.includes('EVEN'))
+        .sort((a, b) => (b[1].score * b[1].aiScore) - (a[1].score * a[1].aiScore));
+      
+      const aiOddMarkets = Object.entries(volatilityMarkets)
+        .filter(([_, data]) => data.type.includes('ODD'))
+        .sort((a, b) => (b[1].score * b[1].aiScore) - (a[1].score * a[1].aiScore));
+      
+      // Assign best markets to bots based on AI recommendation
       const overBots = ['over3', 'over1'];
       overBots.forEach((botType, index) => {
-        if (overMarkets[index]) {
-          bestMarkets[botType] = overMarkets[index][0];
+        if (aiOverMarkets[index]) {
+          bestMarkets[botType] = aiOverMarkets[index][0];
         }
       });
       
       const underBots = ['under6', 'under8'];
       underBots.forEach((botType, index) => {
-        if (underMarkets[index]) {
-          bestMarkets[botType] = underMarkets[index][0];
+        if (aiUnderMarkets[index]) {
+          bestMarkets[botType] = aiUnderMarkets[index][0];
         }
       });
       
-      const remainingMarkets = VOLATILITY_MARKETS.filter(m => 
-        !Object.values(bestMarkets).includes(m) && marketDigitsRef.current[m]?.length >= 700
-      );
-      
-      if (remainingMarkets.length >= 2) {
-        bestMarkets['even'] = remainingMarkets[0];
-        bestMarkets['odd'] = remainingMarkets[1];
+      if (aiEvenMarkets[0]) {
+        bestMarkets['even'] = aiEvenMarkets[0][0];
       }
       
-      setBots(prev => prev.map(bot => ({
-        ...bot,
-        selectedMarket: bestMarkets[bot.type] || bot.selectedMarket || Object.keys(marketDigitsRef.current)[0]
-      })));
+      if (aiOddMarkets[0]) {
+        bestMarkets['odd'] = aiOddMarkets[0][0];
+      }
+      
+      // Update bots with AI-selected markets
+      setBots(prev => prev.map(bot => {
+        const market = bestMarkets[bot.type];
+        const aiInfo = market ? aiResults[market] : null;
+        return {
+          ...bot,
+          selectedMarket: market || bot.selectedMarket || Object.keys(marketDigitsRef.current)[0],
+          aiVolatilityScore: aiInfo?.volatilityScore || 0,
+          aiRecommendedAction: aiInfo?.recommendation || 'NEUTRAL'
+        };
+      }));
       
       playScanSound();
-      toast.success(`Scan complete! Found ${Object.keys(volatilityMarkets).length} volatile markets`);
+      setAiThinking(false);
+      toast.success(`🤖 AI Scan complete! Found ${Object.keys(volatilityMarkets).length} high-probability markets`);
       
       // Auto-start all ready markets after scan
       setAutoStartAll(true);
       
     } catch (error) {
       console.error('Scan error:', error);
-      toast.error('Scan failed');
+      toast.error('AI Scan failed');
     } finally {
       setIsScanning(false);
       setScanProgress(100);
+      setAiThinking(false);
       if (scanTimeoutRef.current) {
         clearTimeout(scanTimeoutRef.current);
       }
@@ -482,7 +624,9 @@ export default function AutoTrade() {
       entryTriggered: false,
       cooldownRemaining: 0,
       recoveryMode: false,
-      signal: false
+      signal: false,
+      aiVolatilityScore: 0,
+      aiRecommendedAction: 'NEUTRAL'
     })));
     tradeIdRef.current = 0;
     toast.success('All data cleared');
@@ -622,7 +766,8 @@ export default function AutoTrade() {
           pnl: 0,
           bot: bot.name,
           lastDigit,
-          signalType: bot.type
+          signalType: bot.type,
+          aiConfidence: bot.aiVolatilityScore
         }, ...prev].slice(0, 100));
 
         const { contractId } = await derivApi.buyContract(params);
@@ -756,42 +901,40 @@ export default function AutoTrade() {
   const activeSignals = bots.filter(b => b.signal).length;
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 font-sans">
-      {/* Animated Dollar Background */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        {[...Array(50)].map((_, i) => (
+    <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-gray-900 via-indigo-900 to-purple-900 font-sans">
+      {/* Animated Background Elements */}
+      <div className="fixed inset-0 pointer-events-none">
+        {/* Gradient Orbs */}
+        <motion.div
+          className="absolute top-0 left-0 w-[500px] h-[500px] bg-purple-500/20 rounded-full blur-3xl"
+          animate={{
+            x: [0, 100, 0],
+            y: [0, 50, 0],
+          }}
+          transition={{
+            duration: 20,
+            repeat: Infinity,
+            ease: "linear"
+          }}
+        />
+        <motion.div
+          className="absolute bottom-0 right-0 w-[600px] h-[600px] bg-emerald-500/20 rounded-full blur-3xl"
+          animate={{
+            x: [0, -100, 0],
+            y: [0, -50, 0],
+          }}
+          transition={{
+            duration: 25,
+            repeat: Infinity,
+            ease: "linear"
+          }}
+        />
+        
+        {/* Floating Particles */}
+        {[...Array(30)].map((_, i) => (
           <motion.div
             key={i}
-            className="absolute text-emerald-500/10"
-            initial={{
-              x: Math.random() * window.innerWidth,
-              y: Math.random() * window.innerHeight,
-              rotate: Math.random() * 360,
-              scale: Math.random() * 0.5 + 0.5,
-            }}
-            animate={{
-              y: [null, -100, window.innerHeight + 100],
-              rotate: [null, Math.random() * 720, Math.random() * 360],
-              opacity: [0.1, 0.3, 0.1],
-            }}
-            transition={{
-              duration: Math.random() * 20 + 10,
-              repeat: Infinity,
-              ease: "linear",
-              delay: Math.random() * 10,
-            }}
-          >
-            <DollarSign className="w-12 h-12" />
-          </motion.div>
-        ))}
-      </div>
-
-      {/* Floating Dollar Icons Animation */}
-      <div className="fixed inset-0 pointer-events-none">
-        {[...Array(20)].map((_, i) => (
-          <motion.div
-            key={`float-${i}`}
-            className="absolute"
+            className="absolute w-1 h-1 bg-white/20 rounded-full"
             initial={{
               x: Math.random() * window.innerWidth,
               y: Math.random() * window.innerHeight,
@@ -799,260 +942,475 @@ export default function AutoTrade() {
             animate={{
               y: [null, Math.random() * -200, Math.random() * 200],
               x: [null, Math.random() * 100 - 50, Math.random() * 100 - 50],
-              rotate: [0, 360],
-              scale: [1, 1.2, 1],
+              opacity: [0.2, 0.5, 0.2],
             }}
             transition={{
-              duration: Math.random() * 15 + 10,
+              duration: Math.random() * 10 + 10,
               repeat: Infinity,
-              ease: "easeInOut",
+              ease: "linear",
             }}
-          >
-            <div className="text-yellow-500/5">
-              <DollarSign className="w-16 h-16" />
-            </div>
-          </motion.div>
+          />
         ))}
       </div>
 
       {/* Main Content */}
-      <div className="relative z-10 space-y-4 p-4">
-        {/* Header with totals */}
+      <div className="relative z-10 space-y-4 p-4 max-w-[1920px] mx-auto">
+        {/* Header Section */}
         <motion.div 
-          initial={{ y: -20, opacity: 0 }}
+          initial={{ y: -50, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="bg-black/40 backdrop-blur-xl border border-emerald-500/20 rounded-xl p-4 shadow-2xl shadow-emerald-500/5"
+          className="relative"
         >
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <motion.div
-                animate={{ rotate: [0, 360] }}
-                transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-              >
-                <DollarSign className="w-8 h-8 text-emerald-400" />
-              </motion.div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-emerald-400 to-yellow-400 bg-clip-text text-transparent">
-                🤖 6-Bot Auto Trading System
-              </h1>
-            </div>
-            
-            {/* CENTERED SCANNER BUTTON - HIGHLIGHTED */}
-            <div className="absolute left-1/2 transform -translate-x-1/2 flex items-center gap-2">
-              <motion.div
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                className="relative"
-              >
-                <Button
-                  onClick={scanMarket}
-                  disabled={isScanning}
-                  size="lg"
-                  className="relative px-6 py-5 text-base font-bold bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white border-2 border-yellow-400/50 shadow-lg shadow-emerald-500/20"
+          {/* Main Header Card */}
+          <div className="bg-black/40 backdrop-blur-xl border border-emerald-500/30 rounded-2xl p-6 shadow-2xl shadow-emerald-500/10">
+            {/* Title Row */}
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-4">
+                <motion.div
+                  animate={{ 
+                    rotate: 360,
+                    scale: [1, 1.2, 1],
+                  }}
+                  transition={{ 
+                    rotate: { duration: 20, repeat: Infinity, ease: "linear" },
+                    scale: { duration: 2, repeat: Infinity, ease: "easeInOut" }
+                  }}
+                  className="relative"
                 >
-                  {isScanning ? (
-                    <>
-                      <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                      SCANNING... {Math.round(scanProgress)}%
-                    </>
-                  ) : (
-                    <>
-                      <Scan className="w-5 h-5 mr-2" />
-                      SCAN MARKETS (20s)
-                    </>
-                  )}
-                </Button>
-                {isScanning && (
-                  <motion.div
-                    className="absolute -inset-1 rounded-xl bg-yellow-400/20 -z-10"
-                    animate={{ scale: [1, 1.2, 1] }}
-                    transition={{ duration: 1.5, repeat: Infinity }}
-                  />
-                )}
-              </motion.div>
-              
-              <Select value={selectedMarketForScan} onValueChange={setSelectedMarketForScan}>
-                <SelectTrigger className="w-[180px] h-10 bg-black/50 border-emerald-500/30 text-emerald-400">
-                  <SelectValue placeholder="Select market" />
-                </SelectTrigger>
-                <SelectContent className="bg-black/90 border-emerald-500/30">
-                  {VOLATILITY_MARKETS.map(market => (
-                    <SelectItem key={market} value={market} className="text-emerald-400 hover:bg-emerald-500/20">
-                      {getMarketDisplay(market)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  <div className="absolute inset-0 bg-emerald-500/30 blur-xl rounded-full" />
+                  <Brain className="w-10 h-10 text-emerald-400 relative z-10" />
+                </motion.div>
+                <div>
+                  <h1 className="text-3xl font-black bg-gradient-to-r from-emerald-400 via-yellow-400 to-emerald-400 bg-clip-text text-transparent">
+                    🤖 AI-POWERED AUTO TRADING SYSTEM
+                  </h1>
+                  <p className="text-emerald-400/60 text-sm mt-1 flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-yellow-400" />
+                    6 Advanced Bots with Neural Network Analysis
+                    <Zap className="w-4 h-4 text-yellow-400" />
+                  </p>
+                </div>
+              </div>
+
+              {/* Right Header Buttons */}
+              <div className="flex items-center gap-3">
+                {/* AI Panel Toggle Button */}
+                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                  <Button
+                    onClick={() => setShowAIPanel(!showAIPanel)}
+                    className={`relative px-4 py-2 rounded-xl font-bold transition-all duration-300 ${
+                      showAIPanel 
+                        ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-500/30' 
+                        : 'bg-black/40 text-purple-400 border border-purple-500/30 hover:bg-purple-500/20'
+                    }`}
+                  >
+                    <Brain className="w-4 h-4 mr-2" />
+                    {showAIPanel ? 'AI ACTIVE' : 'SHOW AI'}
+                  </Button>
+                </motion.div>
+
+                {/* Clear Button */}
+                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                  <Button 
+                    variant="destructive" 
+                    onClick={clearAll}
+                    className="bg-rose-500/20 hover:bg-rose-500/30 border-rose-500/30 text-rose-400 rounded-xl px-4 py-2"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" /> Clear All
+                  </Button>
+                </motion.div>
+
+                {/* Stop All Button */}
+                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                  <Button 
+                    variant="destructive" 
+                    onClick={stopAllBots} 
+                    disabled={!bots.some(b => b.isRunning)}
+                    className="bg-rose-500/20 hover:bg-rose-500/30 border-rose-500/30 text-rose-400 rounded-xl px-4 py-2"
+                  >
+                    <StopCircle className="w-4 h-4 mr-2" /> Stop All
+                  </Button>
+                </motion.div>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Button 
-                variant="destructive" 
-                size="sm" 
-                onClick={clearAll}
-                className="bg-rose-500/20 hover:bg-rose-500/30 border-rose-500/30 text-rose-400"
-              >
-                <Trash2 className="w-4 h-4 mr-1" /> Clear
-              </Button>
-              
-              <Button 
-                variant="destructive" 
-                size="sm" 
-                onClick={stopAllBots} 
-                disabled={!bots.some(b => b.isRunning)}
-                className="bg-rose-500/20 hover:bg-rose-500/30 border-rose-500/30 text-rose-400"
-              >
-                <StopCircle className="w-4 h-4 mr-1" /> Stop All
-              </Button>
-            </div>
-          </div>
-
-          {/* Scan Progress Bar */}
-          {isScanning && (
-            <motion.div 
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mb-3"
-            >
-              <div className="flex justify-between text-xs text-emerald-400 mb-1">
-                <span>🔍 Scanning markets for volatility...</span>
-                <span>{Math.round(scanProgress)}%</span>
-              </div>
-              <div className="w-full h-2 bg-black/50 rounded-full overflow-hidden border border-emerald-500/30">
-                <motion.div 
-                  className="h-full bg-gradient-to-r from-emerald-400 via-yellow-400 to-emerald-400"
-                  initial={{ width: 0 }}
-                  animate={{ width: `${scanProgress}%` }}
-                  transition={{ duration: 0.1 }}
-                />
-              </div>
-            </motion.div>
-          )}
-
-          {/* Global Stats */}
-          <div className="grid grid-cols-6 gap-3 text-sm">
-            {[
-              { label: 'Balance', value: `$${balance?.toFixed(2) || '0.00'}`, color: 'text-emerald-400' },
-              { label: 'Total P&L', value: `$${totalProfit.toFixed(2)}`, color: totalProfit >= 0 ? 'text-emerald-400' : 'text-rose-400' },
-              { label: 'Win Rate', value: `${winRate}%`, color: 'text-yellow-400' },
-              { label: 'Total Trades', value: totalTrades.toString(), color: 'text-blue-400' },
-              { label: 'Active', value: `${bots.filter(b => b.isRunning).length}/6`, color: 'text-purple-400' },
-              { label: 'Signals', value: activeSignals.toString(), color: 'text-yellow-400' },
-            ].map((stat, i) => (
+            {/* SCANNER SECTION - CENTERED AND HIGHLIGHTED */}
+            <div className="flex flex-col items-center mb-8">
               <motion.div
-                key={i}
-                initial={{ scale: 0 }}
+                initial={{ scale: 0.9 }}
                 animate={{ scale: 1 }}
-                transition={{ delay: i * 0.1 }}
-                className="bg-black/40 backdrop-blur border border-emerald-500/20 rounded-lg p-2"
+                transition={{ duration: 0.5, repeat: Infinity, repeatType: "reverse" }}
+                className="relative mb-4"
               >
-                <div className="text-emerald-400/60 text-xs font-medium">{stat.label}</div>
-                <div className={`font-bold text-lg font-mono ${stat.color}`}>{stat.value}</div>
+                <div className="absolute inset-0 bg-gradient-to-r from-emerald-500 to-yellow-500 rounded-full blur-xl opacity-50" />
+                <div className="relative bg-black/60 backdrop-blur-xl rounded-full p-1 border-2 border-emerald-500/50">
+                  <Button
+                    onClick={scanMarket}
+                    disabled={isScanning}
+                    size="lg"
+                    className="relative px-12 py-8 text-2xl font-black bg-gradient-to-r from-emerald-600 via-emerald-500 to-yellow-500 hover:from-emerald-700 hover:via-emerald-600 hover:to-yellow-600 text-white rounded-full shadow-2xl"
+                  >
+                    {isScanning ? (
+                      <>
+                        <Loader2 className="w-8 h-8 mr-3 animate-spin" />
+                        AI SCANNING... {Math.round(scanProgress)}%
+                      </>
+                    ) : (
+                      <>
+                        <Scan className="w-8 h-8 mr-3 animate-pulse" />
+                        START AI MARKET SCAN (20s)
+                      </>
+                    )}
+                  </Button>
+                </div>
               </motion.div>
-            ))}
-          </div>
 
-          {/* Settings */}
-          <div className="grid grid-cols-4 gap-3 mt-3">
-            {[
-              { label: 'Stake ($)', value: globalStake, setter: setGlobalStake, step: '0.1', min: '0.1' },
-              { label: 'Multiplier', value: globalMultiplier, setter: setGlobalMultiplier, step: '0.1', min: '1.1' },
-              { label: 'Stop Loss ($)', value: globalStopLoss, setter: setGlobalStopLoss, step: '1', min: '1' },
-              { label: 'Take Profit ($)', value: globalTakeProfit, setter: setGlobalTakeProfit, step: '1', min: '1' },
-            ].map((setting, i) => (
-              <div key={i} className="bg-black/40 backdrop-blur border border-emerald-500/20 rounded-lg p-2">
-                <label className="text-xs text-emerald-400/60 font-medium">{setting.label}</label>
-                <input 
-                  type="number" 
-                  value={setting.value} 
-                  onChange={(e) => setting.setter(parseFloat(e.target.value) || 0.5)}
-                  className="w-full bg-black/50 border border-emerald-500/30 rounded-lg px-2 py-1 text-sm text-emerald-400 focus:outline-none focus:border-emerald-400 font-mono"
-                  step={setting.step}
-                  min={setting.min}
-                />
-              </div>
-            ))}
+              {/* Market Selector Button */}
+              <motion.div whileHover={{ scale: 1.02 }} className="flex gap-2">
+                <Select value={selectedMarketForScan} onValueChange={setSelectedMarketForScan}>
+                  <SelectTrigger className="w-[250px] h-12 bg-black/50 border-emerald-500/30 text-emerald-400 rounded-xl">
+                    <SelectValue placeholder="Select market to monitor" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-black/90 border-emerald-500/30 rounded-xl">
+                    {VOLATILITY_MARKETS.map(market => (
+                      <SelectItem key={market} value={market} className="text-emerald-400 hover:bg-emerald-500/20">
+                        {getMarketDisplay(market)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </motion.div>
+
+              {/* Scan Progress Bar */}
+              <AnimatePresence>
+                {isScanning && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -20 }}
+                    className="w-full max-w-2xl mt-4"
+                  >
+                    <div className="flex justify-between text-sm text-emerald-400 mb-2">
+                      <span className="flex items-center gap-2">
+                        <Brain className="w-4 h-4 animate-pulse" />
+                        AI Neural Network Analyzing...
+                      </span>
+                      <span className="font-mono">{Math.round(scanProgress)}%</span>
+                    </div>
+                    <div className="w-full h-4 bg-black/50 rounded-full overflow-hidden border border-emerald-500/30">
+                      <motion.div 
+                        className="h-full bg-gradient-to-r from-emerald-400 via-yellow-400 to-purple-400"
+                        style={{ width: `${scanProgress}%` }}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${scanProgress}%` }}
+                        transition={{ duration: 0.1 }}
+                      />
+                    </div>
+                    {aiThinking && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="mt-2 text-center text-purple-400 text-sm flex items-center justify-center gap-2"
+                      >
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        AI calculating optimal volatility patterns...
+                      </motion.div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Global Stats Grid */}
+            <div className="grid grid-cols-6 gap-4">
+              {[
+                { 
+                  icon: <DollarSign className="w-5 h-5" />,
+                  label: 'Balance', 
+                  value: `$${balance?.toFixed(2) || '0.00'}`, 
+                  color: 'text-emerald-400',
+                  bg: 'from-emerald-500/20 to-emerald-500/5'
+                },
+                { 
+                  icon: <TrendingUp className="w-5 h-5" />,
+                  label: 'Total P&L', 
+                  value: `$${totalProfit.toFixed(2)}`, 
+                  color: totalProfit >= 0 ? 'text-emerald-400' : 'text-rose-400',
+                  bg: totalProfit >= 0 ? 'from-emerald-500/20 to-emerald-500/5' : 'from-rose-500/20 to-rose-500/5'
+                },
+                { 
+                  icon: <Award className="w-5 h-5" />,
+                  label: 'Win Rate', 
+                  value: `${winRate}%`, 
+                  color: 'text-yellow-400',
+                  bg: 'from-yellow-500/20 to-yellow-500/5'
+                },
+                { 
+                  icon: <Target className="w-5 h-5" />,
+                  label: 'Total Trades', 
+                  value: totalTrades.toString(), 
+                  color: 'text-blue-400',
+                  bg: 'from-blue-500/20 to-blue-500/5'
+                },
+                { 
+                  icon: <Zap className="w-5 h-5" />,
+                  label: 'Active', 
+                  value: `${bots.filter(b => b.isRunning).length}/6`, 
+                  color: 'text-purple-400',
+                  bg: 'from-purple-500/20 to-purple-500/5'
+                },
+                { 
+                  icon: <Flame className="w-5 h-5" />,
+                  label: 'Signals', 
+                  value: activeSignals.toString(), 
+                  color: 'text-yellow-400',
+                  bg: 'from-yellow-500/20 to-yellow-500/5'
+                },
+              ].map((stat, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ scale: 0, rotate: -10 }}
+                  animate={{ scale: 1, rotate: 0 }}
+                  transition={{ delay: i * 0.1, type: "spring" }}
+                  className={`bg-gradient-to-br ${stat.bg} backdrop-blur border border-emerald-500/20 rounded-xl p-4 shadow-lg`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className={`${stat.color}`}>{stat.icon}</div>
+                    <div className={`text-xs ${stat.color}/60 font-medium`}>{stat.label}</div>
+                  </div>
+                  <div className={`font-black text-2xl font-mono ${stat.color}`}>{stat.value}</div>
+                </motion.div>
+              ))}
+            </div>
+
+            {/* Settings Grid */}
+            <div className="grid grid-cols-4 gap-4 mt-4">
+              {[
+                { icon: <DollarSign className="w-4 h-4" />, label: 'Stake ($)', value: globalStake, setter: setGlobalStake, step: '0.1', min: '0.1', color: 'emerald' },
+                { icon: <RefreshCw className="w-4 h-4" />, label: 'Multiplier', value: globalMultiplier, setter: setGlobalMultiplier, step: '0.1', min: '1.1', color: 'blue' },
+                { icon: <Shield className="w-4 h-4" />, label: 'Stop Loss ($)', value: globalStopLoss, setter: setGlobalStopLoss, step: '1', min: '1', color: 'rose' },
+                { icon: <Award className="w-4 h-4" />, label: 'Take Profit ($)', value: globalTakeProfit, setter: setGlobalTakeProfit, step: '1', min: '1', color: 'yellow' },
+              ].map((setting, i) => (
+                <motion.div
+                  key={i}
+                  whileHover={{ scale: 1.02 }}
+                  className="bg-black/40 backdrop-blur border border-emerald-500/20 rounded-xl p-3"
+                >
+                  <label className={`flex items-center gap-1 text-xs text-${setting.color}-400/60 font-medium mb-1`}>
+                    {setting.icon}
+                    {setting.label}
+                  </label>
+                  <input 
+                    type="number" 
+                    value={setting.value} 
+                    onChange={(e) => setting.setter(parseFloat(e.target.value) || 0.5)}
+                    className={`w-full bg-black/50 border border-${setting.color}-500/30 rounded-lg px-3 py-2 text-sm text-${setting.color}-400 focus:outline-none focus:border-${setting.color}-400 font-mono`}
+                    step={setting.step}
+                    min={setting.min}
+                  />
+                </motion.div>
+              ))}
+            </div>
           </div>
         </motion.div>
 
+        {/* AI Analysis Panel */}
+        <AnimatePresence>
+          {showAIPanel && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="bg-gradient-to-r from-purple-900/40 via-indigo-900/40 to-purple-900/40 backdrop-blur-xl border border-purple-500/30 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Brain className="w-5 h-5 text-purple-400" />
+                  <h3 className="text-sm font-semibold text-purple-400">🤖 AI NEURAL NETWORK ANALYSIS</h3>
+                  <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30">LIVE</Badge>
+                </div>
+                <div className="grid grid-cols-4 gap-3">
+                  {Object.entries(aiAnalysis).slice(0, 8).map(([market, data]) => (
+                    <motion.div
+                      key={market}
+                      whileHover={{ scale: 1.02 }}
+                      className="bg-black/40 backdrop-blur border border-purple-500/30 rounded-lg p-2"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-bold text-purple-400">{getMarketDisplay(market)}</span>
+                        <Badge className={`text-[8px] px-1 py-0 ${
+                          data.confidence > 80 ? 'bg-emerald-500/20 text-emerald-400' :
+                          data.confidence > 60 ? 'bg-yellow-500/20 text-yellow-400' :
+                          'bg-purple-500/20 text-purple-400'
+                        }`}>
+                          {data.confidence}%
+                        </Badge>
+                      </div>
+                      <div className="flex items-center gap-1 text-[8px]">
+                        <span className="text-purple-400/60">Vol:</span>
+                        <span className="font-mono text-purple-400">{data.volatilityScore.toFixed(1)}</span>
+                        <span className="text-purple-400/60 ml-1">Pat:</span>
+                        <span className="font-mono text-purple-400 truncate">{data.pattern}</span>
+                      </div>
+                      <div className="text-[8px] mt-1">
+                        <span className="text-purple-400/60">AI Rec: </span>
+                        <span className={`font-bold ${
+                          data.recommendation.includes('OVER') ? 'text-blue-400' :
+                          data.recommendation.includes('UNDER') ? 'text-orange-400' :
+                          data.recommendation === 'EVEN' ? 'text-emerald-400' :
+                          data.recommendation === 'ODD' ? 'text-purple-400' :
+                          'text-yellow-400'
+                        }`}>
+                          {data.recommendation}
+                        </span>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Bots Grid */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-3 gap-4">
           {bots.map((bot, index) => {
             const marketData = bot.selectedMarket ? marketAnalysis[bot.selectedMarket] : null;
             const marketSignal = bot.selectedMarket && marketSignals[bot.selectedMarket] 
               ? marketSignals[bot.selectedMarket][bot.type] 
               : false;
+            const aiData = bot.selectedMarket ? aiAnalysis[bot.selectedMarket] : null;
             
             return (
               <motion.div
                 key={bot.id}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.1 }}
-                className={`bg-black/40 backdrop-blur-xl border rounded-xl p-3 shadow-xl ${
-                  bot.isRunning ? 'border-emerald-400 ring-2 ring-emerald-400/20' : 'border-emerald-500/20'
-                } ${bot.signal ? 'ring-2 ring-yellow-500/50' : ''}`}
+                whileHover={{ scale: 1.02 }}
+                className={`relative bg-gradient-to-br from-gray-900/90 to-gray-800/90 backdrop-blur-xl border rounded-xl p-4 shadow-xl overflow-hidden ${
+                  bot.isRunning ? 'border-emerald-400 ring-2 ring-emerald-400/20' : 
+                  bot.signal ? 'border-yellow-400 ring-2 ring-yellow-400/20' : 
+                  'border-emerald-500/20'
+                }`}
               >
+                {/* Background Glow */}
+                <motion.div
+                  className="absolute inset-0 bg-gradient-to-r from-emerald-500/5 to-purple-500/5"
+                  animate={{
+                    opacity: bot.isRunning ? [0.3, 0.5, 0.3] : 0.1,
+                  }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                />
+
                 {/* Header */}
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
+                <div className="relative z-10 flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
                     <motion.div
-                      animate={bot.isRunning ? { rotate: 360 } : {}}
-                      transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
-                      className={`p-1.5 rounded-lg ${
+                      animate={bot.isRunning ? { 
+                        rotate: 360,
+                        scale: [1, 1.2, 1],
+                      } : {}}
+                      transition={{ 
+                        rotate: { duration: 3, repeat: Infinity, ease: "linear" },
+                        scale: { duration: 2, repeat: Infinity }
+                      }}
+                      className={`p-2.5 rounded-xl ${
                         bot.type === 'over3' || bot.type === 'over1' ? 'bg-blue-500/20 text-blue-400' :
                         bot.type === 'under6' || bot.type === 'under8' ? 'bg-orange-500/20 text-orange-400' :
                         bot.type === 'even' ? 'bg-emerald-500/20 text-emerald-400' :
                         'bg-purple-500/20 text-purple-400'
                       }`}
                     >
-                      {bot.type.includes('over') ? <TrendingUp className="w-4 h-4" /> :
-                       bot.type.includes('under') ? <TrendingDown className="w-4 h-4" /> :
-                       <CircleDot className="w-4 h-4" />}
+                      {bot.type.includes('over') ? <TrendingUp className="w-5 h-5" /> :
+                       bot.type.includes('under') ? <TrendingDown className="w-5 h-5" /> :
+                       <CircleDot className="w-5 h-5" />}
                     </motion.div>
                     <div>
-                      <h4 className="font-bold text-sm text-emerald-400">{bot.name}</h4>
-                      <p className="text-[9px] text-emerald-400/60 font-mono">
+                      <h4 className="font-bold text-base text-emerald-400">{bot.name}</h4>
+                      <p className="text-[10px] text-emerald-400/60 font-mono">
                         {bot.contractType} {bot.barrier !== undefined ? `| B${bot.barrier}` : ''}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-2">
                     {bot.signal && (
-                      <Badge variant="default" className="bg-yellow-500/20 text-yellow-400 text-[8px] px-1 py-0 border-yellow-500/30 font-bold">
-                        SIGNAL
-                      </Badge>
+                      <motion.div
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                        transition={{ type: "spring" }}
+                      >
+                        <Badge className="bg-yellow-500/20 text-yellow-400 text-[9px] px-2 py-0.5 border-yellow-500/30 font-bold">
+                          SIGNAL
+                        </Badge>
+                      </motion.div>
                     )}
-                    <Badge variant={bot.isRunning ? "default" : "secondary"} className={`text-[9px] font-mono ${
+                    <Badge className={`text-[9px] font-mono ${
                       bot.isRunning ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-500/20 text-gray-400'
                     }`}>
-                      {bot.isRunning ? (bot.isPaused ? '⏸️' : '▶️') : '⏹️'}
+                      {bot.isRunning ? (bot.isPaused ? '⏸️ PAUSED' : '▶️ RUNNING') : '⏹️ STOPPED'}
                     </Badge>
                   </div>
                 </div>
 
+                {/* AI Score Badge */}
+                {bot.aiVolatilityScore && bot.aiVolatilityScore > 0 && (
+                  <motion.div
+                    initial={{ x: -100 }}
+                    animate={{ x: 0 }}
+                    className="absolute top-2 right-2"
+                  >
+                    <Badge className="bg-purple-500/20 text-purple-400 text-[8px] border-purple-500/30">
+                      AI: {bot.aiVolatilityScore.toFixed(1)}
+                    </Badge>
+                  </motion.div>
+                )}
+
                 {/* Market & Analysis */}
-                <div className="bg-black/40 backdrop-blur border border-emerald-500/20 rounded-lg p-2 mb-2 text-[10px]">
-                  <div className="flex justify-between items-center">
+                <div className="relative z-10 bg-black/40 backdrop-blur border border-emerald-500/20 rounded-lg p-2 mb-2 text-[10px]">
+                  <div className="flex justify-between items-center mb-1">
                     <span className="text-emerald-400/60 font-medium">Market:</span>
                     <span className="font-mono font-bold text-emerald-400">
                       {bot.selectedMarket ? getMarketDisplay(bot.selectedMarket) : '—'}
                     </span>
                   </div>
+                  
                   {marketData && (
                     <>
-                      <div className="flex justify-between mt-1 text-emerald-400/80 font-mono">
+                      <div className="flex justify-between text-emerald-400/80 font-mono">
                         <span>Most: {marketData.mostAppearing}</span>
                         <span>2nd: {marketData.secondMost}</span>
                         <span>Least: {marketData.leastAppearing}</span>
                       </div>
-                      {marketData.volatilityScore && (
-                        <div className="flex justify-between mt-1 text-[8px]">
-                          <span className="text-yellow-400 font-medium">Volatility: {marketData.volatilityScore}/10</span>
-                          {marketData.recommendedBot && (
-                            <span className="text-emerald-400 font-medium">Rec: {marketData.recommendedBot}</span>
-                          )}
+                      
+                      {/* AI Analysis */}
+                      {aiData && (
+                        <div className="mt-1 pt-1 border-t border-purple-500/20">
+                          <div className="flex justify-between text-[8px]">
+                            <span className="text-purple-400 flex items-center gap-1">
+                              <Brain className="w-3 h-3" />
+                              AI: {aiData.pattern}
+                            </span>
+                            <span className={`font-bold ${
+                              aiData.recommendation === bot.type.toUpperCase() ? 'text-emerald-400' : 'text-purple-400/60'
+                            }`}>
+                              Rec: {aiData.recommendation}
+                            </span>
+                          </div>
+                          <div className="flex justify-between mt-1">
+                            <span className="text-purple-400/60">Confidence:</span>
+                            <div className="w-16 h-1.5 bg-black/50 rounded-full overflow-hidden">
+                              <motion.div
+                                className="h-full bg-purple-400"
+                                initial={{ width: 0 }}
+                                animate={{ width: `${aiData.confidence}%` }}
+                                transition={{ duration: 1 }}
+                              />
+                            </div>
+                          </div>
                         </div>
                       )}
+
                       <div className="flex justify-between mt-1 text-[8px]">
                         <span className="text-emerald-400/60 font-mono">Last: {marketData.lastDigit}</span>
                         <span className="text-emerald-400/60 font-mono">Prev: {marketData.previousDigit}</span>
@@ -1064,73 +1422,81 @@ export default function AutoTrade() {
                   )}
                 </div>
 
-                {/* Stats */}
+                {/* Stats Grid */}
                 <div className="grid grid-cols-3 gap-1 text-[10px] mb-2">
-                  <div>
-                    <span className="text-emerald-400/60">P&L:</span>
-                    <span className={`ml-1 font-mono ${
+                  <div className="bg-black/20 rounded p-1">
+                    <span className="text-emerald-400/60 block">P&L</span>
+                    <span className={`font-mono font-bold ${
                       bot.totalPnl > 0 ? 'text-emerald-400' : bot.totalPnl < 0 ? 'text-rose-400' : 'text-yellow-400'
                     }`}>
                       ${bot.totalPnl.toFixed(2)}
                     </span>
                   </div>
-                  <div>
-                    <span className="text-emerald-400/60">Wins:</span>
-                    <span className="ml-1 font-mono text-emerald-400">{bot.wins}</span>
+                  <div className="bg-black/20 rounded p-1">
+                    <span className="text-emerald-400/60 block">W/L</span>
+                    <span className="font-mono text-emerald-400">{bot.wins}</span>
+                    <span className="font-mono text-rose-400 ml-1">/{bot.losses}</span>
                   </div>
-                  <div>
-                    <span className="text-emerald-400/60">Losses:</span>
-                    <span className="ml-1 font-mono text-rose-400">{bot.losses}</span>
+                  <div className="bg-black/20 rounded p-1">
+                    <span className="text-emerald-400/60 block">Win%</span>
+                    <span className="font-mono text-yellow-400">
+                      {bot.trades > 0 ? ((bot.wins / bot.trades) * 100).toFixed(0) : 0}%
+                    </span>
                   </div>
                 </div>
 
-                {/* Status */}
-                <div className="flex items-center justify-between text-[9px] mb-2">
+                {/* Status Bar */}
+                <div className="flex items-center justify-between text-[9px] mb-2 bg-black/20 rounded p-1">
                   <span className="text-emerald-400/60">Status:</span>
-                  <span className={`font-mono ${
+                  <span className={`font-mono flex items-center gap-1 ${
                     bot.status === 'trading' ? 'text-emerald-400' :
                     bot.status === 'waiting' ? 'text-yellow-400' :
                     bot.status === 'cooldown' ? 'text-purple-400' :
                     'text-gray-400'
                   }`}>
-                    {bot.status === 'trading' ? '📈 Trading' :
-                     bot.status === 'waiting' ? '⏳ Waiting' :
-                     bot.status === 'cooldown' ? `⏱️ Cooldown ${bot.cooldownRemaining}` :
-                     '⚫ Idle'}
+                    {bot.status === 'trading' && <><Zap className="w-3 h-3" /> TRADING</>}
+                    {bot.status === 'waiting' && <><Loader2 className="w-3 h-3 animate-spin" /> WAITING</>}
+                    {bot.status === 'cooldown' && <><Shield className="w-3 h-3" /> COOLDOWN {bot.cooldownRemaining}</>}
+                    {bot.status === 'idle' && <>⚫ IDLE</>}
                   </span>
                   <span className="text-emerald-400/60">Stake:</span>
                   <span className="font-mono text-emerald-400">${bot.currentStake.toFixed(2)}</span>
                 </div>
 
-                {/* Controls */}
-                <div className="flex gap-1">
+                {/* Control Buttons */}
+                <div className="relative z-10 flex gap-2">
                   {!bot.isRunning ? (
-                    <Button
-                      onClick={() => startBot(bot.id)}
-                      disabled={!isAuthorized || balance < globalStake || activeTradeId !== null || !bot.selectedMarket}
-                      size="sm"
-                      className="flex-1 h-7 text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 font-medium"
-                    >
-                      <Play className="w-3 h-3 mr-1" /> Start
-                    </Button>
+                    <motion.div className="flex-1" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
+                      <Button
+                        onClick={() => startBot(bot.id)}
+                        disabled={!isAuthorized || balance < globalStake || activeTradeId !== null || !bot.selectedMarket}
+                        className="w-full h-8 text-xs bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white rounded-lg font-bold"
+                      >
+                        <Play className="w-3 h-3 mr-1" /> START
+                      </Button>
+                    </motion.div>
                   ) : (
                     <>
-                      <Button
-                        onClick={() => pauseBot(bot.id)}
-                        size="sm"
-                        variant="outline"
-                        className="flex-1 h-7 text-xs border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 font-medium"
-                      >
-                        <Pause className="w-3 h-3 mr-1" /> {bot.isPaused ? 'Resume' : 'Pause'}
-                      </Button>
-                      <Button
-                        onClick={() => stopBot(bot.id)}
-                        size="sm"
-                        variant="destructive"
-                        className="flex-1 h-7 text-xs bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30 font-medium"
-                      >
-                        <StopCircle className="w-3 h-3 mr-1" /> Stop
-                      </Button>
+                      <motion.div className="flex-1" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
+                        <Button
+                          onClick={() => pauseBot(bot.id)}
+                          className={`w-full h-8 text-xs rounded-lg font-bold ${
+                            bot.isPaused 
+                              ? 'bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white' 
+                              : 'bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 border border-yellow-500/30'
+                          }`}
+                        >
+                          <Pause className="w-3 h-3 mr-1" /> {bot.isPaused ? 'RESUME' : 'PAUSE'}
+                        </Button>
+                      </motion.div>
+                      <motion.div className="flex-1" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
+                        <Button
+                          onClick={() => stopBot(bot.id)}
+                          className="w-full h-8 text-xs bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30 rounded-lg font-bold"
+                        >
+                          <StopCircle className="w-3 h-3 mr-1" /> STOP
+                        </Button>
+                      </motion.div>
                     </>
                   )}
                 </div>
@@ -1143,40 +1509,57 @@ export default function AutoTrade() {
         <motion.div 
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="bg-black/40 backdrop-blur-xl border border-emerald-500/20 rounded-xl p-3"
+          className="bg-black/40 backdrop-blur-xl border border-emerald-500/20 rounded-xl p-4"
         >
-          <h3 className="text-sm font-semibold mb-2 text-emerald-400 flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-yellow-400" />
-            📡 Live Signals - All Markets
-            <Sparkles className="w-4 h-4 text-yellow-400" />
-          </h3>
-          <div className="grid grid-cols-4 gap-2 max-h-[200px] overflow-y-auto">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-emerald-400 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-yellow-400" />
+              📡 LIVE SIGNALS - ALL MARKETS
+            </h3>
+            <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+              {Object.keys(marketSignals).length} Markets
+            </Badge>
+          </div>
+          
+          <div className="grid grid-cols-5 gap-2 max-h-[250px] overflow-y-auto">
             {Object.entries(marketSignals).map(([market, signals]) => {
               const hasAnySignal = Object.values(signals).some(v => v);
               if (!hasAnySignal) return null;
+              const aiInfo = aiAnalysis[market];
               
               return (
                 <motion.div 
                   key={market} 
                   whileHover={{ scale: 1.02 }}
-                  className="bg-black/40 backdrop-blur border border-yellow-500/30 rounded-lg p-2 text-[10px]"
+                  className="bg-gradient-to-br from-black/60 to-black/40 backdrop-blur border border-yellow-500/30 rounded-lg p-2"
                 >
-                  <div className="font-bold mb-1 text-yellow-400">{getMarketDisplay(market)}</div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-xs text-yellow-400">{getMarketDisplay(market)}</span>
+                    {aiInfo && (
+                      <Badge className="bg-purple-500/20 text-purple-400 text-[7px] border-purple-500/30">
+                        AI:{aiInfo.confidence}%
+                      </Badge>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-1">
-                    {signals.over3 && <Badge className="bg-blue-500/20 text-blue-400 text-[8px] border-blue-500/30 font-medium">OVER 3</Badge>}
-                    {signals.under6 && <Badge className="bg-orange-500/20 text-orange-400 text-[8px] border-orange-500/30 font-medium">UNDER 6</Badge>}
-                    {signals.over1 && <Badge className="bg-blue-500/20 text-blue-400 text-[8px] border-blue-500/30 font-medium">OVER 1</Badge>}
-                    {signals.under8 && <Badge className="bg-orange-500/20 text-orange-400 text-[8px] border-orange-500/30 font-medium">UNDER 8</Badge>}
-                    {signals.even && <Badge className="bg-emerald-500/20 text-emerald-400 text-[8px] border-emerald-500/30 font-medium">EVEN</Badge>}
-                    {signals.odd && <Badge className="bg-purple-500/20 text-purple-400 text-[8px] border-purple-500/30 font-medium">ODD</Badge>}
+                    {signals.over3 && <Badge className="bg-blue-500/20 text-blue-400 text-[7px] border-blue-500/30">OVER 3</Badge>}
+                    {signals.under6 && <Badge className="bg-orange-500/20 text-orange-400 text-[7px] border-orange-500/30">UNDER 6</Badge>}
+                    {signals.over1 && <Badge className="bg-blue-500/20 text-blue-400 text-[7px] border-blue-500/30">OVER 1</Badge>}
+                    {signals.under8 && <Badge className="bg-orange-500/20 text-orange-400 text-[7px] border-orange-500/30">UNDER 8</Badge>}
+                    {signals.even && <Badge className="bg-emerald-500/20 text-emerald-400 text-[7px] border-emerald-500/30">EVEN</Badge>}
+                    {signals.odd && <Badge className="bg-purple-500/20 text-purple-400 text-[7px] border-purple-500/30">ODD</Badge>}
                   </div>
                 </motion.div>
               );
             })}
             {Object.keys(marketSignals).length === 0 && (
-              <p className="text-xs text-emerald-400/60 col-span-4 text-center py-2 font-medium">
-                🔍 No active signals. Click the SCAN MARKETS button to analyze.
-              </p>
+              <motion.p 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="text-sm text-emerald-400/60 col-span-5 text-center py-4"
+              >
+                🔍 No active signals. Click the AI SCAN button to analyze markets.
+              </motion.p>
             )}
           </div>
         </motion.div>
@@ -1186,50 +1569,83 @@ export default function AutoTrade() {
           initial={{ y: 20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.2 }}
-          className="bg-black/40 backdrop-blur-xl border border-emerald-500/20 rounded-xl p-3"
+          className="bg-black/40 backdrop-blur-xl border border-emerald-500/20 rounded-xl p-4"
         >
-          <h3 className="text-sm font-semibold mb-2 text-emerald-400">📋 Live Trade Log</h3>
-          <div className="space-y-1 max-h-[300px] overflow-y-auto">
-            {trades.length === 0 ? (
-              <p className="text-xs text-emerald-400/60 text-center py-4 font-medium">No trades yet</p>
-            ) : (
-              trades.map((trade, idx) => (
-                <motion.div 
-                  key={idx} 
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: idx * 0.02 }}
-                  className="flex items-center justify-between text-xs py-1 border-b border-emerald-500/10 last:border-0"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-emerald-400/60 font-mono">{trade.time}</span>
-                    <Badge variant="outline" className="text-[8px] px-1 py-0 border-emerald-500/30 text-emerald-400 font-mono">
-                      {trade.bot}
-                    </Badge>
-                    <span className="font-mono text-[10px] text-emerald-400">
-                      {trade.market.includes('1HZ') ? '⚡' : trade.market.includes('BOOM') ? '💥' : '📊'} {trade.market}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-[10px] text-emerald-400">
-                      Last: {trade.lastDigit !== undefined ? trade.lastDigit : '—'}
-                    </span>
-                    <span className="font-mono text-emerald-400">${trade.stake.toFixed(2)}</span>
-                    <span className={`font-mono w-16 text-right ${
-                      trade.result === 'Win' ? 'text-emerald-400' : 
-                      trade.result === 'Loss' ? 'text-rose-400' : 'text-yellow-400'
-                    }`}>
-                      {trade.result === 'Win' ? `+$${trade.pnl.toFixed(2)}` : 
-                       trade.result === 'Loss' ? `-$${Math.abs(trade.pnl).toFixed(2)}` : 
-                       '⏳'}
-                    </span>
-                  </div>
-                </motion.div>
-              ))
-            )}
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-emerald-400">📋 LIVE TRADE LOG</h3>
+            <div className="flex gap-2">
+              <Badge className="bg-emerald-500/20 text-emerald-400">Total: {trades.length}</Badge>
+              <Badge className="bg-emerald-500/20 text-emerald-400">Wins: {trades.filter(t => t.result === 'Win').length}</Badge>
+              <Badge className="bg-rose-500/20 text-rose-400">Losses: {trades.filter(t => t.result === 'Loss').length}</Badge>
+            </div>
           </div>
+          
+          <div className="space-y-1 max-h-[300px] overflow-y-auto">
+            <AnimatePresence>
+              {trades.length === 0 ? (
+                <motion.p 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="text-sm text-emerald-400/60 text-center py-4"
+                >
+                  No trades yet. Start trading to see results.
+                </motion.p>
+              ) : (
+                trades.map((trade, idx) => (
+                  <motion.div 
+                    key={idx} 
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ delay: idx * 0.02 }}
+                    className="flex items-center justify-between text-xs py-2 px-2 border-b border-emerald-500/10 last:border-0 hover:bg-emerald-500/5 rounded"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-emerald-400/60 font-mono w-16">{trade.time}</span>
+                      <Badge className="text-[8px] px-1.5 py-0.5 bg-purple-500/20 text-purple-400 border-purple-500/30 font-mono">
+                        {trade.bot}
+                      </Badge>
+                      <span className="font-mono text-[9px] text-emerald-400">
+                        {trade.market.includes('1HZ') ? '⚡' : trade.market.includes('BOOM') ? '💥' : '📊'} {trade.market}
+                      </span>
+                      {trade.aiConfidence && (
+                        <Badge className="bg-purple-500/20 text-purple-400 text-[7px] border-purple-500/30">
+                          AI:{trade.aiConfidence}%
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <span className="font-mono text-[9px] text-emerald-400">
+                        Last: {trade.lastDigit !== undefined ? trade.lastDigit : '—'}
+                      </span>
+                      <span className="font-mono text-emerald-400 w-16">${trade.stake.toFixed(2)}</span>
+                      <span className={`font-mono w-20 text-right flex items-center gap-1 ${
+                        trade.result === 'Win' ? 'text-emerald-400' : 
+                        trade.result === 'Loss' ? 'text-rose-400' : 'text-yellow-400'
+                      }`}>
+                        {trade.result === 'Win' && <CheckCircle2 className="w-3 h-3" />}
+                        {trade.result === 'Loss' && <AlertCircle className="w-3 h-3" />}
+                        {trade.result === 'Win' ? `+$${trade.pnl.toFixed(2)}` : 
+                         trade.result === 'Loss' ? `-$${Math.abs(trade.pnl).toFixed(2)}` : 
+                         '⏳ PENDING'}
+                      </span>
+                    </div>
+                  </motion.div>
+                ))
+              )}
+            </AnimatePresence>
+          </div>
+        </motion.div>
+
+        {/* Footer */}
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="text-center text-[10px] text-emerald-400/40 py-2"
+        >
+          🤖 AI-Powered Trading System v2.0 • Neural Network Active • Real-time Market Analysis
         </motion.div>
       </div>
     </div>
   );
-}
+  }
