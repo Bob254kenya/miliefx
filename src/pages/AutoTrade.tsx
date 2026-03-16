@@ -53,7 +53,7 @@ interface BotStrategy {
   id: string;
   name: string;
   type: 'EVEN' | 'ODD' | 'OVER' | 'UNDER';
-  icon: any;
+  icon: React.ElementType;
   color: string;
   conditions: {
     dominantPercent: number;
@@ -169,6 +169,49 @@ const STRATEGIES: BotStrategy[] = [
   }
 ];
 
+// Color mapping for Tailwind classes
+const COLOR_CLASSES = {
+  emerald: {
+    bg: 'bg-emerald-500/20',
+    text: 'text-emerald-400',
+    border: 'border-emerald-500/30',
+    hover: 'hover:bg-emerald-600',
+    bgLight: 'bg-emerald-500/10'
+  },
+  purple: {
+    bg: 'bg-purple-500/20',
+    text: 'text-purple-400',
+    border: 'border-purple-500/30',
+    hover: 'hover:bg-purple-600',
+    bgLight: 'bg-purple-500/10'
+  },
+  blue: {
+    bg: 'bg-blue-500/20',
+    text: 'text-blue-400',
+    border: 'border-blue-500/30',
+    hover: 'hover:bg-blue-600',
+    bgLight: 'bg-blue-500/10'
+  },
+  orange: {
+    bg: 'bg-orange-500/20',
+    text: 'text-orange-400',
+    border: 'border-orange-500/30',
+    hover: 'hover:bg-orange-600',
+    bgLight: 'bg-orange-500/10'
+  }
+};
+
+// Status color mapping
+const STATUS_CLASSES = {
+  TRADING: { text: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/30' },
+  READY: { text: 'text-green-400', bg: 'bg-green-500/10 border-green-500/30' },
+  ANALYZING: { text: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/30' },
+  WAITING_ENTRY: { text: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/30' },
+  COOLDOWN: { text: 'text-purple-400', bg: 'bg-purple-500/10 border-purple-500/30' },
+  STOPPED: { text: 'text-rose-400', bg: 'bg-rose-500/10 border-rose-500/30' },
+  IDLE: { text: 'text-slate-400', bg: 'bg-slate-800/50 border-slate-700' }
+};
+
 // ==================== MOCK API SERVICE ====================
 const derivApi = {
   async getTicks(symbol: string, count: number): Promise<any[]> {
@@ -271,8 +314,8 @@ const analyzeMarket = (ticks: MarketTick[]): Partial<MarketData> => {
     lowPercent,
     highPercent,
     volatility,
-    trend,
-    signal,
+    trend: trend as 'BULL' | 'BEAR' | 'NEUTRAL',
+    signal: signal as 'EVEN' | 'ODD' | 'OVER' | 'UNDER' | null,
     confidence,
     updateTime: Date.now()
   };
@@ -294,6 +337,8 @@ const useMarketData = (symbols: string[]) => {
   const frameRef = useRef<number>();
 
   useEffect(() => {
+    let isMounted = true;
+    
     const init = async () => {
       setLoading(true);
       
@@ -332,9 +377,11 @@ const useMarketData = (symbols: string[]) => {
         frameRef.current = requestAnimationFrame(updateData);
       });
       
-      setConnected(true);
-      setLoading(false);
-      updateData();
+      if (isMounted) {
+        setConnected(true);
+        setLoading(false);
+        updateData();
+      }
     };
     
     const updateData = () => {
@@ -361,12 +408,15 @@ const useMarketData = (symbols: string[]) => {
         };
       });
       
-      setData(newData);
+      if (isMounted) {
+        setData(newData);
+      }
     };
     
     init();
     
     return () => {
+      isMounted = false;
       if (subsRef.current) subsRef.current();
       if (frameRef.current) cancelAnimationFrame(frameRef.current);
     };
@@ -394,31 +444,12 @@ const BotCard = memo(({
   onExpand: (id: string) => void;
 }) => {
   const StrategyIcon = bot.strategy.icon;
+  const statusClass = STATUS_CLASSES[bot.status] || STATUS_CLASSES.IDLE;
+  const strategyColor = COLOR_CLASSES[bot.strategy.color as keyof typeof COLOR_CLASSES] || COLOR_CLASSES.emerald;
   
-  const getStatusColor = () => {
-    switch (bot.status) {
-      case 'TRADING': return 'text-emerald-400';
-      case 'READY': return 'text-green-400';
-      case 'ANALYZING': return 'text-blue-400';
-      case 'WAITING_ENTRY': return 'text-yellow-400';
-      case 'COOLDOWN': return 'text-purple-400';
-      case 'STOPPED': return 'text-rose-400';
-      default: return 'text-slate-400';
-    }
-  };
+  const getStatusColor = () => statusClass.text;
+  const getStatusBg = () => statusClass.bg;
   
-  const getStatusBg = () => {
-    switch (bot.status) {
-      case 'TRADING': return 'bg-emerald-500/10 border-emerald-500/30';
-      case 'READY': return 'bg-green-500/10 border-green-500/30';
-      case 'ANALYZING': return 'bg-blue-500/10 border-blue-500/30';
-      case 'WAITING_ENTRY': return 'bg-yellow-500/10 border-yellow-500/30';
-      case 'COOLDOWN': return 'bg-purple-500/10 border-purple-500/30';
-      case 'STOPPED': return 'bg-rose-500/10 border-rose-500/30';
-      default: return 'bg-slate-800/50 border-slate-700';
-    }
-  };
-
   const getTrendColor = (trend: string) => {
     switch (trend) {
       case 'BULL': return 'text-emerald-400';
@@ -427,13 +458,23 @@ const BotCard = memo(({
     }
   };
   
+  const getSignalBadgeClass = (signal: string) => {
+    switch (signal) {
+      case 'EVEN': return 'bg-emerald-500/20 text-emerald-400';
+      case 'ODD': return 'bg-purple-500/20 text-purple-400';
+      case 'OVER': return 'bg-blue-500/20 text-blue-400';
+      case 'UNDER': return 'bg-orange-500/20 text-orange-400';
+      default: return 'bg-slate-500/20 text-slate-400';
+    }
+  };
+  
   return (
     <div className={`relative rounded-md border ${getStatusBg()} transition-all duration-200 hover:shadow-lg hover:shadow-black/20 overflow-hidden`}>
       {/* Header - Ultra Compact */}
       <div className="px-2 py-1.5 bg-slate-900/50 flex items-center justify-between border-b border-slate-700/50">
         <div className="flex items-center gap-1.5">
-          <div className={`p-0.5 rounded bg-${bot.strategy.color}-500/20`}>
-            <StrategyIcon className={`w-3 h-3 text-${bot.strategy.color}-400`} />
+          <div className={`p-0.5 rounded ${strategyColor.bg}`}>
+            <StrategyIcon className={`w-3 h-3 ${strategyColor.text}`} />
           </div>
           <div className="flex flex-col">
             <span className="text-[10px] font-semibold text-slate-200 leading-tight">{bot.name}</span>
@@ -558,12 +599,7 @@ const BotCard = memo(({
         <div className="px-2 py-1 border-b border-slate-700/30 bg-slate-800/30">
           <div className="flex items-center justify-between">
             <span className="text-[8px] text-slate-500">Signal</span>
-            <Badge className={`h-4 px-1.5 text-[8px] font-bold border-0 ${
-              market.signal === 'EVEN' ? 'bg-emerald-500/20 text-emerald-400' :
-              market.signal === 'ODD' ? 'bg-purple-500/20 text-purple-400' :
-              market.signal === 'OVER' ? 'bg-blue-500/20 text-blue-400' :
-              'bg-orange-500/20 text-orange-400'
-            }`}>
+            <Badge className={`h-4 px-1.5 text-[8px] font-bold border-0 ${getSignalBadgeClass(market.signal)}`}>
               {market.signal} {market.confidence.toFixed(0)}%
             </Badge>
           </div>
@@ -713,7 +749,7 @@ const BotCard = memo(({
                   <div className="flex items-center gap-2">
                     <Select
                       value={bot.entryCondition}
-                      onValueChange={(value: any) => onUpdate(bot.id, { entryCondition: value })}
+                      onValueChange={(value: 'EQUAL' | 'GREATER' | 'LESS') => onUpdate(bot.id, { entryCondition: value })}
                     >
                       <SelectTrigger className="h-6 w-16 text-[9px] bg-slate-800 border-slate-700">
                         <SelectValue />
@@ -796,7 +832,7 @@ const BotCard = memo(({
                   <span className="text-[7px] text-slate-500">Stake Type</span>
                   <Select
                     value={bot.stakeType}
-                    onValueChange={(value: any) => onUpdate(bot.id, { stakeType: value })}
+                    onValueChange={(value: 'FIXED' | 'MARTINGALE') => onUpdate(bot.id, { stakeType: value })}
                   >
                     <SelectTrigger className="h-6 w-24 text-[9px] bg-slate-800 border-slate-700">
                       <SelectValue />
@@ -845,6 +881,7 @@ export default function AutoTrade() {
   const { data: marketData, loading, connected } = useMarketData(MARKETS.map(m => m.id));
   const runningRefs = useRef<Record<string, boolean>>({});
   const audioContext = useRef<AudioContext | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Initialize bots - 12 bots for grid layout
   useEffect(() => {
@@ -890,7 +927,12 @@ export default function AutoTrade() {
     
     try {
       if (!audioContext.current) {
-        audioContext.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        audioContext.current = new AudioContextClass();
+      }
+      
+      if (audioContext.current.state === 'suspended') {
+        audioContext.current.resume();
       }
       
       const ctx = audioContext.current;
@@ -937,14 +979,16 @@ export default function AutoTrade() {
       }))
       .sort((a, b) => b.volatility - a.volatility);
     
-    setBots(prev => prev.map((bot, i) => {
-      const bestMarket = markets[i % markets.length];
-      return { ...bot, market: bestMarket?.symbol || null };
-    }));
-    
-    setLastScan(Date.now());
-    toast.success(`Markets scanned: Assigned top ${Math.min(markets.length, 12)} volatile markets`);
-    playSound('entry');
+    if (markets.length > 0) {
+      setBots(prev => prev.map((bot, i) => {
+        const bestMarket = markets[i % markets.length];
+        return { ...bot, market: bestMarket?.symbol || null };
+      }));
+      
+      setLastScan(Date.now());
+      toast.success(`Markets scanned: Assigned top ${Math.min(markets.length, 12)} volatile markets`);
+      playSound('entry');
+    }
   }, [marketData, playSound]);
 
   // Bot trading logic
@@ -973,6 +1017,7 @@ export default function AutoTrade() {
     
     runningRefs.current[botId] = true;
     
+    // Initialize local variables
     let trades = bot.trades;
     let wins = bot.wins;
     let losses = bot.losses;
@@ -982,7 +1027,15 @@ export default function AutoTrade() {
     let entryTriggered = !bot.entryEnabled;
     let cooldown = 0;
     
-    while (runningRefs.current[botId]) {
+    // Create abort controller for this bot
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    
+    while (runningRefs.current[botId] && !abortController.signal.aborted) {
+      // Check if bot should stop
+      if (!runningRefs.current[botId]) break;
+      
+      // Check profit/loss limits
       if (totalPnl <= -bot.stopLoss) {
         toast.error(`${bot.name}: Stop Loss reached ($${totalPnl.toFixed(2)})`);
         playSound('loss');
@@ -998,6 +1051,7 @@ export default function AutoTrade() {
         break;
       }
       
+      // Handle cooldown
       if (cooldown > 0) {
         setBots(prev => prev.map(b => 
           b.id === botId ? { ...b, status: 'COOLDOWN', cooldownRemaining: cooldown } : b
@@ -1136,7 +1190,7 @@ export default function AutoTrade() {
           market: bot.market!,
           strategy: bot.strategy.name,
           stake: currentStake,
-          entry: lastDigit!,
+          entry: lastDigit || 0,
           exit: result.digit,
           result: won ? 'WIN' : 'LOSS',
           pnl,
@@ -1184,17 +1238,17 @@ export default function AutoTrade() {
     runningRefs.current[botId] = false;
   }, [bots, marketData, isAuthorized, balance, playSound]);
 
-  const startBot = (id: string) => {
+  const startBot = useCallback((id: string) => {
     const bot = bots.find(b => b.id === id);
     if (!bot || bot.running) return;
     runBot(id);
-  };
+  }, [bots, runBot]);
 
-  const pauseBot = (id: string) => {
+  const pauseBot = useCallback((id: string) => {
     setBots(prev => prev.map(b => b.id === id ? { ...b, paused: !b.paused } : b));
-  };
+  }, []);
 
-  const stopBot = (id: string) => {
+  const stopBot = useCallback((id: string) => {
     runningRefs.current[id] = false;
     setBots(prev => prev.map(b => 
       b.id === id ? { 
@@ -1206,9 +1260,9 @@ export default function AutoTrade() {
         entryTriggered: false
       } : b
     ));
-  };
+  }, []);
 
-  const stopAllBots = () => {
+  const stopAllBots = useCallback(() => {
     Object.keys(runningRefs.current).forEach(id => {
       runningRefs.current[id] = false;
     });
@@ -1221,13 +1275,13 @@ export default function AutoTrade() {
       entryTriggered: false
     })));
     toast.success('All bots stopped');
-  };
+  }, []);
 
-  const updateBot = (id: string, updates: Partial<BotConfig>) => {
+  const updateBot = useCallback((id: string, updates: Partial<BotConfig>) => {
     setBots(prev => prev.map(b => b.id === id ? { ...b, ...updates } : b));
-  };
+  }, []);
 
-  const clearAll = () => {
+  const clearAll = useCallback(() => {
     stopAllBots();
     setTrades([]);
     setBots(prev => prev.map(b => ({
@@ -1242,7 +1296,7 @@ export default function AutoTrade() {
       entryTriggered: false
     })));
     toast.success('All statistics cleared');
-  };
+  }, [stopAllBots]);
 
   const totalPnl = bots.reduce((sum, b) => sum + b.totalPnl, 0);
   const totalTrades = bots.reduce((sum, b) => sum + b.trades, 0);
@@ -1280,7 +1334,7 @@ export default function AutoTrade() {
               </div>
               
               <div className={`px-2 py-1 rounded-md border ${totalPnl >= 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-rose-500/10 border-rose-500/30'}`}>
-                <div className="text-[7px] uppercase tracking-wider ${totalPnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}">P&L</div>
+                <div className={`text-[7px] uppercase tracking-wider ${totalPnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>P&L</div>
                 <div className={`text-[10px] font-mono font-bold ${totalPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                   {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
                 </div>
@@ -1468,7 +1522,7 @@ export default function AutoTrade() {
                   </div>
                 ) : (
                   <div className="divide-y divide-slate-700/30">
-                    {trades.map((trade, index) => (
+                    {trades.map((trade) => (
                       <div
                         key={trade.id}
                         className="px-3 py-2 flex items-center justify-between hover:bg-slate-800/30 transition-colors"
@@ -1536,4 +1590,4 @@ export default function AutoTrade() {
       <div className="h-6" />
     </div>
   );
-}
+  }
