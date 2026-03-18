@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import {
   Play, StopCircle, Trash2, Scan,
-  Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload,
+  Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload, BarChart,
 } from 'lucide-react';
 import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
@@ -53,6 +53,13 @@ interface LogEntry {
   switchInfo: string;
 }
 
+/* ── Percentage Analysis Types ── */
+interface DigitPercentage {
+  digit: number;
+  count: number;
+  percentage: number;
+}
+
 /* ── Circular Tick Buffer ── */
 class CircularTickBuffer {
   private buffer: { digit: number; ts: number }[];
@@ -76,6 +83,15 @@ class CircularTickBuffer {
   }
   lastTs(): number { return this.count > 0 ? this.buffer[(this.head - 1 + this.capacity) % this.capacity].ts : 0; }
   get size() { return this.count; }
+  
+  // Get all digits for percentage calculation
+  getAllDigits(): number[] {
+    const result: number[] = [];
+    for (let i = 0; i < this.count; i++) {
+      result.push(this.buffer[(this.head - i - 1 + this.capacity) % this.capacity].digit);
+    }
+    return result;
+  }
 }
 
 function waitForNextTick(symbol: string): Promise<{ quote: number }> {
@@ -173,6 +189,12 @@ export default function ProScannerBot() {
   /* ── Scanner ── */
   const [scannerActive, setScannerActive] = useState(false);
 
+  /* ── Percentage Analysis ── */
+  const [selectedPercentMarket, setSelectedPercentMarket] = useState('R_100');
+  const [percentTickRange, setPercentTickRange] = useState('100');
+  const [digitPercentages, setDigitPercentages] = useState<DigitPercentage[]>([]);
+  const [selectedDigit, setSelectedDigit] = useState<number | null>(null);
+
   /* ── Turbo ── */
   const [turboMode, setTurboMode] = useState(false);
   const [botName, setBotName] = useState('');
@@ -225,6 +247,11 @@ export default function ProScannerBot() {
       const buf = turboBuffersRef.current.get(sym)!;
       buf.push(digit);
 
+      // Update percentages if this is the selected market
+      if (sym === selectedPercentMarket) {
+        updateDigitPercentages(sym);
+      }
+
       // Turbo latency tracking
       if (lastTickTsRef.current > 0) {
         const lat = now - lastTickTsRef.current;
@@ -237,7 +264,50 @@ export default function ProScannerBot() {
     const unsub = derivApi.onMessage(handler);
     SCANNER_MARKETS.forEach(m => { derivApi.subscribeTicks(m.symbol as MarketSymbol, () => {}).catch(() => {}); });
     return () => { active = false; unsub(); };
-  }, []);
+  }, [selectedPercentMarket]);
+
+  /* ── Update digit percentages for selected market ── */
+  const updateDigitPercentages = useCallback((symbol: string) => {
+    const buffer = turboBuffersRef.current.get(symbol);
+    if (!buffer) return;
+    
+    const range = parseInt(percentTickRange) || 100;
+    const allDigits = buffer.getAllDigits();
+    const recentDigits = allDigits.slice(0, Math.min(range, allDigits.length));
+    
+    if (recentDigits.length === 0) return;
+    
+    const counts: Record<number, number> = {};
+    for (let i = 0; i <= 9; i++) counts[i] = 0;
+    
+    recentDigits.forEach(d => {
+      counts[d] = (counts[d] || 0) + 1;
+    });
+    
+    const percentages: DigitPercentage[] = [];
+    for (let i = 0; i <= 9; i++) {
+      percentages.push({
+        digit: i,
+        count: counts[i],
+        percentage: (counts[i] / recentDigits.length) * 100
+      });
+    }
+    
+    setDigitPercentages(percentages);
+  }, [percentTickRange]);
+
+  /* ── Handle digit button click ── */
+  const handleDigitClick = useCallback((digit: number) => {
+    setSelectedDigit(selectedDigit === digit ? null : digit);
+    
+    // You can add additional logic here, like setting the barrier or digit condition
+    if (m1Contract.includes('DIGITMATCH') || m1Contract.includes('DIGITDIFF') || 
+        m1Contract.includes('DIGITOVER') || m1Contract.includes('DIGITUNDER')) {
+      setM1Barrier(digit.toString());
+    }
+    
+    toast.info(`Selected digit: ${digit} (${digitPercentages.find(d => d.digit === digit)?.percentage.toFixed(1)}%)`);
+  }, [selectedDigit, m1Contract, digitPercentages]);
 
   /* ── Pattern validation ── */
   const cleanM1Pattern = m1Pattern.toUpperCase().replace(/[^EO]/g, '');
@@ -710,6 +780,11 @@ export default function ProScannerBot() {
   const activeSymbol = currentMarket === 1 ? m1Symbol : m2Symbol;
   const activeDigits = (tickMapRef.current.get(activeSymbol) || []).slice(-8);
 
+  // Update percentages when market or tick range changes
+  useEffect(() => {
+    updateDigitPercentages(selectedPercentMarket);
+  }, [selectedPercentMarket, percentTickRange, updateDigitPercentages]);
+
   return (
     <div className="space-y-2 max-w-7xl mx-auto font-sans">
       {/* ── Compact Header ── */}
@@ -812,6 +887,77 @@ export default function ProScannerBot() {
               <div className="font-mono text-[10px] font-bold text-white">${currentStake.toFixed(2)}{martingaleStep > 0 && <span className="text-amber-400"> M{martingaleStep}</span>}</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ── Percentage Analysis Section (Below Live Digits) ── */}
+      <div className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-xl p-2.5 shadow-md">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-xs font-semibold text-gray-200 flex items-center gap-1">
+            <BarChart className="w-3.5 h-3.5 text-cyan-400" /> Digit Percentage Analysis
+          </h3>
+          <div className="flex items-center gap-2">
+            <Select value={selectedPercentMarket} onValueChange={setSelectedPercentMarket}>
+              <SelectTrigger className="h-6 text-[10px] w-24 bg-gray-900 border-gray-700 text-gray-200">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-gray-800 border-gray-700">
+                {SCANNER_MARKETS.map(m => (
+                  <SelectItem key={m.symbol} value={m.symbol} className="text-gray-200 text-[10px]">
+                    {m.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={percentTickRange} onValueChange={setPercentTickRange}>
+              <SelectTrigger className="h-6 text-[10px] w-20 bg-gray-900 border-gray-700 text-gray-200">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-gray-800 border-gray-700">
+                <SelectItem value="50" className="text-gray-200 text-[10px]">50 ticks</SelectItem>
+                <SelectItem value="100" className="text-gray-200 text-[10px]">100 ticks</SelectItem>
+                <SelectItem value="200" className="text-gray-200 text-[10px]">200 ticks</SelectItem>
+                <SelectItem value="500" className="text-gray-200 text-[10px]">500 ticks</SelectItem>
+                <SelectItem value="1000" className="text-gray-200 text-[10px]">1000 ticks</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        
+        {/* Digit Buttons with Percentages */}
+        <div className="grid grid-cols-5 gap-1 mb-1">
+          {digitPercentages.map(({ digit, percentage, count }) => {
+            const isSelected = selectedDigit === digit;
+            const percentColor = 
+              percentage > 12 ? 'text-emerald-400' :
+              percentage > 9 ? 'text-amber-400' :
+              'text-rose-400';
+            
+            return (
+              <Button
+                key={digit}
+                variant={isSelected ? 'default' : 'outline'}
+                className={`h-14 flex flex-col items-center justify-center p-1 ${
+                  isSelected 
+                    ? 'bg-cyan-600 hover:bg-cyan-700 border-cyan-500' 
+                    : 'bg-gray-900 border-gray-700 hover:bg-gray-800'
+                }`}
+                onClick={() => handleDigitClick(digit)}
+                disabled={isRunning}
+              >
+                <span className="text-sm font-bold text-white">{digit}</span>
+                <div className="flex items-center gap-1 text-[8px]">
+                  <span className={percentColor}>{percentage.toFixed(1)}%</span>
+                  <span className="text-gray-500">({count})</span>
+                </div>
+              </Button>
+            );
+          })}
+        </div>
+        
+        {/* Total ticks info */}
+        <div className="text-[9px] text-gray-500 font-medium text-right">
+          Total ticks analyzed: {digitPercentages.reduce((sum, d) => sum + d.count, 0)} / {percentTickRange}
         </div>
       </div>
 
@@ -1238,10 +1384,14 @@ export default function ProScannerBot() {
                 const isOver = d >= 5;
                 const isEven = d % 2 === 0;
                 const isLast = i === activeDigits.length - 1;
+                const isSelected = selectedDigit === d;
                 return (
-                  <div key={i} className={`w-8 h-10 rounded-lg flex flex-col items-center justify-center text-xs font-mono font-bold border ${
+                  <div key={i} className={`w-8 h-10 rounded-lg flex flex-col items-center justify-center text-xs font-mono font-bold border cursor-pointer transition-all ${
                     isLast ? 'ring-2 ring-cyan-400' : ''
-                  } ${isOver ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}`}>
+                  } ${
+                    isSelected ? 'ring-2 ring-amber-400 scale-110' : ''
+                  } ${isOver ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}`}
+                  onClick={() => handleDigitClick(d)}>
                     <span className="text-sm">{d}</span>
                     <span className="text-[7px] opacity-60">{isOver ? 'O' : 'U'}{isEven ? 'E' : 'O'}</span>
                   </div>
