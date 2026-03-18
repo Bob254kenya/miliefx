@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import {
   Play, StopCircle, Trash2, Scan,
-  Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload, BarChart, Loader2,
+  Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload, BarChart, Loader2, WifiOff
 } from 'lucide-react';
 import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
@@ -110,9 +110,15 @@ class CircularTickBuffer {
 }
 
 function waitForNextTick(symbol: string): Promise<{ quote: number }> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      unsub();
+      reject(new Error('Tick timeout'));
+    }, 5000);
+    
     const unsub = derivApi.onMessage((data: any) => {
       if (data.tick && data.tick.symbol === symbol) { 
+        clearTimeout(timeout);
         unsub(); 
         resolve({ quote: data.tick.quote }); 
       }
@@ -124,9 +130,15 @@ function waitForNextTick(symbol: string): Promise<{ quote: number }> {
 function simulateVirtualContract(
   contractType: string, barrier: string, symbol: string
 ): Promise<{ won: boolean; digit: number }> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      unsub();
+      reject(new Error('Virtual contract timeout'));
+    }, 5000);
+    
     const unsub = derivApi.onMessage((data: any) => {
       if (data.tick && data.tick.symbol === symbol) {
+        clearTimeout(timeout);
         unsub();
         const digit = getLastDigit(data.tick.quote);
         const b = parseInt(barrier) || 0;
@@ -145,10 +157,37 @@ function simulateVirtualContract(
   });
 }
 
+/* ── Retry utility with exponential backoff ── */
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 1000
+): Promise<T> {
+  let lastError: Error;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error as Error;
+      if (i === maxRetries - 1) break;
+      
+      const delay = baseDelay * Math.pow(2, i);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  throw lastError!;
+}
+
 export default function ProScannerBot() {
   const { isAuthorized, balance, activeAccount } = useAuth();
   const { recordLoss } = useLossRequirement();
   const location = useLocation();
+
+  /* ── Connection state ── */
+  const [isConnected, setIsConnected] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   /* ── Market 1 config ── */
   const [m1Enabled, setM1Enabled] = useState(true);
@@ -209,12 +248,13 @@ export default function ProScannerBot() {
 
   /* ── Percentage Analysis ── */
   const [selectedPercentMarket, setSelectedPercentMarket] = useState('R_100');
-  const [percentTickRange, setPercentTickRange] = useState('1000'); // Default to 1000
+  const [percentTickRange, setPercentTickRange] = useState('1000');
   const [digitPercentages, setDigitPercentages] = useState<DigitPercentage[]>([]);
   const [selectedDigit, setSelectedDigit] = useState<number | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const historyFetchInProgress = useRef(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   /* ── Turbo ── */
   const [turboMode, setTurboMode] = useState(false);
@@ -243,26 +283,50 @@ export default function ProScannerBot() {
   const tickMapRef = useRef<Map<string, number[]>>(new Map());
   const [tickCounts, setTickCounts] = useState<Record<string, number>>({});
 
-  /* ── Fetch historical ticks for a symbol (always 1000) ── */
+  /* ── Check connection status ── */
+  useEffect(() => {
+    const checkConnection = () => {
+      const connected = derivApi.isConnected;
+      setIsConnected(connected);
+      if (!connected) {
+        setConnectionError('Not connected to Deriv API');
+      } else {
+        setConnectionError(null);
+      }
+    };
+
+    checkConnection();
+    const interval = setInterval(checkConnection, 3000);
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  /* ── Fetch historical ticks for a symbol with retry logic ── */
   const fetchHistoricalTicks = useCallback(async (symbol: string) => {
     if (!derivApi.isConnected) {
-      toast.error('Not connected to Deriv API');
+      setHistoryError('Not connected to Deriv API');
+      toast.error('Cannot fetch history: Not connected to Deriv API');
       return;
     }
 
     if (historyFetchInProgress.current) return;
     historyFetchInProgress.current = true;
     setIsLoadingHistory(true);
+    setHistoryError(null);
 
     try {
-      // Always request 1000 ticks
-      const response = await derivApi.getTicksHistory(symbol as MarketSymbol, {
-        adjust_start_time: 1,
-        count: 1000,
-        end: 'latest',
-        start: 1,
-        style: 'ticks'
-      });
+      // Use retry logic for API call
+      const response = await retryWithBackoff(
+        () => derivApi.getTicksHistory(symbol as MarketSymbol, {
+          adjust_start_time: 1,
+          count: 1000,
+          end: 'latest',
+          start: 1,
+          style: 'ticks'
+        }),
+        3,
+        1000
+      );
 
       if (response?.history?.ticks && Array.isArray(response.history.ticks)) {
         const ticks = response.history.ticks;
@@ -272,14 +336,14 @@ export default function ProScannerBot() {
           turboBuffersRef.current.set(symbol, new CircularTickBuffer(1000));
         }
         const buffer = turboBuffersRef.current.get(symbol)!;
-        buffer.clear(); // Clear existing data
+        buffer.clear();
 
         // Push historical ticks in chronological order
         ticks.forEach((tick: { epoch: number; quote: number }) => {
           const digit = getLastDigit(tick.quote);
           buffer.push(digit);
           
-          // Also update legacy tick map
+          // Update legacy tick map
           const map = tickMapRef.current;
           const arr = map.get(symbol) || [];
           arr.push(digit);
@@ -295,11 +359,13 @@ export default function ProScannerBot() {
         toast.success(`Loaded ${buffer.size} historical ticks for ${symbol}${buffer.size < 1000 ? ` (API returned ${buffer.size})` : ''}`);
         setHistoryLoaded(true);
       } else {
-        toast.error('No historical data received');
+        throw new Error('No historical data received');
       }
     } catch (error) {
       console.error('Error fetching historical ticks:', error);
-      toast.error('Failed to load historical ticks');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load historical ticks';
+      setHistoryError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setIsLoadingHistory(false);
       historyFetchInProgress.current = false;
@@ -312,7 +378,7 @@ export default function ProScannerBot() {
     if (!buffer || buffer.size === 0) return;
     
     const range = Math.min(parseInt(percentTickRange) || 1000, buffer.size);
-    const allDigits = buffer.getAllDigits(); // Most recent first
+    const allDigits = buffer.getAllDigits();
     const recentDigits = allDigits.slice(0, range);
     
     if (recentDigits.length === 0) return;
@@ -333,24 +399,30 @@ export default function ProScannerBot() {
       });
     }
     
-    // Sort by digit for consistent display
     percentages.sort((a, b) => a.digit - b.digit);
     setDigitPercentages(percentages);
   }, [percentTickRange]);
 
   /* ── Load historical ticks when market changes ── */
   useEffect(() => {
-    if (!derivApi.isConnected) return;
+    if (!derivApi.isConnected) {
+      setHistoryLoaded(false);
+      return;
+    }
     
     setHistoryLoaded(false);
-    // Always fetch 1000 ticks when market changes
+    setHistoryError(null);
     fetchHistoricalTicks(selectedPercentMarket);
   }, [selectedPercentMarket, fetchHistoricalTicks]);
 
   /* Subscribe to all scanner markets and handle real-time updates */
   useEffect(() => {
-    if (!derivApi.isConnected) return;
+    if (!derivApi.isConnected) {
+      return;
+    }
+
     let active = true;
+    let reconnectTimeout: NodeJS.Timeout;
     
     const handler = (data: any) => {
       if (!data.tick || !active) return;
@@ -365,11 +437,11 @@ export default function ProScannerBot() {
       if (arr.length > 200) arr.shift();
       map.set(sym, arr);
 
-      // Turbo circular buffer - ensure it exists with 1000 capacity
+      // Turbo circular buffer
       if (!turboBuffersRef.current.has(sym)) {
         turboBuffersRef.current.set(sym, new CircularTickBuffer(1000));
         
-        // Fetch historical ticks for this symbol if it's the selected market and not loaded
+        // Fetch historical ticks if needed
         if (sym === selectedPercentMarket && !historyLoaded && !isLoadingHistory) {
           fetchHistoricalTicks(sym);
         }
@@ -378,15 +450,12 @@ export default function ProScannerBot() {
       const buf = turboBuffersRef.current.get(sym)!;
       buf.push(digit);
       
-      // Update tick counts for UI
       setTickCounts(prev => ({ ...prev, [sym]: buf.size }));
 
-      // Update percentages if this is the selected market
       if (sym === selectedPercentMarket) {
         updateDigitPercentages(sym);
       }
 
-      // Turbo latency tracking
       if (lastTickTsRef.current > 0) {
         const lat = now - lastTickTsRef.current;
         setTurboLatency(Math.round(lat));
@@ -398,13 +467,35 @@ export default function ProScannerBot() {
     
     const unsub = derivApi.onMessage(handler);
     
-    // Subscribe to all scanner markets
-    SCANNER_MARKETS.forEach(m => { 
-      derivApi.subscribeTicks(m.symbol as MarketSymbol, () => {}).catch(() => {}); 
-    });
+    // Subscribe with retry logic
+    const subscribeWithRetry = async () => {
+      for (const m of SCANNER_MARKETS) {
+        try {
+          await retryWithBackoff(
+            () => derivApi.subscribeTicks(m.symbol as MarketSymbol, () => {}),
+            2,
+            500
+          );
+        } catch (error) {
+          console.error(`Failed to subscribe to ${m.symbol}:`, error);
+        }
+      }
+    };
+    
+    subscribeWithRetry();
+
+    // Reconnection logic
+    const handleReconnect = () => {
+      if (!active) return;
+      subscribeWithRetry();
+    };
+
+    // Listen for connection events if your derivApi emits them
+    // This is a simplified version - adjust based on your actual derivApi implementation
     
     return () => { 
       active = false; 
+      clearTimeout(reconnectTimeout);
       unsub(); 
     };
   }, [selectedPercentMarket, updateDigitPercentages, fetchHistoricalTicks, historyLoaded, isLoadingHistory]);
@@ -413,7 +504,6 @@ export default function ProScannerBot() {
   const handleDigitClick = useCallback((digit: number) => {
     setSelectedDigit(selectedDigit === digit ? null : digit);
     
-    // Auto-set barrier for relevant contract types
     if (needsBarrier(m1Contract)) {
       setM1Barrier(digit.toString());
     }
@@ -505,7 +595,18 @@ export default function ProScannerBot() {
 
   /* ═══════════════ MAIN BOT LOOP ═══════════════ */
   const startBot = useCallback(async () => {
-    if (!isAuthorized || isRunning) return;
+    if (!isAuthorized) {
+      toast.error('Please authorize first');
+      return;
+    }
+    
+    if (!derivApi.isConnected) {
+      toast.error('Not connected to Deriv API');
+      return;
+    }
+
+    if (isRunning) return;
+    
     const baseStake = parseFloat(stake);
     if (baseStake < 0.35) { toast.error('Min stake $0.35'); return; }
     if (!m1Enabled && !m2Enabled) { toast.error('Enable at least one market'); return; }
@@ -533,6 +634,12 @@ export default function ProScannerBot() {
     });
 
     while (runningRef.current) {
+      // Check connection periodically
+      if (!derivApi.isConnected) {
+        toast.error('Connection lost. Stopping bot.');
+        break;
+      }
+
       const mkt: 1 | 2 = inRecovery ? 2 : 1;
       setCurrentMarket(mkt);
 
@@ -552,6 +659,8 @@ export default function ProScannerBot() {
         let matched = false;
         let matchedSymbol = '';
         while (runningRef.current && !matched) {
+          if (!derivApi.isConnected) break;
+          
           if (scannerActive) {
             const found = findScannerMatchForMarket(2);
             if (found) { matched = true; matchedSymbol = found; }
@@ -565,7 +674,7 @@ export default function ProScannerBot() {
             });
           }
         }
-        if (!runningRef.current) break;
+        if (!runningRef.current || !derivApi.isConnected) break;
 
         setBotStatus('pattern_matched');
         tradeSymbol = matchedSymbol;
@@ -577,6 +686,8 @@ export default function ProScannerBot() {
 
         let matched = false;
         while (runningRef.current && !matched) {
+          if (!derivApi.isConnected) break;
+          
           if (checkStrategyForMarket(cfg.symbol, 1)) { matched = true; }
           if (!matched) {
             await new Promise<void>(r => {
@@ -585,7 +696,7 @@ export default function ProScannerBot() {
             });
           }
         }
-        if (!runningRef.current) break;
+        if (!runningRef.current || !derivApi.isConnected) break;
 
         setBotStatus('pattern_matched');
         tradeSymbol = cfg.symbol;
@@ -595,7 +706,7 @@ export default function ProScannerBot() {
         tradeSymbol = cfg.symbol;
       }
 
-      /* ═══ VIRTUAL HOOK SEQUENCE — Loss-streak based ═══ */
+      /* ═══ VIRTUAL HOOK SEQUENCE ═══ */
       if (hookEnabled) {
         setBotStatus('virtual_hook');
         setVhStatus('waiting');
@@ -605,8 +716,9 @@ export default function ProScannerBot() {
         let consecLosses = 0;
         let virtualTradeNum = 0;
 
-        // Keep simulating virtual trades until we accumulate requiredLosses consecutive losses
         while (consecLosses < requiredLosses && runningRef.current) {
+          if (!derivApi.isConnected) break;
+          
           virtualTradeNum++;
           const vLogId = ++logIdRef.current;
           const vNow = new Date().toLocaleTimeString();
@@ -617,30 +729,33 @@ export default function ProScannerBot() {
             switchInfo: `Virtual #${virtualTradeNum} (losses: ${consecLosses}/${requiredLosses})`,
           });
 
-          const vResult = await simulateVirtualContract(cfg.contract, cfg.barrier, tradeSymbol);
-          if (!runningRef.current) break;
+          try {
+            const vResult = await simulateVirtualContract(cfg.contract, cfg.barrier, tradeSymbol);
+            if (!runningRef.current) break;
 
-          if (vResult.won) {
-            // Win resets the consecutive loss counter
-            consecLosses = 0;
-            setVhConsecLosses(0);
-            setVhFakeWins(prev => prev + 1);
-            updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Win', switchInfo: `Virtual WIN → Losses reset (0/${requiredLosses})` });
-          } else {
-            consecLosses++;
-            setVhConsecLosses(consecLosses);
-            setVhFakeLosses(prev => prev + 1);
-            updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Loss', switchInfo: `Virtual LOSS (${consecLosses}/${requiredLosses})` });
+            if (vResult.won) {
+              consecLosses = 0;
+              setVhConsecLosses(0);
+              setVhFakeWins(prev => prev + 1);
+              updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Win', switchInfo: `Virtual WIN → Losses reset (0/${requiredLosses})` });
+            } else {
+              consecLosses++;
+              setVhConsecLosses(consecLosses);
+              setVhFakeLosses(prev => prev + 1);
+              updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Loss', switchInfo: `Virtual LOSS (${consecLosses}/${requiredLosses})` });
+            }
+          } catch (error) {
+            console.error('Virtual contract error:', error);
+            updateLog(vLogId, { result: 'V-Loss', exitDigit: '-', switchInfo: 'Error in virtual trade' });
+            break;
           }
         }
 
-        if (!runningRef.current) break;
+        if (!runningRef.current || !derivApi.isConnected) break;
 
-        // Required consecutive losses reached → hook confirmed
         setVhStatus('confirmed');
         toast.success(`🎣 Hook confirmed! ${requiredLosses} consecutive losses detected → Executing ${realCount} real trade(s)`);
 
-        /* Execute real trades batch */
         for (let ri = 0; ri < realCount && runningRef.current; ri++) {
           const result = await executeRealTrade(
             cfg, tradeSymbol, cStake, mStep, mkt, localBalance, localPnl, baseStake
@@ -655,14 +770,13 @@ export default function ProScannerBot() {
           if (result.shouldBreak) { runningRef.current = false; break; }
         }
 
-        // Reset after real trades
         setVhStatus('idle');
         setVhConsecLosses(0);
         if (!runningRef.current) break;
         continue;
       }
 
-      /* ═══ NORMAL REAL TRADE (no hook) ═══ */
+      /* ═══ NORMAL REAL TRADE ═══ */
       const result = await executeRealTrade(
         cfg, tradeSymbol, cStake, mStep, mkt, localBalance, localPnl, baseStake
       );
@@ -675,7 +789,6 @@ export default function ProScannerBot() {
 
       if (result.shouldBreak) break;
 
-      // Turbo: no delay between trades; normal: small delay
       if (!turboMode) await new Promise(r => setTimeout(r, 400));
     }
 
@@ -715,9 +828,13 @@ export default function ProScannerBot() {
     let inRecovery = mkt === 2;
 
     try {
-      // Turbo: skip waiting for next tick, trade immediately
       if (!turboMode) {
-        await waitForNextTick(tradeSymbol as MarketSymbol);
+        try {
+          await waitForNextTick(tradeSymbol as MarketSymbol);
+        } catch (error) {
+          updateLog(logId, { result: 'Loss', pnl: 0, exitDigit: '-', switchInfo: 'Tick timeout' });
+          return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak: false };
+        }
       }
 
       const buyParams: any = {
@@ -728,7 +845,6 @@ export default function ProScannerBot() {
 
       const { contractId } = await derivApi.buyContract(buyParams);
       
-      // Copy trade to followers
       if (copyTradingService.enabled) {
         copyTradingService.copyTrade({
           ...buyParams,
@@ -757,7 +873,6 @@ export default function ProScannerBot() {
         cStake = baseStake;
       } else {
         setLosses(prev => prev + 1);
-        // Record loss for virtual trading requirement (duration ~1 tick ≈ 5s+)
         if (activeAccount?.is_virtual) {
           recordLoss(cStake, tradeSymbol, 6000);
         }
@@ -883,12 +998,11 @@ export default function ProScannerBot() {
     if ((cfg as any).botName) setBotName((cfg as any).botName);
   }, []);
 
-  // Auto-load config from navigation state (Free Bots page)
+  // Auto-load config from navigation state
   useEffect(() => {
     const state = location.state as { loadConfig?: BotConfig } | null;
     if (state?.loadConfig) {
       handleLoadConfig(state.loadConfig);
-      // Clear state to prevent re-loading on re-render
       window.history.replaceState({}, '');
     }
   }, [location.state, handleLoadConfig]);
@@ -907,6 +1021,20 @@ export default function ProScannerBot() {
   const handleRefreshHistory = useCallback(() => {
     fetchHistoricalTicks(selectedPercentMarket);
   }, [selectedPercentMarket, fetchHistoricalTicks]);
+
+  // Show connection error if not connected
+  if (!isConnected) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[400px] space-y-4">
+        <WifiOff className="w-16 h-16 text-rose-400" />
+        <h2 className="text-xl font-semibold text-gray-200">Connection Error</h2>
+        <p className="text-sm text-gray-400">{connectionError || 'Failed to connect to Deriv API'}</p>
+        <Button onClick={() => window.location.reload()} className="mt-4">
+          Retry Connection
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2 max-w-7xl mx-auto font-sans">
@@ -1013,7 +1141,7 @@ export default function ProScannerBot() {
         </div>
       </div>
 
-      {/* ── Percentage Analysis Section (Below Live Digits) ── */}
+      {/* ── Percentage Analysis Section ── */}
       <div className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-xl p-2.5 shadow-md">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-xs font-semibold text-gray-200 flex items-center gap-1">
@@ -1060,11 +1188,25 @@ export default function ProScannerBot() {
           </div>
         </div>
         
-        {/* Loading indicator */}
+        {/* Loading/Error states */}
         {isLoadingHistory && (
           <div className="flex items-center justify-center py-2">
             <Loader2 className="w-4 h-4 animate-spin text-cyan-400 mr-2" />
             <span className="text-[10px] text-gray-400">Loading 1000 historical ticks...</span>
+          </div>
+        )}
+        
+        {historyError && !isLoadingHistory && (
+          <div className="flex items-center justify-center py-2 text-rose-400">
+            <span className="text-[10px]">Error: {historyError}</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-5 text-[9px] ml-2 text-cyan-400"
+              onClick={handleRefreshHistory}
+            >
+              Retry
+            </Button>
           </div>
         )}
         
@@ -1102,10 +1244,10 @@ export default function ProScannerBot() {
         {/* Total ticks info */}
         <div className="flex items-center justify-between text-[9px] text-gray-500 font-medium">
           <span>
-            {historyLoaded ? '✅ Historical data loaded' : '⏳ Waiting for data...'}
+            {historyLoaded ? '✅ Historical data loaded' : historyError ? '❌ Load failed' : '⏳ Waiting for data...'}
           </span>
           <span>
-            Total ticks analyzed: {digitPercentages.reduce((sum, d) => sum + d.count, 0)} / {Math.min(parseInt(percentTickRange), digitPercentages.reduce((sum, d) => sum + d.count, 0))}
+            Total ticks analyzed: {digitPercentages.reduce((sum, d) => sum + d.count, 0)} / {Math.min(parseInt(percentTickRange), digitPercentages.reduce((sum, d) => sum + d.count, 0) || parseInt(percentTickRange))}
           </span>
         </div>
       </div>
@@ -1579,7 +1721,7 @@ export default function ProScannerBot() {
           <div className="grid grid-cols-2 gap-2">
             <Button
               onClick={startBot}
-              disabled={isRunning || !isAuthorized || balance < parseFloat(stake)}
+              disabled={isRunning || !isAuthorized || balance < parseFloat(stake) || !isConnected}
               className="h-14 text-base font-bold bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white rounded-xl shadow-lg"
             >
               <Play className="w-5 h-5 mr-2" /> START M1
@@ -1605,7 +1747,7 @@ export default function ProScannerBot() {
                   </span>
                 )}
                 {!isRunning ? (
-                  <Button onClick={startBot} disabled={!isAuthorized || balance < parseFloat(stake)}
+                  <Button onClick={startBot} disabled={!isAuthorized || balance < parseFloat(stake) || !isConnected}
                     size="sm" className="h-7 text-[10px] font-bold bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white px-3">
                     <Play className="w-3 h-3 mr-1" /> START
                   </Button>
