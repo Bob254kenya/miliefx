@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import {
   Play, StopCircle, Trash2, Scan,
-  Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload, BarChart, Loader2, WifiOff
+  Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload, Loader2, WifiOff
 } from 'lucide-react';
 import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
@@ -51,62 +51,6 @@ interface LogEntry {
   pnl: number;
   balance: number;
   switchInfo: string;
-}
-
-/* ── Percentage Analysis Types ── */
-interface DigitPercentage {
-  digit: number;
-  count: number;
-  percentage: number;
-}
-
-/* ── Circular Tick Buffer with 1000 capacity ── */
-class CircularTickBuffer {
-  private buffer: { digit: number; ts: number }[];
-  private head = 0;
-  private count = 0;
-  
-  constructor(private capacity = 1000) {
-    this.buffer = new Array(capacity);
-  }
-  
-  push(digit: number) {
-    this.buffer[this.head] = { digit, ts: performance.now() };
-    this.head = (this.head + 1) % this.capacity;
-    if (this.count < this.capacity) this.count++;
-  }
-  
-  last(n: number): number[] {
-    const result: number[] = [];
-    const start = (this.head - Math.min(n, this.count) + this.capacity) % this.capacity;
-    for (let i = 0; i < Math.min(n, this.count); i++) {
-      result.push(this.buffer[(start + i) % this.capacity].digit);
-    }
-    return result;
-  }
-  
-  lastTs(): number { 
-    return this.count > 0 ? this.buffer[(this.head - 1 + this.capacity) % this.capacity].ts : 0; 
-  }
-  
-  get size() { return this.count; }
-  
-  // Get all digits for percentage calculation (most recent first)
-  getAllDigits(): number[] {
-    const result: number[] = [];
-    for (let i = 0; i < this.count; i++) {
-      const index = (this.head - i - 1 + this.capacity) % this.capacity;
-      result.push(this.buffer[index].digit);
-    }
-    return result;
-  }
-
-  // Clear buffer and reset
-  clear() {
-    this.head = 0;
-    this.count = 0;
-    this.buffer = new Array(this.capacity);
-  }
 }
 
 function waitForNextTick(symbol: string): Promise<{ quote: number }> {
@@ -246,23 +190,12 @@ export default function ProScannerBot() {
   /* ── Scanner ── */
   const [scannerActive, setScannerActive] = useState(false);
 
-  /* ── Percentage Analysis ── */
-  const [selectedPercentMarket, setSelectedPercentMarket] = useState('R_100');
-  const [percentTickRange, setPercentTickRange] = useState('1000');
-  const [digitPercentages, setDigitPercentages] = useState<DigitPercentage[]>([]);
-  const [selectedDigit, setSelectedDigit] = useState<number | null>(null);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
-  const historyFetchInProgress = useRef(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-
   /* ── Turbo ── */
   const [turboMode, setTurboMode] = useState(false);
   const [botName, setBotName] = useState('');
   const [turboLatency, setTurboLatency] = useState(0);
   const [ticksCaptured, setTicksCaptured] = useState(0);
   const [ticksMissed, setTicksMissed] = useState(0);
-  const turboBuffersRef = useRef<Map<string, CircularTickBuffer>>(new Map());
   const lastTickTsRef = useRef(0);
 
   /* ── Bot state ── */
@@ -283,6 +216,14 @@ export default function ProScannerBot() {
   const tickMapRef = useRef<Map<string, number[]>>(new Map());
   const [tickCounts, setTickCounts] = useState<Record<string, number>>({});
 
+  /* ── HTML Analyzer State ── */
+  const [analyzerSymbol, setAnalyzerSymbol] = useState('R_100');
+  const [analyzerMode, setAnalyzerMode] = useState<'over' | 'under'>('over');
+  const [analyzerThreshold, setAnalyzerThreshold] = useState(5);
+  const [analyzerTicks, setAnalyzerTicks] = useState<number[]>([]);
+  const [analyzerStatus, setAnalyzerStatus] = useState('Connecting...');
+  const analyzerWsRef = useRef<WebSocket | null>(null);
+
   /* ── Check connection status ── */
   useEffect(() => {
     const checkConnection = () => {
@@ -301,261 +242,139 @@ export default function ProScannerBot() {
     return () => clearInterval(interval);
   }, []);
 
-  /* ── FIXED: Fetch historical ticks for a symbol with proper response handling ── */
-  const fetchHistoricalTicks = useCallback(async (symbol: string) => {
-    if (!derivApi.isConnected) {
-      setHistoryError('Not connected to Deriv API');
-      toast.error('Cannot fetch history: Not connected to Deriv API');
-      return;
-    }
-
-    if (historyFetchInProgress.current) return;
-    historyFetchInProgress.current = true;
-    setIsLoadingHistory(true);
-    setHistoryError(null);
-
-    try {
-      // Use retry logic for API call
-      const response = await retryWithBackoff(
-        () => derivApi.getTicksHistory(symbol as MarketSymbol, {
-          adjust_start_time: 1,
-          count: 1000,
-          end: 'latest',
-          start: 1,
-          style: 'ticks'
-        }),
-        3,
-        1000
-      );
-
-      console.log('API Response:', response); // For debugging
-
-      // Extract prices from various possible response structures
-      let prices: number[] = [];
-      
-      // Case 1: response.history?.prices (standard Deriv API)
-      if (response?.history?.prices && Array.isArray(response.history.prices)) {
-        prices = response.history.prices;
-      }
-      // Case 2: response.history?.ticks (alternative format)
-      else if (response?.history?.ticks && Array.isArray(response.history.ticks)) {
-        prices = response.history.ticks.map((tick: any) => {
-          if (typeof tick === 'number') return tick;
-          if (typeof tick === 'string') return parseFloat(tick);
-          return tick.quote || tick.price || 0;
-        });
-      }
-      // Case 3: response.prices (direct array)
-      else if (response?.prices && Array.isArray(response.prices)) {
-        prices = response.prices;
-      }
-      // Case 4: response.ticks (direct array of tick objects)
-      else if (response?.ticks && Array.isArray(response.ticks)) {
-        prices = response.ticks.map((tick: any) => {
-          if (typeof tick === 'number') return tick;
-          if (typeof tick === 'string') return parseFloat(tick);
-          return tick.quote || tick.price || 0;
-        });
-      }
-      // Case 5: response is directly an array
-      else if (Array.isArray(response)) {
-        prices = response.map((item: any) => {
-          if (typeof item === 'number') return item;
-          if (typeof item === 'string') return parseFloat(item);
-          return item.quote || item.price || 0;
-        });
-      }
-      else {
-        console.error('Unexpected response structure:', response);
-        throw new Error('No historical data received - unexpected API response format');
-      }
-
-      // Filter out invalid prices
-      prices = prices.filter(p => !isNaN(p) && p !== null && p !== undefined);
-      
-      if (prices.length === 0) {
-        throw new Error('Empty or invalid price data received');
-      }
-
-      console.log(`Extracted ${prices.length} prices for ${symbol}`);
-
-      // Ensure buffer exists with 1000 capacity
-      if (!turboBuffersRef.current.has(symbol)) {
-        turboBuffersRef.current.set(symbol, new CircularTickBuffer(1000));
-      }
-      const buffer = turboBuffersRef.current.get(symbol)!;
-      buffer.clear();
-
-      // Push historical ticks in chronological order
-      prices.forEach((price: number) => {
-        const digit = getLastDigit(price);
-        buffer.push(digit);
-        
-        // Update legacy tick map (keep last 200 for pattern matching)
-        const map = tickMapRef.current;
-        const arr = map.get(symbol) || [];
-        arr.push(digit);
-        if (arr.length > 200) arr.shift();
-        map.set(symbol, arr);
-      });
-
-      setTickCounts(prev => ({ ...prev, [symbol]: buffer.size }));
-      
-      // Update percentages immediately
-      updateDigitPercentages(symbol);
-      
-      toast.success(`Loaded ${buffer.size} historical ticks for ${symbol}`);
-      setHistoryLoaded(true);
-    } catch (error) {
-      console.error('Error fetching historical ticks:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to load historical ticks';
-      setHistoryError(errorMessage);
-      toast.error(errorMessage);
-    } finally {
-      setIsLoadingHistory(false);
-      historyFetchInProgress.current = false;
-    }
-  }, []);
-
-  /* ── Update digit percentages for selected market ── */
-  const updateDigitPercentages = useCallback((symbol: string) => {
-    const buffer = turboBuffersRef.current.get(symbol);
-    if (!buffer || buffer.size === 0) {
-      setDigitPercentages([]);
-      return;
-    }
-    
-    const range = Math.min(parseInt(percentTickRange) || 1000, buffer.size);
-    const allDigits = buffer.getAllDigits();
-    const recentDigits = allDigits.slice(0, range);
-    
-    if (recentDigits.length === 0) {
-      setDigitPercentages([]);
-      return;
-    }
-    
-    const counts: Record<number, number> = {};
-    for (let i = 0; i <= 9; i++) counts[i] = 0;
-    
-    recentDigits.forEach(d => {
-      if (d >= 0 && d <= 9) {
-        counts[d] = (counts[d] || 0) + 1;
-      }
-    });
-    
-    const percentages: DigitPercentage[] = [];
-    for (let i = 0; i <= 9; i++) {
-      percentages.push({
-        digit: i,
-        count: counts[i],
-        percentage: (counts[i] / recentDigits.length) * 100
-      });
-    }
-    
-    percentages.sort((a, b) => a.digit - b.digit);
-    setDigitPercentages(percentages);
-  }, [percentTickRange]);
-
-  /* ── Load historical ticks when market changes ── */
+  /* ── HTML Analyzer WebSocket Connection ── */
   useEffect(() => {
-    if (!derivApi.isConnected) {
-      setHistoryLoaded(false);
-      return;
-    }
-    
-    setHistoryLoaded(false);
-    setHistoryError(null);
-    fetchHistoricalTicks(selectedPercentMarket);
-  }, [selectedPercentMarket, fetchHistoricalTicks]);
-
-  /* Subscribe to all scanner markets and handle real-time updates */
-  useEffect(() => {
-    if (!derivApi.isConnected) {
-      return;
+    // Close previous connection
+    if (analyzerWsRef.current) {
+      analyzerWsRef.current.close();
     }
 
-    let active = true;
-    
-    const handler = (data: any) => {
-      if (!data.tick || !active) return;
-      const sym = data.tick.symbol as string;
-      const digit = getLastDigit(data.tick.quote);
-      const now = performance.now();
+    setAnalyzerStatus('Connecting...');
+    setAnalyzerTicks([]);
 
-      // Legacy tick map
-      const map = tickMapRef.current;
-      const arr = map.get(sym) || [];
-      arr.push(digit);
-      if (arr.length > 200) arr.shift();
-      map.set(sym, arr);
+    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
+    analyzerWsRef.current = ws;
 
-      // Turbo circular buffer
-      if (!turboBuffersRef.current.has(sym)) {
-        turboBuffersRef.current.set(sym, new CircularTickBuffer(1000));
-        
-        // Fetch historical ticks if needed
-        if (sym === selectedPercentMarket && !historyLoaded && !isLoadingHistory) {
-          fetchHistoricalTicks(sym);
-        }
-      }
-      
-      const buf = turboBuffersRef.current.get(sym)!;
-      buf.push(digit);
-      
-      setTickCounts(prev => ({ ...prev, [sym]: buf.size }));
-
-      if (sym === selectedPercentMarket) {
-        updateDigitPercentages(sym);
-      }
-
-      if (lastTickTsRef.current > 0) {
-        const lat = now - lastTickTsRef.current;
-        setTurboLatency(Math.round(lat));
-        if (lat > 50) setTicksMissed(prev => prev + 1);
-      }
-      lastTickTsRef.current = now;
-      setTicksCaptured(prev => prev + 1);
+    ws.onopen = () => {
+      setAnalyzerStatus('Live');
+      ws.send(JSON.stringify({
+        ticks_history: analyzerSymbol,
+        style: "ticks",
+        count: 1000,
+        end: "latest",
+        subscribe: 1,
+      }));
     };
-    
-    const unsub = derivApi.onMessage(handler);
-    
-    // Subscribe with retry logic
-    const subscribeWithRetry = async () => {
-      for (const m of SCANNER_MARKETS) {
-        try {
-          await retryWithBackoff(
-            () => derivApi.subscribeTicks(m.symbol as MarketSymbol, () => {}),
-            2,
-            500
-          );
-        } catch (error) {
-          console.error(`Failed to subscribe to ${m.symbol}:`, error);
+
+    ws.onmessage = (msg) => {
+      const data = JSON.parse(msg.data);
+      if (data.history) {
+        const prices = data.history.prices.map((p: string) => 
+          parseInt(parseFloat(p).toFixed(2).slice(-1))
+        );
+        setAnalyzerTicks(prices);
+      }
+      if (data.tick) {
+        const tick = parseFloat(data.tick.quote);
+        const digit = parseInt(tick.toFixed(2).slice(-1));
+        if (!isNaN(digit)) {
+          setAnalyzerTicks(prev => {
+            const newTicks = [...prev, digit];
+            if (newTicks.length > 4000) newTicks.shift();
+            return newTicks;
+          });
         }
       }
     };
-    
-    subscribeWithRetry();
-    
-    return () => { 
-      active = false; 
-      unsub(); 
-    };
-  }, [selectedPercentMarket, updateDigitPercentages, fetchHistoricalTicks, historyLoaded, isLoadingHistory]);
 
-  /* ── Handle digit button click ── */
-  const handleDigitClick = useCallback((digit: number) => {
-    setSelectedDigit(selectedDigit === digit ? null : digit);
-    
+    ws.onerror = () => {
+      setAnalyzerStatus('Error');
+    };
+
+    ws.onclose = () => {
+      setAnalyzerStatus('No network');
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [analyzerSymbol]);
+
+  /* ── Handle digit click from analyzer ── */
+  const handleAnalyzerDigitClick = (digit: number) => {
+    setAnalyzerThreshold(digit);
     if (needsBarrier(m1Contract)) {
       setM1Barrier(digit.toString());
     }
     if (needsBarrier(m2Contract)) {
       setM2Barrier(digit.toString());
     }
-    
-    const percentage = digitPercentages.find(d => d.digit === digit)?.percentage.toFixed(1) || '0.0';
-    toast.info(`Selected digit: ${digit} (${percentage}%)`);
-  }, [selectedDigit, m1Contract, m2Contract, digitPercentages]);
+  };
+
+  /* ── Calculate analyzer statistics ── */
+  const analyzerStats = useMemo(() => {
+    if (!analyzerTicks.length) return null;
+
+    const tickCount = 1000;
+    const recentTicks = analyzerTicks.slice(-tickCount);
+    const lastDigits = recentTicks.slice(-30);
+    const counts = Array(10).fill(0);
+    recentTicks.forEach(d => counts[d]++);
+    const total = recentTicks.length;
+
+    // Most frequent digits
+    const sorted = counts
+      .map((c, d) => ({ digit: d, count: c }))
+      .sort((a, b) => b.count - a.count);
+    const most = sorted[0]?.digit;
+    const second = sorted[1]?.digit;
+
+    // Over/Under percentages
+    const lowCount = counts.slice(0, analyzerThreshold).reduce((a, b) => a + b, 0);
+    const highCount = counts.slice(analyzerThreshold + 1, 10).reduce((a, b) => a + b, 0);
+    const lowPercent = total ? ((lowCount / total) * 100).toFixed(1) : 0;
+    const highPercent = total ? ((highCount / total) * 100).toFixed(1) : 0;
+
+    // Entry triggers
+    let winningDigits: number[] = [], losingDigits: number[] = [];
+    for (let i = 0; i < recentTicks.length - 1; i++) {
+      if (recentTicks[i] === analyzerThreshold) {
+        const nextDigit = recentTicks[i + 1];
+        if (analyzerMode === "over") {
+          if (nextDigit > analyzerThreshold) winningDigits.push(nextDigit);
+          else losingDigits.push(nextDigit);
+        } else {
+          if (nextDigit < analyzerThreshold) winningDigits.push(nextDigit);
+          else losingDigits.push(nextDigit);
+        }
+      }
+    }
+    winningDigits = [...new Set(winningDigits)];
+    losingDigits = [...new Set(losingDigits)];
+
+    // Signal
+    let signalText = "WAIT / NEUTRAL", signalClass = "signal-neutral";
+    if (most < analyzerThreshold && second < analyzerThreshold) {
+      signalText = `SIGNAL: STRONG TRADE UNDER ${analyzerThreshold}`;
+      signalClass = "signal-under";
+    } else if (most > analyzerThreshold && second > analyzerThreshold) {
+      signalText = `SIGNAL: STRONG TRADE OVER ${analyzerThreshold}`;
+      signalClass = "signal-over";
+    }
+
+    return {
+      lastDigits,
+      counts,
+      most,
+      second,
+      lowPercent,
+      highPercent,
+      winningDigits,
+      losingDigits,
+      signalText,
+      signalClass
+    };
+  }, [analyzerTicks, analyzerThreshold, analyzerMode]);
 
   /* ── Pattern validation ── */
   const cleanM1Pattern = m1Pattern.toUpperCase().replace(/[^EO]/g, '');
@@ -1052,18 +871,6 @@ export default function ProScannerBot() {
   const activeSymbol = currentMarket === 1 ? m1Symbol : m2Symbol;
   const activeDigits = (tickMapRef.current.get(activeSymbol) || []).slice(-8);
 
-  // Update percentages when market or tick range changes
-  useEffect(() => {
-    if (historyLoaded) {
-      updateDigitPercentages(selectedPercentMarket);
-    }
-  }, [selectedPercentMarket, percentTickRange, updateDigitPercentages, historyLoaded]);
-
-  // Manual refresh button handler
-  const handleRefreshHistory = useCallback(() => {
-    fetchHistoricalTicks(selectedPercentMarket);
-  }, [selectedPercentMarket, fetchHistoricalTicks]);
-
   // Show connection error if not connected
   if (!isConnected) {
     return (
@@ -1180,117 +987,6 @@ export default function ProScannerBot() {
               <div className="font-mono text-[10px] font-bold text-white">${currentStake.toFixed(2)}{martingaleStep > 0 && <span className="text-amber-400"> M{martingaleStep}</span>}</div>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* ── Percentage Analysis Section ── */}
-      <div className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-xl p-2.5 shadow-md">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs font-semibold text-gray-200 flex items-center gap-1">
-            <BarChart className="w-3.5 h-3.5 text-cyan-400" /> Digit Percentage Analysis
-          </h3>
-          <div className="flex items-center gap-2">
-            <Select value={selectedPercentMarket} onValueChange={setSelectedPercentMarket}>
-              <SelectTrigger className="h-6 text-[10px] w-24 bg-gray-900 border-gray-700 text-gray-200">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-gray-800 border-gray-700">
-                {SCANNER_MARKETS.map(m => (
-                  <SelectItem key={m.symbol} value={m.symbol} className="text-gray-200 text-[10px]">
-                    {m.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={percentTickRange} onValueChange={setPercentTickRange}>
-              <SelectTrigger className="h-6 text-[10px] w-20 bg-gray-900 border-gray-700 text-gray-200">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-gray-800 border-gray-700">
-                <SelectItem value="50" className="text-gray-200 text-[10px]">50 ticks</SelectItem>
-                <SelectItem value="100" className="text-gray-200 text-[10px]">100 ticks</SelectItem>
-                <SelectItem value="200" className="text-gray-200 text-[10px]">200 ticks</SelectItem>
-                <SelectItem value="500" className="text-gray-200 text-[10px]">500 ticks</SelectItem>
-                <SelectItem value="1000" className="text-gray-200 text-[10px]">1000 ticks</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-6 text-[9px] px-2 bg-gray-900 border-gray-700 text-gray-300 hover:bg-gray-800"
-              onClick={handleRefreshHistory}
-              disabled={isLoadingHistory || isRunning}
-            >
-              {isLoadingHistory ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : (
-                <RefreshCw className="w-3 h-3" />
-              )}
-            </Button>
-          </div>
-        </div>
-        
-        {/* Loading/Error states */}
-        {isLoadingHistory && (
-          <div className="flex items-center justify-center py-2">
-            <Loader2 className="w-4 h-4 animate-spin text-cyan-400 mr-2" />
-            <span className="text-[10px] text-gray-400">Loading 1000 historical ticks...</span>
-          </div>
-        )}
-        
-        {historyError && !isLoadingHistory && (
-          <div className="flex items-center justify-center py-2 text-rose-400">
-            <span className="text-[10px]">Error: {historyError}</span>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-5 text-[9px] ml-2 text-cyan-400"
-              onClick={handleRefreshHistory}
-            >
-              Retry
-            </Button>
-          </div>
-        )}
-        
-        {/* Digit Buttons with Percentages */}
-        <div className="grid grid-cols-5 gap-1 mb-1">
-          {digitPercentages.map(({ digit, percentage, count }) => {
-            const isSelected = selectedDigit === digit;
-            const percentColor = 
-              percentage > 12 ? 'text-emerald-400' :
-              percentage > 9 ? 'text-amber-400' :
-              'text-rose-400';
-            
-            return (
-              <Button
-                key={digit}
-                variant={isSelected ? 'default' : 'outline'}
-                className={`h-14 flex flex-col items-center justify-center p-1 ${
-                  isSelected 
-                    ? 'bg-cyan-600 hover:bg-cyan-700 border-cyan-500' 
-                    : 'bg-gray-900 border-gray-700 hover:bg-gray-800'
-                }`}
-                onClick={() => handleDigitClick(digit)}
-                disabled={isRunning}
-              >
-                <span className="text-sm font-bold text-white">{digit}</span>
-                <div className="flex items-center gap-1 text-[8px]">
-                  <span className={percentColor}>{percentage.toFixed(1)}%</span>
-                  <span className="text-gray-500">({count})</span>
-                </div>
-              </Button>
-            );
-          })}
-        </div>
-        
-        {/* Total ticks info */}
-        <div className="flex items-center justify-between text-[9px] text-gray-500 font-medium">
-          <span>
-            {historyLoaded ? '✅ Historical data loaded' : historyError ? '❌ Load failed' : '⏳ Waiting for data...'}
-          </span>
-          <span>
-            Total ticks analyzed: {digitPercentages.reduce((sum, d) => sum + d.count, 0)} / {Math.min(parseInt(percentTickRange), digitPercentages.reduce((sum, d) => sum + d.count, 0) || parseInt(percentTickRange))}
-          </span>
         </div>
       </div>
 
@@ -1702,7 +1398,7 @@ export default function ProScannerBot() {
           </div>
         </div>
 
-        {/* ═══ RIGHT: Digit Stream + Activity Log ═══ */}
+        {/* ═══ RIGHT: Digit Stream + Activity Log + Analyzer ═══ */}
         <div className="lg:col-span-8 space-y-2">
           {/* Digit Stream */}
           <div className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-xl p-2.5 shadow-md">
@@ -1717,14 +1413,10 @@ export default function ProScannerBot() {
                 const isOver = d >= 5;
                 const isEven = d % 2 === 0;
                 const isLast = i === activeDigits.length - 1;
-                const isSelected = selectedDigit === d;
                 return (
-                  <div key={i} className={`w-8 h-10 rounded-lg flex flex-col items-center justify-center text-xs font-mono font-bold border cursor-pointer transition-all ${
+                  <div key={i} className={`w-8 h-10 rounded-lg flex flex-col items-center justify-center text-xs font-mono font-bold border transition-all ${
                     isLast ? 'ring-2 ring-cyan-400' : ''
-                  } ${
-                    isSelected ? 'ring-2 ring-amber-400 scale-110' : ''
-                  } ${isOver ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}`}
-                  onClick={() => handleDigitClick(d)}>
+                  } ${isOver ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}`}>
                     <span className="text-sm">{d}</span>
                     <span className="text-[7px] opacity-60">{isOver ? 'O' : 'U'}{isEven ? 'E' : 'O'}</span>
                   </div>
@@ -1864,6 +1556,172 @@ export default function ProScannerBot() {
                 </tbody>
               </table>
             </div>
+          </div>
+
+          {/* ── NEW: HTML Analyzer Section ── */}
+          <div className="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-xl p-4 shadow-md">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                <span>📊</span> Deriv Over/Under Entry Digit Analyzer
+              </h3>
+              <div className="flex items-center gap-3">
+                <div className="text-xs text-gray-400">
+                  Status: <span className={`font-medium ${
+                    analyzerStatus === 'Live' ? 'text-emerald-400' : 
+                    analyzerStatus === 'Error' ? 'text-rose-400' : 'text-amber-400'
+                  }`}>{analyzerStatus}</span>
+                </div>
+                <a
+                  href="https://ramztraders.site/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                >
+                  Trade on ramztraders.site ↗
+                </a>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+              <div>
+                <label className="block text-[10px] text-gray-500 mb-1">Mode</label>
+                <Select value={analyzerMode} onValueChange={(v: 'over' | 'under') => setAnalyzerMode(v)}>
+                  <SelectTrigger className="h-8 text-xs bg-gray-900 border-gray-700 text-gray-200">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-gray-800 border-gray-700">
+                    <SelectItem value="over" className="text-gray-200">Over</SelectItem>
+                    <SelectItem value="under" className="text-gray-200">Under</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-500 mb-1">Market</label>
+                <Select value={analyzerSymbol} onValueChange={setAnalyzerSymbol}>
+                  <SelectTrigger className="h-8 text-xs bg-gray-900 border-gray-700 text-gray-200">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-gray-800 border-gray-700 max-h-[300px]">
+                    {SCANNER_MARKETS.map(m => (
+                      <SelectItem key={m.symbol} value={m.symbol} className="text-gray-200 text-xs">
+                        {m.name} ({m.symbol})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-500 mb-1">Threshold</label>
+                <div className="flex gap-1 flex-wrap">
+                  {[0,1,2,3,4,5,6,7,8,9].map(d => (
+                    <button
+                      key={d}
+                      onClick={() => handleAnalyzerDigitClick(d)}
+                      className={`w-7 h-7 rounded text-xs font-bold transition-all ${
+                        analyzerThreshold === d
+                          ? 'bg-cyan-600 text-white ring-2 ring-cyan-400'
+                          : 'bg-gray-900 text-gray-300 hover:bg-gray-700 border border-gray-700'
+                      }`}
+                    >
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-[10px] text-gray-500 mb-1">Ticks (1000)</label>
+                <Input
+                  type="number"
+                  value="1000"
+                  disabled
+                  className="h-8 text-xs bg-gray-900 border-gray-700 text-gray-200 opacity-50"
+                />
+              </div>
+            </div>
+
+            {analyzerStats && (
+              <>
+                {/* Prediction Box */}
+                <div className={`p-3 rounded-lg text-center font-bold mb-4 ${
+                  analyzerStats.signalClass === 'signal-over' ? 'bg-green-900/50 text-green-400' :
+                  analyzerStats.signalClass === 'signal-under' ? 'bg-red-900/50 text-red-400' :
+                  'bg-gray-800 text-gray-400'
+                }`}>
+                  {analyzerStats.signalText}
+                </div>
+
+                {/* Last Digits */}
+                <div className="mb-4">
+                  <h4 className="text-[10px] text-gray-500 mb-2">Last 30 Digits</h4>
+                  <div className="grid grid-cols-15 gap-1">
+                    {analyzerStats.lastDigits.map((d: number, i: number) => {
+                      let bgColor = 'bg-gray-900';
+                      if (d === analyzerThreshold) bgColor = 'bg-blue-600';
+                      else if (analyzerMode === 'over' && d > analyzerThreshold) bgColor = 'bg-green-700';
+                      else if (analyzerMode === 'over' && d < analyzerThreshold) bgColor = 'bg-red-700';
+                      else if (analyzerMode === 'under' && d < analyzerThreshold) bgColor = 'bg-green-700';
+                      else if (analyzerMode === 'under' && d > analyzerThreshold) bgColor = 'bg-red-700';
+                      
+                      return (
+                        <div
+                          key={i}
+                          className={`w-7 h-7 rounded flex items-center justify-center text-xs font-bold text-white ${bgColor}`}
+                        >
+                          {d}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Digit Buttons with Percentages */}
+                <div className="mb-4">
+                  <h4 className="text-[10px] text-gray-500 mb-2">Digit Distribution</h4>
+                  <div className="grid grid-cols-5 gap-1">
+                    {[0,1,2,3,4,5,6,7,8,9].map(d => {
+                      const percent = analyzerStats.counts[d] / analyzerTicks.slice(-1000).length * 100;
+                      let bgColor = 'bg-gray-900';
+                      if (d === analyzerStats.most) bgColor = 'bg-green-700';
+                      else if (d === analyzerStats.second) bgColor = 'bg-blue-700';
+                      else if (d === Math.min(...Object.values(analyzerStats.counts))) bgColor = 'bg-red-700';
+                      
+                      return (
+                        <div
+                          key={d}
+                          className={`p-2 rounded text-center ${bgColor}`}
+                        >
+                          <div className="text-sm font-bold text-white">{d}</div>
+                          <div className="text-[8px] text-gray-300">{percent.toFixed(1)}%</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Percentages and Triggers */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-gray-900/50 p-3 rounded-lg border border-gray-700">
+                    <h4 className="text-[10px] text-gray-500 mb-1">Over/Under Percentages</h4>
+                    <p className="text-sm font-mono">
+                      Under {analyzerThreshold}: <span className="text-emerald-400">{analyzerStats.lowPercent}%</span> | 
+                      Over {analyzerThreshold}: <span className="text-amber-400">{analyzerStats.highPercent}%</span>
+                    </p>
+                  </div>
+                  <div className="bg-gray-900/50 p-3 rounded-lg border border-gray-700">
+                    <h4 className="text-[10px] text-gray-500 mb-1">Entry Triggers</h4>
+                    <p className="text-xs">
+                      <span className="text-emerald-400">
+                        ✅ Winning digits: [{analyzerStats.winningDigits.length ? analyzerStats.winningDigits.join(', ') : 'none'}]
+                      </span>
+                      <br />
+                      <span className="text-rose-400">
+                        ❌ Losing digits: [{analyzerStats.losingDigits.length ? analyzerStats.losingDigits.join(', ') : 'none'}]
+                      </span>
+                    </p>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
