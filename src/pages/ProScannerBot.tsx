@@ -1,4 +1,4 @@
-ensure in digit percentage analysis the number of tick are fetch 1000 initial then to continue import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { copyTradingService } from '@/services/copy-trading-service';
