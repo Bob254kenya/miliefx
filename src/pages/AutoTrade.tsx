@@ -64,7 +64,12 @@ import {
     ZapOff,
     BarChart,
     LineChart,
-    PieChart
+    PieChart,
+    Settings2,
+    Lock,
+    Unlock,
+    TrendingUp as TrendUp,
+    TrendingDown as TrendDown
 } from 'lucide-react';
 
 // Types
@@ -106,6 +111,7 @@ interface MarketAnalysis {
     };
 }
 
+// ADDED: Enhanced Bot interface with new fields
 interface Bot {
     id: string;
     name: string;
@@ -136,6 +142,19 @@ interface Bot {
     lastAnalysis: MarketAnalysis | null;
     expanded: boolean;
     enabled: boolean;
+    // ADDED: New fields for better control
+    isTrading: boolean;
+    entryConfirmed: boolean;
+    confirmTicks: number;
+    initialStake: number;
+    runsCompleted: number;
+    maxRuns: number;
+    entryThreshold: number;
+    recoveryMode: boolean;
+    recoveryTarget: string | null;
+    peakPnl: number;
+    lastTradeTime: number | null;
+    tradeLock: boolean;
 }
 
 interface Trade {
@@ -153,6 +172,8 @@ interface Trade {
     resultDigit: number;
     timestamp: number;
     confidence: number;
+    strategy: string;
+    recoveryStep: number;
 }
 
 // Constants
@@ -171,13 +192,82 @@ const MARKETS = [
     { value: '1HZ100V', label: '1HZ 100', icon: '⚡', group: '1HZ', color: 'rose' }
 ];
 
+// UPDATED: Bot configs with more details
 const BOT_CONFIGS = [
-    { id: 'bot1', type: 'over', mode: 'trend', name: 'OVER BOT (TREND)', icon: <ArrowUp className="w-4 h-4" />, color: 'blue', bg: 'from-blue-500/20 to-blue-600/10' },
-    { id: 'bot2', type: 'over', mode: 'reversal', name: 'OVER BOT (RECOVERY)', icon: <RefreshCw className="w-4 h-4" />, color: 'cyan', bg: 'from-cyan-500/20 to-cyan-600/10' },
-    { id: 'bot3', type: 'even', mode: 'trend', name: 'EVEN BOT', icon: <CircleDot className="w-4 h-4" />, color: 'purple', bg: 'from-purple-500/20 to-purple-600/10' },
-    { id: 'bot4', type: 'odd', mode: 'trend', name: 'ODD BOT', icon: <Hash className="w-4 h-4" />, color: 'orange', bg: 'from-orange-500/20 to-orange-600/10' },
-    { id: 'bot5', type: 'over', mode: 'trend', name: 'OVER BOT 2', icon: <MoveUp className="w-4 h-4" />, color: 'emerald', bg: 'from-emerald-500/20 to-emerald-600/10' },
-    { id: 'bot6', type: 'under', mode: 'trend', name: 'UNDER BOT', icon: <MoveDown className="w-4 h-4" />, color: 'red', bg: 'from-red-500/20 to-red-600/10' }
+    { 
+        id: 'bot1', 
+        type: 'over', 
+        mode: 'trend', 
+        name: 'OVER 4 BOT', 
+        description: 'Entry when Over 4% > 60%',
+        icon: <ArrowUp className="w-4 h-4" />, 
+        color: 'blue', 
+        bg: 'from-blue-500/20 to-blue-600/10',
+        defaultThreshold: 60,
+        maxRuns: 5
+    },
+    { 
+        id: 'bot2', 
+        type: 'over', 
+        mode: 'reversal', 
+        name: 'OVER 1 → OVER 3', 
+        description: 'Recovery: Over 1 → Over 3 on loss',
+        icon: <RefreshCw className="w-4 h-4" />, 
+        color: 'cyan', 
+        bg: 'from-cyan-500/20 to-cyan-600/10',
+        defaultThreshold: 60,
+        maxRuns: 3,
+        recoveryMode: true,
+        recoveryTarget: 'OVER_3'
+    },
+    { 
+        id: 'bot3', 
+        type: 'even', 
+        mode: 'trend', 
+        name: 'EVEN BOT', 
+        description: 'Entry when Even% > 55%',
+        icon: <CircleDot className="w-4 h-4" />, 
+        color: 'purple', 
+        bg: 'from-purple-500/20 to-purple-600/10',
+        defaultThreshold: 55,
+        maxRuns: 5
+    },
+    { 
+        id: 'bot4', 
+        type: 'odd', 
+        mode: 'trend', 
+        name: 'ODD BOT', 
+        description: 'Entry when Odd% > 55%',
+        icon: <Hash className="w-4 h-4" />, 
+        color: 'orange', 
+        bg: 'from-orange-500/20 to-orange-600/10',
+        defaultThreshold: 55,
+        maxRuns: 5
+    },
+    { 
+        id: 'bot5', 
+        type: 'over', 
+        mode: 'trend', 
+        name: 'OVER BOT 2', 
+        description: 'Entry when Over% > 60%',
+        icon: <MoveUp className="w-4 h-4" />, 
+        color: 'emerald', 
+        bg: 'from-emerald-500/20 to-emerald-600/10',
+        defaultThreshold: 60,
+        maxRuns: 5
+    },
+    { 
+        id: 'bot6', 
+        type: 'under', 
+        mode: 'trend', 
+        name: 'UNDER 5 BOT', 
+        description: 'Entry when Under 5% > 60%',
+        icon: <MoveDown className="w-4 h-4" />, 
+        color: 'red', 
+        bg: 'from-red-500/20 to-red-600/10',
+        defaultThreshold: 60,
+        maxRuns: 5
+    }
 ];
 
 const VOLATILITY_ICONS = {
@@ -208,6 +298,12 @@ export default function DerivTradingBot() {
     const [lastDigit, setLastDigit] = useState<number | null>(null);
     const [tickCount, setTickCount] = useState(0);
     const [connectionQuality, setConnectionQuality] = useState<'excellent' | 'good' | 'poor'>('good');
+    // ADDED: Global settings
+    const [globalSettings, setGlobalSettings] = useState({
+        confirmationTicks: 2,
+        minConfidence: 55,
+        maxConcurrentTrades: 1
+    });
 
     // WebSocket Refs
     const wsRef = useRef<WebSocket | null>(null);
@@ -216,39 +312,54 @@ export default function DerivTradingBot() {
     const runningBotsRef = useRef<Set<string>>(new Set());
     const pingIntervalRef = useRef<NodeJS.Timeout>();
 
-    // Initialize 6 bots with selected market
+    // UPDATED: Initialize 6 bots with selected market and new fields
     useEffect(() => {
-        const initialBots: Bot[] = BOT_CONFIGS.map(config => ({
-            id: config.id,
-            name: config.name,
-            type: config.type as any,
-            mode: config.mode as any,
-            market: selectedMarket,
-            stake: 1,
-            duration: 5,
-            multiplier: 2,
-            maxSteps: 3,
-            takeProfit: 20,
-            stopLoss: 30,
-            useMartingale: true,
-            useEntryFilter: true,
-            minVolatility: 0,
-            maxVolatility: 100,
-            isRunning: false,
-            status: 'idle',
-            currentStake: 1,
-            totalPnl: 0,
-            trades: 0,
-            wins: 0,
-            losses: 0,
-            currentRun: 0,
-            recoveryStep: 0,
-            consecutiveOpposite: 0,
-            lastEntrySignal: null,
-            lastAnalysis: null,
-            expanded: false,
-            enabled: true
-        }));
+        const initialBots: Bot[] = BOT_CONFIGS.map((config, index) => {
+            return {
+                id: config.id,
+                name: config.name,
+                type: config.type as any,
+                mode: config.mode as any,
+                market: selectedMarket,
+                stake: 1,
+                duration: 5,
+                multiplier: 2,
+                maxSteps: 3,
+                takeProfit: 20,
+                stopLoss: 30,
+                useMartingale: true,
+                useEntryFilter: true,
+                minVolatility: 0,
+                maxVolatility: 100,
+                isRunning: false,
+                status: 'idle',
+                currentStake: 1,
+                totalPnl: 0,
+                trades: 0,
+                wins: 0,
+                losses: 0,
+                currentRun: 0,
+                recoveryStep: 0,
+                consecutiveOpposite: 0,
+                lastEntrySignal: null,
+                lastAnalysis: null,
+                expanded: false,
+                enabled: true,
+                // ADDED: New fields initialization
+                isTrading: false,
+                entryConfirmed: false,
+                confirmTicks: 0,
+                initialStake: 1,
+                runsCompleted: 0,
+                maxRuns: config.maxRuns || 5,
+                entryThreshold: config.defaultThreshold || 55,
+                recoveryMode: config.recoveryMode || false,
+                recoveryTarget: config.recoveryTarget || null,
+                peakPnl: 0,
+                lastTradeTime: null,
+                tradeLock: false
+            };
+        });
         
         setBots(initialBots);
     }, []);
@@ -582,10 +693,52 @@ export default function DerivTradingBot() {
         checkBotEntries(analysis);
     };
 
-    // Check entry conditions for all bots
+    // ADDED: Function to check if signal meets bot-specific threshold
+    const meetsEntryThreshold = (bot: Bot, analysis: MarketAnalysis): boolean => {
+        let percentage = 0;
+        
+        if (bot.type === 'even') percentage = analysis.evenPercentage;
+        else if (bot.type === 'odd') percentage = analysis.oddPercentage;
+        else if (bot.type === 'over') percentage = analysis.overPercentage;
+        else if (bot.type === 'under') percentage = analysis.underPercentage;
+        
+        return percentage >= bot.entryThreshold;
+    };
+
+    // ADDED: Function to check stop loss and take profit
+    const checkRiskLimits = (bot: Bot): boolean => {
+        // Check stop loss
+        if (bot.totalPnl <= -bot.stopLoss) {
+            toast({
+                title: 'Stop Loss Triggered',
+                description: `${bot.name} stopped: Loss limit reached`,
+                variant: 'destructive',
+            });
+            stopBot(bot.id);
+            return false;
+        }
+        
+        // Check take profit
+        if (bot.totalPnl >= bot.takeProfit) {
+            toast({
+                title: 'Take Profit Reached',
+                description: `${bot.name} stopped: Profit target achieved`,
+                variant: 'default',
+            });
+            stopBot(bot.id);
+            return false;
+        }
+        
+        return true;
+    };
+
+    // UPDATED: Check entry conditions for all bots with improved logic
     const checkBotEntries = (analysis: MarketAnalysis) => {
         setBots(prev => prev.map(bot => {
-            if (!bot.isRunning || !bot.enabled) return bot;
+            if (!bot.isRunning || !bot.enabled || bot.isTrading || bot.tradeLock) return bot;
+
+            // Check risk limits
+            if (!checkRiskLimits(bot)) return bot;
 
             // Check volatility range
             if (analysis.volatility.score < bot.minVolatility || 
@@ -596,72 +749,58 @@ export default function DerivTradingBot() {
             const lastDigits = analysis.lastDigits;
             const currentDigit = lastDigits[lastDigits.length - 1];
             
-            // Determine what we're looking for
-            let targetCondition: boolean;
-            let oppositeCondition: boolean;
+            // Determine current condition
+            let currentCondition: boolean;
             
             if (bot.type === 'even') {
-                targetCondition = currentDigit % 2 === 0;
-                oppositeCondition = currentDigit % 2 === 1;
+                currentCondition = currentDigit % 2 === 0;
             } else if (bot.type === 'odd') {
-                targetCondition = currentDigit % 2 === 1;
-                oppositeCondition = currentDigit % 2 === 0;
+                currentCondition = currentDigit % 2 === 1;
             } else if (bot.type === 'over') {
-                targetCondition = currentDigit >= 5;
-                oppositeCondition = currentDigit <= 4;
+                currentCondition = currentDigit >= 5;
             } else { // under
-                targetCondition = currentDigit <= 4;
-                oppositeCondition = currentDigit >= 5;
+                currentCondition = currentDigit <= 4;
             }
 
-            // Check if we should enter based on mode
-            let shouldEnter = false;
+            // Check if we should consider entry
+            let shouldConsider = false;
             
-            if (bot.mode === 'trend') {
-                // Trend mode: look for target
-                shouldEnter = targetCondition;
-                
-                // Reset opposite counter if we see target
-                if (targetCondition) {
-                    bot.consecutiveOpposite = 0;
-                } else if (oppositeCondition) {
-                    bot.consecutiveOpposite++;
+            // ADDED: Recovery mode logic
+            if (bot.recoveryMode && bot.recoveryStep > 0) {
+                // In recovery mode, look for specific target
+                if (bot.recoveryTarget === 'OVER_3') {
+                    shouldConsider = currentDigit >= 3;
+                } else if (bot.recoveryTarget === 'UNDER_5') {
+                    shouldConsider = currentDigit <= 5;
+                } else {
+                    shouldConsider = currentCondition;
                 }
             } else {
-                // Reversal mode: look for 2 consecutive opposites then target
-                if (oppositeCondition) {
-                    bot.consecutiveOpposite++;
-                } else {
-                    bot.consecutiveOpposite = 0;
-                }
-                
-                if (bot.consecutiveOpposite >= 2 && targetCondition) {
-                    shouldEnter = true;
-                    bot.consecutiveOpposite = 0;
-                }
+                shouldConsider = currentCondition;
             }
 
-            // Apply entry filter if enabled
-            if (bot.useEntryFilter && shouldEnter) {
-                // Check confidence based on bot type
-                if (bot.type === 'even' || bot.type === 'odd') {
-                    const relevantPercentage = bot.type === 'even' ? 
-                        analysis.evenPercentage : analysis.oddPercentage;
-                    shouldEnter = relevantPercentage >= (bot.mode === 'trend' ? 55 : 65);
-                } else {
-                    const relevantPercentage = bot.type === 'over' ? 
-                        analysis.overPercentage : analysis.underPercentage;
-                    shouldEnter = relevantPercentage >= (bot.mode === 'trend' ? 55 : 65);
-                }
-            }
-
-            if (shouldEnter) {
-                bot.status = 'confirming';
-                bot.lastEntrySignal = Date.now();
+            // Signal confirmation with multiple ticks
+            if (shouldConsider && meetsEntryThreshold(bot, analysis)) {
+                const newConfirmTicks = bot.entryConfirmed ? bot.confirmTicks + 1 : 1;
                 
-                // Execute trade
-                executeTrade(bot, analysis);
+                if (newConfirmTicks >= globalSettings.confirmationTicks && !bot.entryConfirmed) {
+                    // Signal confirmed - execute trade
+                    bot.entryConfirmed = true;
+                    bot.status = 'confirming';
+                    
+                    // Execute trade after confirmation
+                    setTimeout(() => {
+                        executeTrade(bot.id, analysis);
+                    }, 100);
+                } else {
+                    bot.entryConfirmed = false;
+                    bot.confirmTicks = newConfirmTicks;
+                    bot.status = 'confirming';
+                }
             } else {
+                // Reset confirmation if condition not met
+                bot.entryConfirmed = false;
+                bot.confirmTicks = 0;
                 bot.status = 'watching';
             }
 
@@ -669,25 +808,57 @@ export default function DerivTradingBot() {
         }));
     };
 
-    // Execute trade
-    const executeTrade = (bot: Bot, analysis: MarketAnalysis) => {
+    // UPDATED: Execute trade with enhanced logic
+    const executeTrade = (botId: string, analysis: MarketAnalysis) => {
+        const bot = bots.find(b => b.id === botId);
+        if (!bot || bot.isTrading || bot.tradeLock) return;
+
+        // Set trading lock to prevent duplicate trades
+        setBots(prev => prev.map(b => {
+            if (b.id === botId) {
+                return { 
+                    ...b, 
+                    isTrading: true,
+                    tradeLock: true,
+                    status: 'trading',
+                    lastTradeTime: Date.now()
+                };
+            }
+            return b;
+        }));
+
         if (!demoMode && !isConnected) {
             toast({
                 title: 'Not Connected',
                 description: 'Cannot execute live trade',
                 variant: 'destructive',
             });
+            releaseTradeLock(botId);
             return;
         }
 
         const lastTick = analysis.ticks[analysis.ticks.length - 1];
         
-        // Simulate trade with realistic probability based on percentages
+        // Determine current strategy based on recovery mode
+        let currentStrategy = bot.type;
+        if (bot.recoveryMode && bot.recoveryStep > 0) {
+            currentStrategy = bot.recoveryTarget || bot.type;
+        }
+        
+        // Simulate trade with realistic probability
         setTimeout(() => {
-            const winProbability = bot.type === 'even' ? analysis.evenPercentage / 100 :
-                                  bot.type === 'odd' ? analysis.oddPercentage / 100 :
-                                  bot.type === 'over' ? analysis.overPercentage / 100 :
-                                  analysis.underPercentage / 100;
+            // Calculate win probability based on current conditions
+            let winProbability = 0;
+            
+            if (bot.type === 'even') winProbability = analysis.evenPercentage / 100;
+            else if (bot.type === 'odd') winProbability = analysis.oddPercentage / 100;
+            else if (bot.type === 'over') winProbability = analysis.overPercentage / 100;
+            else if (bot.type === 'under') winProbability = analysis.underPercentage / 100;
+            
+            // Adjust probability based on recovery mode
+            if (bot.recoveryMode && bot.recoveryStep > 0) {
+                winProbability *= 0.9; // Slightly lower probability in recovery
+            }
             
             const won = Math.random() < winProbability;
             const profit = won ? bot.currentStake * 0.95 : -bot.currentStake;
@@ -729,41 +900,67 @@ export default function DerivTradingBot() {
                 type: bot.type,
                 mode: bot.mode,
                 market: bot.market,
-                entry: bot.type,
+                entry: currentStrategy,
                 stake: bot.currentStake,
                 result: won ? 'win' : 'loss',
                 profit,
                 entryDigit: lastTick.digit,
                 resultDigit,
                 timestamp: Date.now(),
-                confidence: analysis.signal.confidence
+                confidence: analysis.signal.confidence,
+                strategy: currentStrategy,
+                recoveryStep: bot.recoveryStep
             };
 
             setActiveTrade(trade);
             setTrades(prev => [trade, ...prev].slice(0, 100));
 
-            // Update bot stats
+            // Update bot stats with enhanced logic
             setBots(prev => prev.map(b => {
-                if (b.id === bot.id) {
+                if (b.id === botId) {
                     const newTrades = b.trades + 1;
                     const newWins = won ? b.wins + 1 : b.wins;
                     const newLosses = won ? b.losses : b.losses + 1;
                     const newPnl = b.totalPnl + profit;
+                    const newPeakPnl = Math.max(b.peakPnl, newPnl);
 
-                    // Update stake based on martingale
+                    // Update stake and recovery logic
                     let newStake = b.stake;
-                    let newRecoveryStep = 0;
+                    let newRecoveryStep = b.recoveryStep;
+                    let newRunsCompleted = b.runsCompleted;
                     let newCurrentRun = b.currentRun;
-                    
+
                     if (b.useMartingale) {
                         if (won) {
-                            newStake = b.stake;
+                            // Win: reset to initial stake
+                            newStake = b.initialStake;
                             newRecoveryStep = 0;
-                            newCurrentRun = b.currentRun + 1;
+                            newRunsCompleted = b.runsCompleted + 1;
+                            
+                            // Check if max runs reached
+                            if (newRunsCompleted >= b.maxRuns) {
+                                newRunsCompleted = 0;
+                                newCurrentRun = 0;
+                                toast({
+                                    title: 'Runs Completed',
+                                    description: `${b.name} completed ${b.maxRuns} runs`,
+                                });
+                            } else {
+                                newCurrentRun = b.currentRun + 1;
+                            }
                         } else {
+                            // Loss: apply martingale
                             newRecoveryStep = b.recoveryStep + 1;
                             if (newRecoveryStep <= b.maxSteps) {
-                                newStake = b.stake * Math.pow(b.multiplier, newRecoveryStep);
+                                newStake = b.initialStake * Math.pow(b.multiplier, newRecoveryStep);
+                            } else {
+                                // Max steps reached, reset
+                                newStake = b.initialStake;
+                                newRecoveryStep = 0;
+                                toast({
+                                    title: 'Max Recovery Steps',
+                                    description: `${b.name} reached max recovery steps, resetting`,
+                                });
                             }
                         }
                     }
@@ -774,9 +971,15 @@ export default function DerivTradingBot() {
                         wins: newWins,
                         losses: newLosses,
                         totalPnl: newPnl,
+                        peakPnl: newPeakPnl,
                         currentStake: newStake,
                         recoveryStep: newRecoveryStep,
                         currentRun: newCurrentRun,
+                        runsCompleted: newRunsCompleted,
+                        isTrading: false,
+                        tradeLock: false,
+                        entryConfirmed: false,
+                        confirmTicks: 0,
                         status: 'watching'
                     };
                 }
@@ -791,7 +994,7 @@ export default function DerivTradingBot() {
             // Show toast for trade result
             toast({
                 title: won ? 'Trade Won! 🎉' : 'Trade Lost 💔',
-                description: `${bot.name} | Profit: $${profit.toFixed(2)}`,
+                description: `${bot.name} | ${currentStrategy} | Profit: $${profit.toFixed(2)}`,
                 variant: won ? 'default' : 'destructive',
             });
 
@@ -801,7 +1004,17 @@ export default function DerivTradingBot() {
         }, 1500);
     };
 
-    // Start bot
+    // ADDED: Release trade lock
+    const releaseTradeLock = (botId: string) => {
+        setBots(prev => prev.map(b => {
+            if (b.id === botId) {
+                return { ...b, isTrading: false, tradeLock: false };
+            }
+            return b;
+        }));
+    };
+
+    // UPDATED: Start bot
     const startBot = (botId: string) => {
         const bot = bots.find(b => b.id === botId);
         if (!bot) return;
@@ -832,9 +1045,17 @@ export default function DerivTradingBot() {
                     isRunning: true, 
                     status: 'watching',
                     currentStake: b.stake,
+                    initialStake: b.stake,
                     recoveryStep: 0,
                     consecutiveOpposite: 0,
-                    currentRun: 0
+                    currentRun: 0,
+                    runsCompleted: 0,
+                    isTrading: false,
+                    tradeLock: false,
+                    entryConfirmed: false,
+                    confirmTicks: 0,
+                    totalPnl: 0,
+                    peakPnl: 0
                 };
             }
             return b;
@@ -846,13 +1067,21 @@ export default function DerivTradingBot() {
         });
     };
 
-    // Stop bot
+    // UPDATED: Stop bot
     const stopBot = (botId: string) => {
         runningBotsRef.current.delete(botId);
         
         setBots(prev => prev.map(b => {
             if (b.id === botId) {
-                return { ...b, isRunning: false, status: 'stopped' };
+                return { 
+                    ...b, 
+                    isRunning: false, 
+                    status: 'stopped',
+                    isTrading: false,
+                    tradeLock: false,
+                    entryConfirmed: false,
+                    confirmTicks: 0
+                };
             }
             return b;
         }));
@@ -888,7 +1117,11 @@ export default function DerivTradingBot() {
         setBots(prev => prev.map(b => ({
             ...b,
             isRunning: false,
-            status: 'stopped'
+            status: 'stopped',
+            isTrading: false,
+            tradeLock: false,
+            entryConfirmed: false,
+            confirmTicks: 0
         })));
 
         toast({
@@ -923,7 +1156,14 @@ export default function DerivTradingBot() {
                     currentRun: 0,
                     recoveryStep: 0,
                     currentStake: b.stake,
-                    consecutiveOpposite: 0
+                    initialStake: b.stake,
+                    consecutiveOpposite: 0,
+                    runsCompleted: 0,
+                    peakPnl: 0,
+                    isTrading: false,
+                    tradeLock: false,
+                    entryConfirmed: false,
+                    confirmTicks: 0
                 };
             }
             return b;
@@ -1022,7 +1262,7 @@ export default function DerivTradingBot() {
 
                     {/* Stats Cards */}
                     <CardContent className="pb-2">
-                        <div className="grid grid-cols-5 gap-3">
+                        <div className="grid grid-cols-6 gap-3">
                             <div className="bg-gray-700/50 rounded-lg p-3 border border-gray-600">
                                 <div className="flex items-center justify-between">
                                     <span className="text-xs text-gray-400">Mode</span>
@@ -1057,6 +1297,25 @@ export default function DerivTradingBot() {
                                 <div className="text-xs text-gray-400 mb-1">Win Rate</div>
                                 <div className="text-xl font-bold text-purple-400">{winRate.toFixed(1)}%</div>
                                 <div className="text-xs text-gray-500">{totalWins}/{totalTrades} wins</div>
+                            </div>
+
+                            {/* ADDED: Global Settings */}
+                            <div className="bg-gray-700/50 rounded-lg p-3 border border-gray-600">
+                                <div className="text-xs text-gray-400 mb-1">Confirmation</div>
+                                <div className="flex items-center space-x-2">
+                                    <Input
+                                        type="number"
+                                        value={globalSettings.confirmationTicks}
+                                        onChange={(e) => setGlobalSettings(prev => ({ 
+                                            ...prev, 
+                                            confirmationTicks: parseInt(e.target.value) || 2 
+                                        }))}
+                                        className="w-16 h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
+                                        min="1"
+                                        max="5"
+                                    />
+                                    <span className="text-xs text-gray-400">ticks</span>
+                                </div>
                             </div>
                         </div>
                     </CardContent>
@@ -1369,7 +1628,7 @@ export default function DerivTradingBot() {
                                                     {bot.name}
                                                 </CardTitle>
                                                 <CardDescription className="text-xs text-gray-400">
-                                                    {bot.market} • {bot.mode}
+                                                    {config.description}
                                                 </CardDescription>
                                             </div>
                                         </div>
@@ -1394,7 +1653,7 @@ export default function DerivTradingBot() {
                                 </CardHeader>
 
                                 <CardContent className="relative p-3 pt-0">
-                                    {/* Status Badge */}
+                                    {/* Status Badge and Key Info */}
                                     <div className="flex items-center justify-between mb-3">
                                         <Badge 
                                             variant="outline" 
@@ -1432,28 +1691,47 @@ export default function DerivTradingBot() {
                                     </div>
 
                                     {/* Stats Grid */}
-                                    <div className="grid grid-cols-3 gap-2 mb-3">
-                                        <div className="bg-gray-700/30 rounded p-2">
+                                    <div className="grid grid-cols-4 gap-1 mb-3">
+                                        <div className="bg-gray-700/30 rounded p-1 text-center">
                                             <div className="text-[8px] text-gray-500">Trades</div>
-                                            <div className="text-sm font-bold text-white">{bot.trades}</div>
+                                            <div className="text-xs font-bold text-white">{bot.trades}</div>
                                         </div>
-                                        <div className="bg-gray-700/30 rounded p-2">
+                                        <div className="bg-gray-700/30 rounded p-1 text-center">
                                             <div className="text-[8px] text-gray-500">Wins</div>
-                                            <div className="text-sm font-bold text-green-400">{bot.wins}</div>
+                                            <div className="text-xs font-bold text-green-400">{bot.wins}</div>
                                         </div>
-                                        <div className="bg-gray-700/30 rounded p-2">
+                                        <div className="bg-gray-700/30 rounded p-1 text-center">
                                             <div className="text-[8px] text-gray-500">Losses</div>
-                                            <div className="text-sm font-bold text-red-400">{bot.losses}</div>
+                                            <div className="text-xs font-bold text-red-400">{bot.losses}</div>
                                         </div>
+                                        <div className="bg-gray-700/30 rounded p-1 text-center">
+                                            <div className="text-[8px] text-gray-500">Run</div>
+                                            <div className="text-xs font-bold text-blue-400">{bot.currentRun}/{bot.maxRuns}</div>
+                                        </div>
+                                    </div>
+
+                                    {/* Current Stake and Strategy */}
+                                    <div className="flex items-center justify-between mb-2 text-xs">
+                                        <div className="flex items-center space-x-2">
+                                            <Badge variant="outline" className="text-[8px] border-gray-600">
+                                                Stake: ${bot.currentStake.toFixed(2)}
+                                            </Badge>
+                                            {bot.recoveryStep > 0 && (
+                                                <Badge variant="outline" className="text-[8px] bg-orange-500/20 text-orange-400 border-orange-500/30">
+                                                    Step {bot.recoveryStep}/{bot.maxSteps}
+                                                </Badge>
+                                            )}
+                                        </div>
+                                        {bot.recoveryMode && bot.recoveryStep > 0 && (
+                                            <Badge variant="outline" className="text-[8px] bg-purple-500/20 text-purple-400 border-purple-500/30">
+                                                {bot.recoveryTarget}
+                                            </Badge>
+                                        )}
                                     </div>
 
                                     {/* Recovery Progress */}
                                     {bot.recoveryStep > 0 && (
                                         <div className="mb-3">
-                                            <div className="flex justify-between text-[8px] mb-1">
-                                                <span className="text-gray-400">Recovery Step {bot.recoveryStep}/{bot.maxSteps}</span>
-                                                <span className="text-orange-400">${bot.currentStake.toFixed(2)}</span>
-                                            </div>
                                             <Progress 
                                                 value={(bot.recoveryStep / bot.maxSteps) * 100} 
                                                 className="h-1 bg-gray-700"
@@ -1462,22 +1740,23 @@ export default function DerivTradingBot() {
                                     )}
 
                                     {/* Run Progress */}
-                                    <div className="flex space-x-1">
-                                        {[1,2,3].map(step => (
+                                    <div className="flex space-x-1 mb-2">
+                                        {[...Array(bot.maxRuns)].map((_, i) => (
                                             <div
-                                                key={step}
+                                                key={i}
                                                 className={`flex-1 h-1 rounded-full ${
-                                                    step <= bot.currentRun ? `bg-${config.color}-500` : 'bg-gray-700'
+                                                    i < bot.runsCompleted ? `bg-${config.color}-500` : 'bg-gray-700'
                                                 }`}
                                             />
                                         ))}
                                     </div>
 
-                                    {/* Consecutive Opposite Counter */}
-                                    {bot.consecutiveOpposite > 0 && (
+                                    {/* Trading Lock Indicator */}
+                                    {bot.isTrading && (
                                         <div className="mt-2 text-center">
-                                            <Badge variant="outline" className="text-[8px] bg-blue-500/20 text-blue-400 border-blue-500/30">
-                                                {bot.consecutiveOpposite}/2 opposites
+                                            <Badge variant="outline" className="text-[8px] bg-yellow-500/20 text-yellow-400 border-yellow-500/30 animate-pulse">
+                                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                                Trading in progress...
                                             </Badge>
                                         </div>
                                     )}
@@ -1488,7 +1767,7 @@ export default function DerivTradingBot() {
                                             <Separator className="my-3 bg-gray-700" />
                                             <div className="grid grid-cols-2 gap-2">
                                                 <div>
-                                                    <Label className="text-[8px] text-gray-400">Stake ($)</Label>
+                                                    <Label className="text-[8px] text-gray-400">Initial Stake ($)</Label>
                                                     <Input
                                                         type="number"
                                                         value={bot.stake}
@@ -1502,7 +1781,60 @@ export default function DerivTradingBot() {
                                                     />
                                                 </div>
                                                 <div>
-                                                    <Label className="text-[8px] text-gray-400">Duration</Label>
+                                                    <Label className="text-[8px] text-gray-400">Entry Threshold %</Label>
+                                                    <Input
+                                                        type="number"
+                                                        value={bot.entryThreshold}
+                                                        onChange={e => setBots(prev => prev.map(b => 
+                                                            b.id === bot.id ? { ...b, entryThreshold: parseFloat(e.target.value) || 50 } : b
+                                                        ))}
+                                                        disabled={bot.isRunning}
+                                                        className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
+                                                        min="50"
+                                                        max="90"
+                                                        step="1"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <Label className="text-[8px] text-gray-400">Take Profit ($)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        value={bot.takeProfit}
+                                                        onChange={e => setBots(prev => prev.map(b => 
+                                                            b.id === bot.id ? { ...b, takeProfit: parseFloat(e.target.value) || 0 } : b
+                                                        ))}
+                                                        disabled={bot.isRunning}
+                                                        className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <Label className="text-[8px] text-gray-400">Stop Loss ($)</Label>
+                                                    <Input
+                                                        type="number"
+                                                        value={bot.stopLoss}
+                                                        onChange={e => setBots(prev => prev.map(b => 
+                                                            b.id === bot.id ? { ...b, stopLoss: parseFloat(e.target.value) || 0 } : b
+                                                        ))}
+                                                        disabled={bot.isRunning}
+                                                        className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <Label className="text-[8px] text-gray-400">Max Runs</Label>
+                                                    <Input
+                                                        type="number"
+                                                        value={bot.maxRuns}
+                                                        onChange={e => setBots(prev => prev.map(b => 
+                                                            b.id === bot.id ? { ...b, maxRuns: parseInt(e.target.value) || 1 } : b
+                                                        ))}
+                                                        disabled={bot.isRunning}
+                                                        className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
+                                                        min="1"
+                                                        max="10"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <Label className="text-[8px] text-gray-400">Duration (ticks)</Label>
                                                     <Select
                                                         value={bot.duration.toString()}
                                                         onValueChange={v => setBots(prev => prev.map(b => 
@@ -1521,30 +1853,6 @@ export default function DerivTradingBot() {
                                                             ))}
                                                         </SelectContent>
                                                     </Select>
-                                                </div>
-                                                <div>
-                                                    <Label className="text-[8px] text-gray-400">Take Profit</Label>
-                                                    <Input
-                                                        type="number"
-                                                        value={bot.takeProfit}
-                                                        onChange={e => setBots(prev => prev.map(b => 
-                                                            b.id === bot.id ? { ...b, takeProfit: parseFloat(e.target.value) || 0 } : b
-                                                        ))}
-                                                        disabled={bot.isRunning}
-                                                        className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <Label className="text-[8px] text-gray-400">Stop Loss</Label>
-                                                    <Input
-                                                        type="number"
-                                                        value={bot.stopLoss}
-                                                        onChange={e => setBots(prev => prev.map(b => 
-                                                            b.id === bot.id ? { ...b, stopLoss: parseFloat(e.target.value) || 0 } : b
-                                                        ))}
-                                                        disabled={bot.isRunning}
-                                                        className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                                    />
                                                 </div>
                                                 <div className="col-span-2">
                                                     <div className="flex items-center justify-between">
@@ -1713,11 +2021,19 @@ export default function DerivTradingBot() {
                                                     <Badge variant="outline" className="text-[8px] border-gray-600">
                                                         {trade.botName}
                                                     </Badge>
+                                                    <Badge variant="outline" className="text-[8px] border-gray-600">
+                                                        {trade.strategy}
+                                                    </Badge>
                                                     <span className="text-xs text-gray-300">
                                                         {trade.entryDigit} → {trade.resultDigit}
                                                     </span>
                                                 </div>
                                                 <div className="flex items-center space-x-4">
+                                                    {trade.recoveryStep > 0 && (
+                                                        <Badge variant="outline" className="text-[8px] bg-orange-500/20 text-orange-400 border-orange-500/30">
+                                                            Step {trade.recoveryStep}
+                                                        </Badge>
+                                                    )}
                                                     <Badge variant="outline" className="text-[8px] border-gray-600">
                                                         {trade.confidence.toFixed(0)}%
                                                     </Badge>
@@ -1765,4 +2081,4 @@ export default function DerivTradingBot() {
             </div>
         </div>
     );
-    }
+}
