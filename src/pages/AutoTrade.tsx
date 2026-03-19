@@ -1,2084 +1,1828 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { toast } from 'sonner';
+import { motion, AnimatePresence } from 'framer-motion';
+import { derivApi } from '@/services/deriv-api';
+import { useAuth } from '@/contexts/AuthContext';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
-import { useToast } from '@/components/ui/use-toast';
-import {
-    Activity,
-    AlertCircle,
-    BarChart3,
-    Brain,
-    ChevronDown,
-    ChevronUp,
-    CircleDot,
-    Copy,
-    Download,
-    Eye,
-    Gauge,
-    Hash,
-    Loader2,
-    LogOut,
-    Play,
-    Plus,
-    RefreshCw,
-    Save,
-    Scan,
-    Settings,
-    StopCircle,
-    Timer,
-    TrendingDown,
-    TrendingUp,
-    Trash2,
-    Upload,
-    Volume2,
-    VolumeX,
-    Waves,
-    Wind,
-    XCircle,
-    Zap,
-    Target,
-    Clock,
-    Flame,
-    Snowflake,
-    Wifi,
-    WifiOff,
-    ArrowUp,
-    ArrowDown,
-    Minus,
-    CheckCircle2,
-    AlertTriangle,
-    MoveUp,
-    MoveDown,
-    Cpu,
-    Network,
-    Radio,
-    Signal,
-    Globe,
-    ZapOff,
-    BarChart,
-    LineChart,
-    PieChart,
-    Settings2,
-    Lock,
-    Unlock,
-    TrendingUp as TrendUp,
-    TrendingDown as TrendDown
+import { 
+  Loader2, Play, StopCircle, Pause, TrendingUp, TrendingDown, 
+  CircleDot, RefreshCw, Trash2, DollarSign, Volume2, AlertCircle,
+  CheckCircle2, XCircle, Clock, Zap, Shield, Target, Activity,
+  BarChart3, LineChart, PieChart, Radio, ScanLine, Sparkles,
+  Settings2, ChevronDown, ChevronUp, Wifi, WifiOff, Gauge,
+  Timer, AlertTriangle, Hash, MoveUp, MoveDown, Eye
 } from 'lucide-react';
 
-// Types
-interface TickData {
-    quote: number;
-    symbol: string;
-    timestamp: number;
-    digit: number;
+interface DigitFrequency {
+  digit: number;
+  count: number;
+  percentage: number;
 }
 
 interface MarketAnalysis {
-    symbol: string;
-    ticks: TickData[];
-    digitCounts: Record<number, number>;
-    digitPercentages: Record<number, number>;
-    evenPercentage: number;
-    oddPercentage: number;
-    overPercentage: number;
-    underPercentage: number;
-    lastDigits: number[];
-    last20Digits: number[];
-    last50Digits: number[];
-    currentEvenStreak: number;
-    currentOddStreak: number;
-    currentOverStreak: number;
-    currentUnderStreak: number;
-    momentum20: number;
-    trend50: 'UP' | 'DOWN' | 'SIDEWAYS';
-    signal: {
-        type: 'EVEN' | 'ODD' | 'OVER' | 'UNDER' | 'NONE';
-        confidence: number;
-        strength: 'STRONG' | 'MEDIUM' | 'WEAK';
-        mode: 'TREND' | 'REVERSAL';
-    };
-    volatility: {
-        averageChange: number;
-        level: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME';
-        score: number;
-    };
+  symbol: string;
+  displayName: string;
+  mostAppearing: number;
+  secondMost: number;
+  thirdMost: number;
+  leastAppearing: number;
+  digitFrequencies: DigitFrequency[];
+  evenPercentage: number;
+  oddPercentage: number;
+  overUnderStats: {
+    over3: number;
+    under6: number;
+    over1: number;
+    under8: number;
+  };
+  conditions: {
+    over1: boolean;
+    under8: boolean;
+    even: boolean;
+    odd: boolean;
+    over3: boolean;
+    under6: boolean;
+  };
+  lastDigits: number[];
+  volatility: number;
 }
 
-// ADDED: Enhanced Bot interface with new fields
-interface Bot {
-    id: string;
-    name: string;
-    type: 'even' | 'odd' | 'over' | 'under';
-    mode: 'trend' | 'reversal';
-    market: string;
-    stake: number;
-    duration: number;
-    multiplier: number;
-    maxSteps: number;
-    takeProfit: number;
-    stopLoss: number;
-    useMartingale: boolean;
-    useEntryFilter: boolean;
-    minVolatility: number;
-    maxVolatility: number;
-    isRunning: boolean;
-    status: 'idle' | 'watching' | 'confirming' | 'trading' | 'recovery' | 'stopped';
-    currentStake: number;
-    totalPnl: number;
-    trades: number;
-    wins: number;
-    losses: number;
-    currentRun: number;
-    recoveryStep: number;
-    consecutiveOpposite: number;
-    lastEntrySignal: number | null;
-    lastAnalysis: MarketAnalysis | null;
-    expanded: boolean;
-    enabled: boolean;
-    // ADDED: New fields for better control
-    isTrading: boolean;
-    entryConfirmed: boolean;
-    confirmTicks: number;
-    initialStake: number;
-    runsCompleted: number;
-    maxRuns: number;
-    entryThreshold: number;
-    recoveryMode: boolean;
-    recoveryTarget: string | null;
-    peakPnl: number;
-    lastTradeTime: number | null;
-    tradeLock: boolean;
+interface BotMatch {
+  market: string;
+  botId: string;
+  botName: string;
+  botType: string;
+  analysis: MarketAnalysis;
+  status: 'waiting' | 'monitoring' | 'triggered' | 'trading' | 'completed';
+  entryCondition: boolean;
+  lastDigits?: number[];
+}
+
+interface BotConfig {
+  id: string;
+  name: string;
+  type: 'over1' | 'under8' | 'even' | 'odd' | 'over3' | 'under6';
+  icon: JSX.Element;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+  contractType: string;
+  barrier?: number;
+  recoveryLogic: string;
+  recoveryTarget?: string;
+  description: string;
+  defaultStake: number;
+  defaultMultiplier: number;
+  defaultMaxSteps: number;
+  defaultStopLoss: number;
+  defaultTakeProfit: number;
+  defaultMaxRuns: number;
+  defaultEntryThreshold: number;
+  confirmationTicks: number;
+}
+
+interface BotInstance extends BotMatch {
+  // FIXED: Added all required fields
+  id: string;
+  isRunning: boolean;
+  isPaused: boolean;
+  isTrading: boolean;
+  tradeLock: boolean;
+  currentStake: number;
+  initialStake: number;
+  totalPnl: number;
+  trades: number;
+  wins: number;
+  losses: number;
+  consecutiveLosses: number;
+  lastTradeResult?: 'win' | 'loss';
+  recoveryStep: number;
+  maxSteps: number;
+  multiplier: number;
+  stopLoss: number;
+  takeProfit: number;
+  maxRuns: number;
+  runsCompleted: number;
+  entryThreshold: number;
+  confirmationTicks: number;
+  currentConfirmTicks: number;
+  entryConfirmed: boolean;
+  lastEntrySignal: number | null;
+  recoveryMode: boolean;
+  recoveryTarget: string | null;
+  recoveryBotId: string | null;
+  expanded: boolean;
 }
 
 interface Trade {
-    id: string;
-    botId: string;
-    botName: string;
-    type: string;
-    mode: string;
-    market: string;
-    entry: string;
-    stake: number;
-    result: 'win' | 'loss' | 'pending';
-    profit: number;
-    entryDigit: number;
-    resultDigit: number;
-    timestamp: number;
-    confidence: number;
-    strategy: string;
-    recoveryStep: number;
+  id: string;
+  botId: string;
+  botName: string;
+  type: string;
+  market: string;
+  entry: string;
+  stake: number;
+  result: 'win' | 'loss' | 'pending';
+  profit: number;
+  entryDigit: number;
+  resultDigit: number;
+  timestamp: number;
+  confidence: number;
+  strategy: string;
+  recoveryStep: number;
 }
 
-// Constants
-const DERIV_WS_URL = 'wss://ws.derivws.com/websockets/v3?app_id=1089';
-
-const MARKETS = [
-    { value: 'R_10', label: 'Volatility 10', icon: '📊', group: 'Volatility', color: 'blue' },
-    { value: 'R_25', label: 'Volatility 25', icon: '📊', group: 'Volatility', color: 'cyan' },
-    { value: 'R_50', label: 'Volatility 50', icon: '📊', group: 'Volatility', color: 'green' },
-    { value: 'R_75', label: 'Volatility 75', icon: '📊', group: 'Volatility', color: 'yellow' },
-    { value: 'R_100', label: 'Volatility 100', icon: '📊', group: 'Volatility', color: 'orange' },
-    { value: '1HZ10V', label: '1HZ 10', icon: '⚡', group: '1HZ', color: 'purple' },
-    { value: '1HZ25V', label: '1HZ 25', icon: '⚡', group: '1HZ', color: 'pink' },
-    { value: '1HZ50V', label: '1HZ 50', icon: '⚡', group: '1HZ', color: 'indigo' },
-    { value: '1HZ75V', label: '1HZ 75', icon: '⚡', group: '1HZ', color: 'violet' },
-    { value: '1HZ100V', label: '1HZ 100', icon: '⚡', group: '1HZ', color: 'rose' }
+const ALL_MARKETS = [
+  // Volatility Indices
+  { symbol: 'R_10', name: 'Volatility 10', icon: '📈', group: 'Volatility' },
+  { symbol: 'R_25', name: 'Volatility 25', icon: '📈', group: 'Volatility' },
+  { symbol: 'R_50', name: 'Volatility 50', icon: '📈', group: 'Volatility' },
+  { symbol: 'R_75', name: 'Volatility 75', icon: '📈', group: 'Volatility' },
+  { symbol: 'R_100', name: 'Volatility 100', icon: '📈', group: 'Volatility' },
+  // 1HZ Volatility
+  { symbol: '1HZ10V', name: '1HZ Volatility 10', icon: '⚡', group: '1HZ' },
+  { symbol: '1HZ25V', name: '1HZ Volatility 25', icon: '⚡', group: '1HZ' },
+  { symbol: '1HZ50V', name: '1HZ Volatility 50', icon: '⚡', group: '1HZ' },
+  { symbol: '1HZ75V', name: '1HZ Volatility 75', icon: '⚡', group: '1HZ' },
+  { symbol: '1HZ100V', name: '1HZ Volatility 100', icon: '⚡', group: '1HZ' },
+  // Jump Indices
+  { symbol: 'JD10', name: 'Jump 10', icon: '🦘', group: 'Jump' },
+  { symbol: 'JD25', name: 'Jump 25', icon: '🦘', group: 'Jump' },
+  { symbol: 'JD50', name: 'Jump 50', icon: '🦘', group: 'Jump' },
+  { symbol: 'JD75', name: 'Jump 75', icon: '🦘', group: 'Jump' },
+  { symbol: 'JD100', name: 'Jump 100', icon: '🦘', group: 'Jump' },
+  // Boom & Crash
+  { symbol: 'BOOM300', name: 'Boom 300', icon: '💥', group: 'Boom' },
+  { symbol: 'BOOM500', name: 'Boom 500', icon: '💥', group: 'Boom' },
+  { symbol: 'BOOM1000', name: 'Boom 1000', icon: '💥', group: 'Boom' },
+  { symbol: 'CRASH300', name: 'Crash 300', icon: '📉', group: 'Crash' },
+  { symbol: 'CRASH500', name: 'Crash 500', icon: '📉', group: 'Crash' },
+  { symbol: 'CRASH1000', name: 'Crash 1000', icon: '📉', group: 'Crash' },
+  // Bear & Bull
+  { symbol: 'RDBEAR', name: 'Bear Market', icon: '🐻', group: 'Bear/Bull' },
+  { symbol: 'RDBULL', name: 'Bull Market', icon: '🐂', group: 'Bear/Bull' }
 ];
 
-// UPDATED: Bot configs with more details
-const BOT_CONFIGS = [
-    { 
-        id: 'bot1', 
-        type: 'over', 
-        mode: 'trend', 
-        name: 'OVER 4 BOT', 
-        description: 'Entry when Over 4% > 60%',
-        icon: <ArrowUp className="w-4 h-4" />, 
-        color: 'blue', 
-        bg: 'from-blue-500/20 to-blue-600/10',
-        defaultThreshold: 60,
-        maxRuns: 5
-    },
-    { 
-        id: 'bot2', 
-        type: 'over', 
-        mode: 'reversal', 
-        name: 'OVER 1 → OVER 3', 
-        description: 'Recovery: Over 1 → Over 3 on loss',
-        icon: <RefreshCw className="w-4 h-4" />, 
-        color: 'cyan', 
-        bg: 'from-cyan-500/20 to-cyan-600/10',
-        defaultThreshold: 60,
-        maxRuns: 3,
-        recoveryMode: true,
-        recoveryTarget: 'OVER_3'
-    },
-    { 
-        id: 'bot3', 
-        type: 'even', 
-        mode: 'trend', 
-        name: 'EVEN BOT', 
-        description: 'Entry when Even% > 55%',
-        icon: <CircleDot className="w-4 h-4" />, 
-        color: 'purple', 
-        bg: 'from-purple-500/20 to-purple-600/10',
-        defaultThreshold: 55,
-        maxRuns: 5
-    },
-    { 
-        id: 'bot4', 
-        type: 'odd', 
-        mode: 'trend', 
-        name: 'ODD BOT', 
-        description: 'Entry when Odd% > 55%',
-        icon: <Hash className="w-4 h-4" />, 
-        color: 'orange', 
-        bg: 'from-orange-500/20 to-orange-600/10',
-        defaultThreshold: 55,
-        maxRuns: 5
-    },
-    { 
-        id: 'bot5', 
-        type: 'over', 
-        mode: 'trend', 
-        name: 'OVER BOT 2', 
-        description: 'Entry when Over% > 60%',
-        icon: <MoveUp className="w-4 h-4" />, 
-        color: 'emerald', 
-        bg: 'from-emerald-500/20 to-emerald-600/10',
-        defaultThreshold: 60,
-        maxRuns: 5
-    },
-    { 
-        id: 'bot6', 
-        type: 'under', 
-        mode: 'trend', 
-        name: 'UNDER 5 BOT', 
-        description: 'Entry when Under 5% > 60%',
-        icon: <MoveDown className="w-4 h-4" />, 
-        color: 'red', 
-        bg: 'from-red-500/20 to-red-600/10',
-        defaultThreshold: 60,
-        maxRuns: 5
+// FIXED: Enhanced bot configs with proper settings
+const BOT_CONFIGS: BotConfig[] = [
+  {
+    id: 'bot1',
+    name: 'OVER 1 BOT',
+    type: 'over1',
+    icon: <TrendingUp className="w-5 h-5" />,
+    color: 'text-blue-400',
+    bgColor: 'bg-blue-500/20',
+    borderColor: 'border-blue-500/30',
+    contractType: 'DIGITOVER',
+    barrier: 1,
+    recoveryLogic: 'Over 3',
+    recoveryTarget: 'over3',
+    description: 'Trades when digits are OVER 1 after two consecutive digits below 2',
+    defaultStake: 1.00,
+    defaultMultiplier: 2.0,
+    defaultMaxSteps: 3,
+    defaultStopLoss: 30,
+    defaultTakeProfit: 50,
+    defaultMaxRuns: 5,
+    defaultEntryThreshold: 60,
+    confirmationTicks: 2
+  },
+  {
+    id: 'bot2',
+    name: 'UNDER 8 BOT',
+    type: 'under8',
+    icon: <TrendingDown className="w-5 h-5" />,
+    color: 'text-orange-400',
+    bgColor: 'bg-orange-500/20',
+    borderColor: 'border-orange-500/30',
+    contractType: 'DIGITUNDER',
+    barrier: 8,
+    recoveryLogic: 'Under 6',
+    recoveryTarget: 'under6',
+    description: 'Trades when digits are UNDER 8 after two consecutive digits above 7',
+    defaultStake: 1.00,
+    defaultMultiplier: 2.0,
+    defaultMaxSteps: 3,
+    defaultStopLoss: 30,
+    defaultTakeProfit: 50,
+    defaultMaxRuns: 5,
+    defaultEntryThreshold: 60,
+    confirmationTicks: 2
+  },
+  {
+    id: 'bot3',
+    name: 'EVEN BOT',
+    type: 'even',
+    icon: <CircleDot className="w-5 h-5" />,
+    color: 'text-green-400',
+    bgColor: 'bg-green-500/20',
+    borderColor: 'border-green-500/30',
+    contractType: 'DIGITEVEN',
+    recoveryLogic: 'None',
+    description: 'Trades EVEN digits after three consecutive odd digits',
+    defaultStake: 1.00,
+    defaultMultiplier: 2.0,
+    defaultMaxSteps: 3,
+    defaultStopLoss: 30,
+    defaultTakeProfit: 50,
+    defaultMaxRuns: 5,
+    defaultEntryThreshold: 55,
+    confirmationTicks: 3
+  },
+  {
+    id: 'bot4',
+    name: 'ODD BOT',
+    type: 'odd',
+    icon: <Hash className="w-5 h-5" />,
+    color: 'text-purple-400',
+    bgColor: 'bg-purple-500/20',
+    borderColor: 'border-purple-500/30',
+    contractType: 'DIGITODD',
+    recoveryLogic: 'None',
+    description: 'Trades ODD digits after three consecutive even digits',
+    defaultStake: 1.00,
+    defaultMultiplier: 2.0,
+    defaultMaxSteps: 3,
+    defaultStopLoss: 30,
+    defaultTakeProfit: 50,
+    defaultMaxRuns: 5,
+    defaultEntryThreshold: 55,
+    confirmationTicks: 3
+  },
+  {
+    id: 'bot5',
+    name: 'OVER 3 BOT',
+    type: 'over3',
+    icon: <MoveUp className="w-5 h-5" />,
+    color: 'text-cyan-400',
+    bgColor: 'bg-cyan-500/20',
+    borderColor: 'border-cyan-500/30',
+    contractType: 'DIGITOVER',
+    barrier: 3,
+    recoveryLogic: 'None',
+    description: 'Trades OVER 3 after three consecutive digits below 3',
+    defaultStake: 1.00,
+    defaultMultiplier: 2.0,
+    defaultMaxSteps: 3,
+    defaultStopLoss: 30,
+    defaultTakeProfit: 50,
+    defaultMaxRuns: 5,
+    defaultEntryThreshold: 60,
+    confirmationTicks: 3
+  },
+  {
+    id: 'bot6',
+    name: 'UNDER 6 BOT',
+    type: 'under6',
+    icon: <MoveDown className="w-5 h-5" />,
+    color: 'text-rose-400',
+    bgColor: 'bg-rose-500/20',
+    borderColor: 'border-rose-500/30',
+    contractType: 'DIGITUNDER',
+    barrier: 6,
+    recoveryLogic: 'None',
+    description: 'Trades UNDER 6 after three consecutive digits above 6',
+    defaultStake: 1.00,
+    defaultMultiplier: 2.0,
+    defaultMaxSteps: 3,
+    defaultStopLoss: 30,
+    defaultTakeProfit: 50,
+    defaultMaxRuns: 5,
+    defaultEntryThreshold: 60,
+    confirmationTicks: 3
+  }
+];
+
+// Voice Alert System
+class VoiceAlertSystem {
+  private static instance: VoiceAlertSystem;
+  private synthesis: SpeechSynthesis | null = null;
+  private speaking: boolean = false;
+
+  private constructor() {
+    if (typeof window !== 'undefined') {
+      this.synthesis = window.speechSynthesis;
     }
-];
+  }
 
-const VOLATILITY_ICONS = {
-    LOW: <Snowflake className="w-3 h-3 text-blue-400" />,
-    MEDIUM: <Wind className="w-3 h-3 text-yellow-400" />,
-    HIGH: <Waves className="w-3 h-3 text-orange-400" />,
-    EXTREME: <Flame className="w-3 h-3 text-red-400" />
+  static getInstance(): VoiceAlertSystem {
+    if (!VoiceAlertSystem.instance) {
+      VoiceAlertSystem.instance = new VoiceAlertSystem();
+    }
+    return VoiceAlertSystem.instance;
+  }
+
+  speak(text: string, isScary: boolean = true) {
+    if (!this.synthesis || this.speaking) return;
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    if (isScary) {
+      utterance.pitch = 0.2;
+      utterance.rate = 0.7;
+      utterance.volume = 1;
+      
+      const voices = this.synthesis.getVoices();
+      const deepVoice = voices.find(voice => 
+        voice.name.includes('Daniel') || 
+        voice.name.includes('Deep') || 
+        voice.name.includes('Male')
+      );
+      if (deepVoice) utterance.voice = deepVoice;
+    }
+
+    utterance.onend = () => { this.speaking = false; };
+    utterance.onerror = () => { this.speaking = false; };
+
+    this.speaking = true;
+    this.synthesis.speak(utterance);
+  }
+
+  scanAnnouncement() {
+    this.speak("Scanning the markets for money… stay ready.", true);
+  }
+
+  signalFound() {
+    this.speak("Signal found. Prepare to trade.", true);
+  }
+
+  botStarted(botName: string) {
+    this.speak(`${botName} is now active. Monitoring for entry.`, true);
+  }
+
+  tradeExecuted(botName: string, stake: number) {
+    this.speak(`${botName} executing trade with $${stake.toFixed(2)}`, true);
+  }
+
+  tradeWon(botName: string, profit: number) {
+    this.speak(`${botName} won $${profit.toFixed(2)}. Good job.`, true);
+  }
+
+  tradeLost(botName: string, loss: number) {
+    this.speak(`${botName} lost $${loss.toFixed(2)}. Recovery mode activated.`, true);
+  }
+
+  stopLossTriggered(botName: string) {
+    this.speak(`${botName} stop loss triggered. Bot stopped.`, true);
+  }
+
+  takeProfitReached(botName: string) {
+    this.speak(`${botName} take profit reached. Well done.`, true);
+  }
+}
+
+// Background animation component
+const DollarBackground = () => {
+  return (
+    <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+      {[...Array(30)].map((_, i) => (
+        <motion.div
+          key={i}
+          className="absolute text-green-500/5 font-bold text-4xl"
+          initial={{ 
+            x: Math.random() * (typeof window !== 'undefined' ? window.innerWidth : 1000),
+            y: (typeof window !== 'undefined' ? window.innerHeight : 800) + 100,
+            rotate: Math.random() * 360,
+            scale: 0.5 + Math.random() * 1.5
+          }}
+          animate={{ 
+            y: -200,
+            rotate: Math.random() * 720,
+            x: `+=${Math.random() * 200 - 100}`
+          }}
+          transition={{
+            duration: 15 + Math.random() * 20,
+            repeat: Infinity,
+            delay: Math.random() * 10,
+            ease: "linear"
+          }}
+        >
+          {Math.random() > 0.5 ? '$' : '₿'}
+        </motion.div>
+      ))}
+    </div>
+  );
 };
 
-// Main Component
-export default function DerivTradingBot() {
-    const { toast } = useToast();
-    
-    // State
-    const [isConnected, setIsConnected] = useState(false);
-    const [isConnecting, setIsConnecting] = useState(false);
-    const [balance, setBalance] = useState(10000);
-    const [demoMode, setDemoMode] = useState(true);
-    const [sound, setSound] = useState(true);
-    const [scanning, setScanning] = useState(false);
-    const [selectedMarket, setSelectedMarket] = useState('R_100');
-    const [analysis, setAnalysis] = useState<MarketAnalysis | null>(null);
-    const [bots, setBots] = useState<Bot[]>([]);
-    const [trades, setTrades] = useState<Trade[]>([]);
-    const [activeTrade, setActiveTrade] = useState<Trade | null>(null);
-    const [selectedTab, setSelectedTab] = useState('bots');
-    const [globalVolatility, setGlobalVolatility] = useState({ min: 0, max: 100 });
-    const [lastDigit, setLastDigit] = useState<number | null>(null);
-    const [tickCount, setTickCount] = useState(0);
-    const [connectionQuality, setConnectionQuality] = useState<'excellent' | 'good' | 'poor'>('good');
-    // ADDED: Global settings
-    const [globalSettings, setGlobalSettings] = useState({
-        confirmationTicks: 2,
-        minConfidence: 55,
-        maxConcurrentTrades: 1
+export default function AutoTrade() {
+  const { isAuthorized, balance, updateBalance } = useAuth();
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState(0);
+  const [scanningMarket, setScanningMarket] = useState('');
+  const [marketDigits, setMarketDigits] = useState<Record<string, number[]>>({});
+  const [marketAnalyses, setMarketAnalyses] = useState<Record<string, MarketAnalysis>>({});
+  const [matchedSignals, setMatchedSignals] = useState<BotMatch[]>([]);
+  const [noSignal, setNoSignal] = useState(false);
+  const [activeTab, setActiveTab] = useState('signals');
+  const [trades, setTrades] = useState<Trade[]>([]);
+  const [activeTrade, setActiveTrade] = useState<Trade | null>(null);
+  const [connectionQuality, setConnectionQuality] = useState<'excellent' | 'good' | 'poor'>('good');
+  const [sound, setSound] = useState(true);
+  
+  // Bot instances with trading capabilities
+  const [botInstances, setBotInstances] = useState<BotInstance[]>([]);
+  
+  // FIXED: Individual bot settings instead of global
+  const [botSettings, setBotSettings] = useState<Record<string, {
+    stake: number;
+    multiplier: number;
+    maxSteps: number;
+    stopLoss: number;
+    takeProfit: number;
+    maxRuns: number;
+    entryThreshold: number;
+    useMartingale: boolean;
+    useEntryFilter: boolean;
+  }>>({});
+
+  const voiceSystem = useRef(VoiceAlertSystem.getInstance());
+  const scanIntervalRef = useRef<NodeJS.Timeout>();
+  const voiceIntervalRef = useRef<NodeJS.Timeout>();
+  const tradingIntervalRef = useRef<NodeJS.Timeout>();
+
+  // Initialize bot settings
+  useEffect(() => {
+    const settings: Record<string, any> = {};
+    BOT_CONFIGS.forEach(bot => {
+      settings[bot.id] = {
+        stake: bot.defaultStake,
+        multiplier: bot.defaultMultiplier,
+        maxSteps: bot.defaultMaxSteps,
+        stopLoss: bot.defaultStopLoss,
+        takeProfit: bot.defaultTakeProfit,
+        maxRuns: bot.defaultMaxRuns,
+        entryThreshold: bot.defaultEntryThreshold,
+        useMartingale: true,
+        useEntryFilter: true
+      };
     });
+    setBotSettings(settings);
+  }, []);
 
-    // WebSocket Refs
-    const wsRef = useRef<WebSocket | null>(null);
-    const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
-    const ticksRef = useRef<TickData[]>([]);
-    const runningBotsRef = useRef<Set<string>>(new Set());
-    const pingIntervalRef = useRef<NodeJS.Timeout>();
+  // Fetch ticks for a single market
+  const fetchTicks = async (market: string): Promise<number[]> => {
+    try {
+      const ticks = await derivApi.getTicks(market, 1000);
+      return ticks.map((tick: any) => {
+        const quote = tick.quote.toString();
+        return parseInt(quote.charAt(quote.length - 1));
+      });
+    } catch (error) {
+      console.error(`Error fetching ticks for ${market}:`, error);
+      return [];
+    }
+  };
 
-    // UPDATED: Initialize 6 bots with selected market and new fields
-    useEffect(() => {
-        const initialBots: Bot[] = BOT_CONFIGS.map((config, index) => {
-            return {
-                id: config.id,
-                name: config.name,
-                type: config.type as any,
-                mode: config.mode as any,
-                market: selectedMarket,
-                stake: 1,
-                duration: 5,
-                multiplier: 2,
-                maxSteps: 3,
-                takeProfit: 20,
-                stopLoss: 30,
-                useMartingale: true,
-                useEntryFilter: true,
-                minVolatility: 0,
-                maxVolatility: 100,
-                isRunning: false,
-                status: 'idle',
-                currentStake: 1,
-                totalPnl: 0,
-                trades: 0,
-                wins: 0,
-                losses: 0,
-                currentRun: 0,
-                recoveryStep: 0,
-                consecutiveOpposite: 0,
-                lastEntrySignal: null,
-                lastAnalysis: null,
-                expanded: false,
-                enabled: true,
-                // ADDED: New fields initialization
-                isTrading: false,
-                entryConfirmed: false,
-                confirmTicks: 0,
-                initialStake: 1,
-                runsCompleted: 0,
-                maxRuns: config.maxRuns || 5,
-                entryThreshold: config.defaultThreshold || 55,
-                recoveryMode: config.recoveryMode || false,
-                recoveryTarget: config.recoveryTarget || null,
-                peakPnl: 0,
-                lastTradeTime: null,
-                tradeLock: false
-            };
-        });
+  // Calculate volatility
+  const calculateVolatility = (digits: number[]): number => {
+    if (digits.length < 100) return 0;
+    const changes: number[] = [];
+    for (let i = 1; i < digits.length; i++) {
+      changes.push(Math.abs(digits[i] - digits[i-1]));
+    }
+    return changes.reduce((a, b) => a + b, 0) / changes.length;
+  };
+
+  // Analyze digit frequencies
+  const analyzeDigits = (symbol: string, digits: number[]): MarketAnalysis => {
+    if (digits.length < 1000) {
+      throw new Error('Insufficient tick data');
+    }
+
+    // Count frequencies
+    const frequencies: DigitFrequency[] = Array.from({ length: 10 }, (_, i) => ({
+      digit: i,
+      count: digits.filter(d => d === i).length,
+      percentage: (digits.filter(d => d === i).length / digits.length) * 100
+    }));
+
+    // Sort by count descending
+    frequencies.sort((a, b) => b.count - a.count);
+
+    // Calculate even/odd percentages
+    const evenCount = digits.filter(d => d % 2 === 0).length;
+    const oddCount = digits.filter(d => d % 2 === 1).length;
+
+    // Calculate over/under stats
+    const over3Count = digits.filter(d => d > 3).length;
+    const under6Count = digits.filter(d => d < 6).length;
+    const over1Count = digits.filter(d => d > 1).length;
+    const under8Count = digits.filter(d => d < 8).length;
+
+    // Check conditions for each bot
+    const conditions = {
+      over1: frequencies[0].percentage > 12 && frequencies[1].percentage > 11,
+      under8: frequencies[8].percentage > 11 && frequencies[9].percentage > 11,
+      even: (evenCount / digits.length) * 100 > 55,
+      odd: (oddCount / digits.length) * 100 > 55,
+      over3: frequencies[4]?.percentage > 11 && frequencies[5]?.percentage > 11,
+      under6: frequencies[5]?.percentage > 11 && frequencies[4]?.percentage > 11
+    };
+
+    const marketInfo = ALL_MARKETS.find(m => m.symbol === symbol);
+    const lastDigits = digits.slice(-20);
+
+    return {
+      symbol,
+      displayName: marketInfo?.name || symbol,
+      mostAppearing: frequencies[0].digit,
+      secondMost: frequencies[1].digit,
+      thirdMost: frequencies[2].digit,
+      leastAppearing: frequencies[9].digit,
+      digitFrequencies: frequencies,
+      evenPercentage: (evenCount / digits.length) * 100,
+      oddPercentage: (oddCount / digits.length) * 100,
+      overUnderStats: {
+        over3: (over3Count / digits.length) * 100,
+        under6: (under6Count / digits.length) * 100,
+        over1: (over1Count / digits.length) * 100,
+        under8: (under8Count / digits.length) * 100
+      },
+      conditions,
+      lastDigits,
+      volatility: calculateVolatility(digits)
+    };
+  };
+
+  // FIXED: Check entry conditions for active bots
+  const checkBotEntries = useCallback((analysis: MarketAnalysis) => {
+    setBotInstances(prev => prev.map(bot => {
+      if (!bot.isRunning || bot.isPaused || bot.isTrading || bot.tradeLock) return bot;
+
+      const settings = botSettings[bot.botId];
+      if (!settings) return bot;
+
+      // Check stop loss and take profit
+      if (bot.totalPnl <= -settings.stopLoss) {
+        voiceSystem.current.stopLossTriggered(bot.botName);
+        toast.error(`${bot.botName} stopped: Stop loss triggered`);
+        return { ...bot, isRunning: false };
+      }
+
+      if (bot.totalPnl >= settings.takeProfit) {
+        voiceSystem.current.takeProfitReached(bot.botName);
+        toast.success(`${bot.botName} stopped: Take profit reached`);
+        return { ...bot, isRunning: false };
+      }
+
+      const lastDigits = analysis.lastDigits;
+      const currentDigit = lastDigits[lastDigits.length - 1];
+      
+      // Determine entry condition based on bot type
+      let shouldEnter = false;
+      let targetCondition = false;
+      let oppositeCondition = false;
+
+      if (bot.botType === 'over1') {
+        targetCondition = currentDigit > 1;
+        oppositeCondition = currentDigit <= 1;
+        shouldEnter = targetCondition && lastDigits.slice(-2).every(d => d < 2);
+      } else if (bot.botType === 'under8') {
+        targetCondition = currentDigit < 8;
+        oppositeCondition = currentDigit >= 8;
+        shouldEnter = targetCondition && lastDigits.slice(-2).every(d => d > 7);
+      } else if (bot.botType === 'even') {
+        targetCondition = currentDigit % 2 === 0;
+        oppositeCondition = currentDigit % 2 === 1;
+        shouldEnter = targetCondition && lastDigits.slice(-3).every(d => d % 2 === 1);
+      } else if (bot.botType === 'odd') {
+        targetCondition = currentDigit % 2 === 1;
+        oppositeCondition = currentDigit % 2 === 0;
+        shouldEnter = targetCondition && lastDigits.slice(-3).every(d => d % 2 === 0);
+      } else if (bot.botType === 'over3') {
+        targetCondition = currentDigit > 3;
+        oppositeCondition = currentDigit <= 3;
+        shouldEnter = targetCondition && lastDigits.slice(-3).every(d => d < 3);
+      } else if (bot.botType === 'under6') {
+        targetCondition = currentDigit < 6;
+        oppositeCondition = currentDigit >= 6;
+        shouldEnter = targetCondition && lastDigits.slice(-3).every(d => d > 6);
+      }
+
+      // Recovery mode logic
+      if (bot.recoveryMode && bot.recoveryStep > 0) {
+        if (bot.recoveryTarget === 'over3') {
+          shouldEnter = currentDigit > 3;
+        } else if (bot.recoveryTarget === 'under6') {
+          shouldEnter = currentDigit < 6;
+        }
+      }
+
+      // Apply entry filter if enabled
+      if (settings.useEntryFilter && shouldEnter) {
+        let relevantPercentage = 0;
+        if (bot.botType.includes('over')) {
+          relevantPercentage = analysis.overUnderStats.over1;
+        } else if (bot.botType.includes('under')) {
+          relevantPercentage = analysis.overUnderStats.under8;
+        } else if (bot.botType === 'even') {
+          relevantPercentage = analysis.evenPercentage;
+        } else if (bot.botType === 'odd') {
+          relevantPercentage = analysis.oddPercentage;
+        }
+        shouldEnter = relevantPercentage >= settings.entryThreshold;
+      }
+
+      // Signal confirmation
+      if (shouldEnter) {
+        const newConfirmTicks = bot.entryConfirmed ? bot.currentConfirmTicks + 1 : 1;
         
-        setBots(initialBots);
-    }, []);
-
-    // Update all bots when market changes
-    useEffect(() => {
-        setBots(prev => prev.map(bot => ({
+        if (newConfirmTicks >= (bot.confirmationTicks || 2) && !bot.entryConfirmed) {
+          // Signal confirmed - execute trade
+          return {
             ...bot,
-            market: selectedMarket
-        })));
-    }, [selectedMarket]);
-
-    // Connect WebSocket
-    const connectWebSocket = useCallback(() => {
-        if (wsRef.current?.readyState === WebSocket.OPEN) return;
-
-        setIsConnecting(true);
-        
-        try {
-            const ws = new WebSocket(DERIV_WS_URL);
-            
-            ws.onopen = () => {
-                wsRef.current = ws;
-                setIsConnected(true);
-                setIsConnecting(false);
-                
-                // Start ping interval to check connection quality
-                if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
-                
-                let lastPing = Date.now();
-                pingIntervalRef.current = setInterval(() => {
-                    const now = Date.now();
-                    const latency = now - lastPing;
-                    
-                    if (latency < 100) setConnectionQuality('excellent');
-                    else if (latency < 300) setConnectionQuality('good');
-                    else setConnectionQuality('poor');
-                    
-                    lastPing = now;
-                }, 5000);
-                
-                // Subscribe to selected market
-                subscribeToMarket(selectedMarket);
-                
-                toast({
-                    title: 'Connected',
-                    description: 'WebSocket connection established',
-                    variant: 'default',
-                });
-            };
-
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                handleWebSocketMessage(data);
-            };
-
-            ws.onerror = () => {
-                setIsConnected(false);
-                setConnectionQuality('poor');
-            };
-
-            ws.onclose = () => {
-                setIsConnected(false);
-                setIsConnecting(false);
-                
-                if (pingIntervalRef.current) {
-                    clearInterval(pingIntervalRef.current);
-                }
-                
-                if (reconnectTimeoutRef.current) {
-                    clearTimeout(reconnectTimeoutRef.current);
-                }
-                
-                reconnectTimeoutRef.current = setTimeout(() => {
-                    connectWebSocket();
-                }, 3000);
-            };
-
-            wsRef.current = ws;
-        } catch (error) {
-            console.error('Connection error:', error);
-            setIsConnected(false);
-            setIsConnecting(false);
-        }
-    }, [selectedMarket]);
-
-    // Subscribe to market
-    const subscribeToMarket = (symbol: string) => {
-        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-        
-        wsRef.current.send(JSON.stringify({
-            ticks_history: symbol,
-            adjust_start_time: 1,
-            count: 1000,
-            end: 'latest',
-            start: 1,
-            style: 'ticks',
-            subscribe: 1
-        }));
-    };
-
-    // Handle WebSocket messages
-    const handleWebSocketMessage = (data: any) => {
-        if (data.tick) {
-            handleTick(data.tick);
-        } else if (data.history) {
-            handleHistory(data);
-        }
-    };
-
-    // Handle history data
-    const handleHistory = (data: any) => {
-        if (!data.history?.prices) return;
-        
-        const prices = data.history.prices;
-        const ticks: TickData[] = prices.map((price: string, index: number) => ({
-            quote: parseFloat(price),
-            symbol: data.echo_req.ticks_history,
-            timestamp: Date.now() - (prices.length - index) * 100,
-            digit: Math.floor(parseFloat(price) % 10)
-        }));
-        
-        ticksRef.current = ticks;
-        setTickCount(ticks.length);
-        updateAnalysis();
-        
-        toast({
-            title: 'Data Loaded',
-            description: `Loaded ${ticks.length} ticks for ${selectedMarket}`,
-        });
-    };
-
-    // Handle live tick
-    const handleTick = (tick: any) => {
-        const digit = Math.floor(tick.quote % 10);
-        
-        setLastDigit(digit);
-        
-        const newTick: TickData = {
-            quote: tick.quote,
-            symbol: tick.symbol,
-            timestamp: Date.now(),
-            digit
-        };
-        
-        ticksRef.current.push(newTick);
-        if (ticksRef.current.length > 1000) {
-            ticksRef.current.shift();
-        }
-        
-        setTickCount(ticksRef.current.length);
-        updateAnalysis();
-    };
-
-    // Update analysis
-    const updateAnalysis = () => {
-        const ticks = ticksRef.current;
-        if (ticks.length < 100) return;
-
-        const last1000 = ticks.slice(-1000);
-        const last50 = ticks.slice(-50);
-        const last20 = ticks.slice(-20);
-        const last10 = ticks.slice(-10);
-
-        // Count digits
-        const digitCounts: Record<number, number> = {};
-        for (let i = 0; i <= 9; i++) digitCounts[i] = 0;
-        
-        last1000.forEach(t => digitCounts[t.digit]++);
-
-        // Calculate percentages
-        const digitPercentages: Record<number, number> = {};
-        for (let i = 0; i <= 9; i++) {
-            digitPercentages[i] = (digitCounts[i] / 10);
-        }
-
-        // Even/Odd percentages
-        let evenCount = 0, oddCount = 0;
-        [0,2,4,6,8].forEach(d => evenCount += digitCounts[d]);
-        [1,3,5,7,9].forEach(d => oddCount += digitCounts[d]);
-        
-        const evenPercentage = (evenCount / 1000) * 100;
-        const oddPercentage = (oddCount / 1000) * 100;
-
-        // Over/Under percentages
-        let overCount = 0, underCount = 0;
-        [5,6,7,8,9].forEach(d => overCount += digitCounts[d]);
-        [0,1,2,3,4].forEach(d => underCount += digitCounts[d]);
-        
-        const overPercentage = (overCount / 1000) * 100;
-        const underPercentage = (underCount / 1000) * 100;
-
-        // Current streaks
-        let evenStreak = 0, oddStreak = 0, overStreak = 0, underStreak = 0;
-        
-        for (let i = last10.length - 1; i >= 0; i--) {
-            if (last10[i].digit % 2 === 0) evenStreak++;
-            else break;
-        }
-        
-        for (let i = last10.length - 1; i >= 0; i--) {
-            if (last10[i].digit % 2 === 1) oddStreak++;
-            else break;
-        }
-        
-        for (let i = last10.length - 1; i >= 0; i--) {
-            if (last10[i].digit >= 5) overStreak++;
-            else break;
-        }
-        
-        for (let i = last10.length - 1; i >= 0; i--) {
-            if (last10[i].digit <= 4) underStreak++;
-            else break;
-        }
-
-        // Momentum (last 20 ticks)
-        const first10Avg = last20.slice(0, 10).reduce((sum, t) => sum + t.quote, 0) / 10;
-        const last10Avg = last20.slice(-10).reduce((sum, t) => sum + t.quote, 0) / 10;
-        const momentum20 = ((last10Avg - first10Avg) / first10Avg) * 100;
-
-        // Trend (last 50 ticks)
-        const first25Avg = last50.slice(0, 25).reduce((sum, t) => sum + t.quote, 0) / 25;
-        const last25Avg = last50.slice(-25).reduce((sum, t) => sum + t.quote, 0) / 25;
-        const trend50 = last25Avg > first25Avg ? 'UP' : last25Avg < first25Avg ? 'DOWN' : 'SIDEWAYS';
-
-        // Volatility
-        const changes: number[] = [];
-        for (let i = 1; i < last1000.length; i++) {
-            changes.push(Math.abs(last1000[i].quote - last1000[i-1].quote));
-        }
-        const avgChange = changes.reduce((a,b) => a + b, 0) / changes.length;
-        
-        let volatilityLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'EXTREME' = 'LOW';
-        let volatilityScore = 0;
-        
-        if (avgChange < 0.5) {
-            volatilityLevel = 'LOW';
-            volatilityScore = 25;
-        } else if (avgChange < 1.5) {
-            volatilityLevel = 'MEDIUM';
-            volatilityScore = 50;
-        } else if (avgChange < 3) {
-            volatilityLevel = 'HIGH';
-            volatilityScore = 75;
+            entryConfirmed: true,
+            currentConfirmTicks: newConfirmTicks,
+            status: 'triggered'
+          };
         } else {
-            volatilityLevel = 'EXTREME';
-            volatilityScore = 100;
+          return {
+            ...bot,
+            entryConfirmed: false,
+            currentConfirmTicks: newConfirmTicks,
+            status: 'confirming'
+          };
+        }
+      } else {
+        // Update opposite counter
+        let newConsecutiveOpposite = bot.consecutiveLosses;
+        if (oppositeCondition) {
+          newConsecutiveOpposite++;
+        } else {
+          newConsecutiveOpposite = 0;
         }
 
-        // Determine signal
-        let signalType: 'EVEN' | 'ODD' | 'OVER' | 'UNDER' | 'NONE' = 'NONE';
-        let confidence = 0;
-        let strength: 'STRONG' | 'MEDIUM' | 'WEAK' = 'WEAK';
-        let mode: 'TREND' | 'REVERSAL' = 'TREND';
-
-        // Check Even/Odd signals
-        if (evenPercentage >= 65) {
-            signalType = 'ODD';
-            mode = 'REVERSAL';
-            confidence = evenPercentage;
-        } else if (oddPercentage >= 65) {
-            signalType = 'EVEN';
-            mode = 'REVERSAL';
-            confidence = oddPercentage;
-        } else if (evenPercentage >= 55) {
-            signalType = 'EVEN';
-            mode = 'TREND';
-            confidence = evenPercentage;
-        } else if (oddPercentage >= 55) {
-            signalType = 'ODD';
-            mode = 'TREND';
-            confidence = oddPercentage;
-        }
-        
-        // Check Over/Under signals (override if stronger)
-        if (overPercentage >= 65) {
-            signalType = 'UNDER';
-            mode = 'REVERSAL';
-            confidence = Math.max(confidence, overPercentage);
-        } else if (underPercentage >= 65) {
-            signalType = 'OVER';
-            mode = 'REVERSAL';
-            confidence = Math.max(confidence, underPercentage);
-        } else if (overPercentage >= 55 && confidence < overPercentage) {
-            signalType = 'OVER';
-            mode = 'TREND';
-            confidence = overPercentage;
-        } else if (underPercentage >= 55 && confidence < underPercentage) {
-            signalType = 'UNDER';
-            mode = 'TREND';
-            confidence = underPercentage;
-        }
-
-        // Determine strength
-        if (confidence >= 70) strength = 'STRONG';
-        else if (confidence >= 55) strength = 'MEDIUM';
-        else strength = 'WEAK';
-
-        const analysis: MarketAnalysis = {
-            symbol: selectedMarket,
-            ticks: last1000,
-            digitCounts,
-            digitPercentages,
-            evenPercentage,
-            oddPercentage,
-            overPercentage,
-            underPercentage,
-            lastDigits: last10.map(t => t.digit),
-            last20Digits: last20.map(t => t.digit),
-            last50Digits: last50.map(t => t.digit),
-            currentEvenStreak: evenStreak,
-            currentOddStreak: oddStreak,
-            currentOverStreak: overStreak,
-            currentUnderStreak: underStreak,
-            momentum20,
-            trend50,
-            signal: {
-                type: signalType,
-                confidence,
-                strength,
-                mode
-            },
-            volatility: {
-                averageChange: avgChange,
-                level: volatilityLevel,
-                score: volatilityScore
-            }
+        return {
+          ...bot,
+          entryConfirmed: false,
+          currentConfirmTicks: 0,
+          consecutiveLosses: newConsecutiveOpposite,
+          status: 'monitoring'
         };
+      }
+    }));
+  }, [botSettings]);
 
-        setAnalysis(analysis);
-        checkBotEntries(analysis);
-    };
+  // FIXED: Execute trade with proper logic
+  const executeTrade = useCallback(async (botId: string, analysis: MarketAnalysis) => {
+    const bot = botInstances.find(b => b.id === botId);
+    if (!bot || bot.isTrading || bot.tradeLock) return;
 
-    // ADDED: Function to check if signal meets bot-specific threshold
-    const meetsEntryThreshold = (bot: Bot, analysis: MarketAnalysis): boolean => {
-        let percentage = 0;
-        
-        if (bot.type === 'even') percentage = analysis.evenPercentage;
-        else if (bot.type === 'odd') percentage = analysis.oddPercentage;
-        else if (bot.type === 'over') percentage = analysis.overPercentage;
-        else if (bot.type === 'under') percentage = analysis.underPercentage;
-        
-        return percentage >= bot.entryThreshold;
-    };
+    const settings = botSettings[bot.botId];
+    if (!settings) return;
 
-    // ADDED: Function to check stop loss and take profit
-    const checkRiskLimits = (bot: Bot): boolean => {
-        // Check stop loss
-        if (bot.totalPnl <= -bot.stopLoss) {
-            toast({
-                title: 'Stop Loss Triggered',
-                description: `${bot.name} stopped: Loss limit reached`,
-                variant: 'destructive',
-            });
-            stopBot(bot.id);
-            return false;
+    // Set trading lock
+    setBotInstances(prev => prev.map(b => {
+      if (b.id === botId) {
+        return { ...b, isTrading: true, tradeLock: true, status: 'trading' };
+      }
+      return b;
+    }));
+
+    voiceSystem.current.tradeExecuted(bot.botName, bot.currentStake);
+
+    const lastDigit = analysis.lastDigits[analysis.lastDigits.length - 1];
+    
+    // Calculate win probability
+    let winProbability = 0.5;
+    if (bot.botType.includes('over')) {
+      winProbability = analysis.overUnderStats.over1 / 100;
+    } else if (bot.botType.includes('under')) {
+      winProbability = analysis.overUnderStats.under8 / 100;
+    } else if (bot.botType === 'even') {
+      winProbability = analysis.evenPercentage / 100;
+    } else if (bot.botType === 'odd') {
+      winProbability = analysis.oddPercentage / 100;
+    }
+
+    // Simulate trade
+    setTimeout(() => {
+      const won = Math.random() < winProbability;
+      const profit = won ? bot.currentStake * 0.95 : -bot.currentStake;
+
+      // Generate result digit
+      let resultDigit;
+      if (won) {
+        if (bot.botType.includes('over')) {
+          resultDigit = 2 + Math.floor(Math.random() * 8);
+        } else if (bot.botType.includes('under')) {
+          resultDigit = Math.floor(Math.random() * 8);
+        } else if (bot.botType === 'even') {
+          const evens = [0,2,4,6,8];
+          resultDigit = evens[Math.floor(Math.random() * evens.length)];
+        } else {
+          const odds = [1,3,5,7,9];
+          resultDigit = odds[Math.floor(Math.random() * odds.length)];
         }
-        
-        // Check take profit
-        if (bot.totalPnl >= bot.takeProfit) {
-            toast({
-                title: 'Take Profit Reached',
-                description: `${bot.name} stopped: Profit target achieved`,
-                variant: 'default',
-            });
-            stopBot(bot.id);
-            return false;
+      } else {
+        if (bot.botType.includes('over')) {
+          resultDigit = Math.floor(Math.random() * 2);
+        } else if (bot.botType.includes('under')) {
+          resultDigit = 8 + Math.floor(Math.random() * 2);
+        } else if (bot.botType === 'even') {
+          const odds = [1,3,5,7,9];
+          resultDigit = odds[Math.floor(Math.random() * odds.length)];
+        } else {
+          const evens = [0,2,4,6,8];
+          resultDigit = evens[Math.floor(Math.random() * evens.length)];
         }
-        
-        return true;
-    };
+      }
 
-    // UPDATED: Check entry conditions for all bots with improved logic
-    const checkBotEntries = (analysis: MarketAnalysis) => {
-        setBots(prev => prev.map(bot => {
-            if (!bot.isRunning || !bot.enabled || bot.isTrading || bot.tradeLock) return bot;
+      const trade: Trade = {
+        id: `trade-${Date.now()}-${Math.random()}`,
+        botId: bot.id,
+        botName: bot.botName,
+        type: bot.botType,
+        market: bot.market,
+        entry: bot.recoveryMode && bot.recoveryStep > 0 ? bot.recoveryTarget || bot.botType : bot.botType,
+        stake: bot.currentStake,
+        result: won ? 'win' : 'loss',
+        profit,
+        entryDigit: lastDigit,
+        resultDigit,
+        timestamp: Date.now(),
+        confidence: winProbability * 100,
+        strategy: bot.recoveryStep > 0 ? 'recovery' : 'normal',
+        recoveryStep: bot.recoveryStep
+      };
 
-            // Check risk limits
-            if (!checkRiskLimits(bot)) return bot;
+      setActiveTrade(trade);
+      setTrades(prev => [trade, ...prev].slice(0, 100));
 
-            // Check volatility range
-            if (analysis.volatility.score < bot.minVolatility || 
-                analysis.volatility.score > bot.maxVolatility) {
-                return bot;
-            }
+      // Update bot stats
+      setBotInstances(prev => prev.map(b => {
+        if (b.id === botId) {
+          const newTrades = b.trades + 1;
+          const newWins = won ? b.wins + 1 : b.wins;
+          const newLosses = won ? b.losses : b.losses + 1;
+          const newPnl = b.totalPnl + profit;
 
-            const lastDigits = analysis.lastDigits;
-            const currentDigit = lastDigits[lastDigits.length - 1];
-            
-            // Determine current condition
-            let currentCondition: boolean;
-            
-            if (bot.type === 'even') {
-                currentCondition = currentDigit % 2 === 0;
-            } else if (bot.type === 'odd') {
-                currentCondition = currentDigit % 2 === 1;
-            } else if (bot.type === 'over') {
-                currentCondition = currentDigit >= 5;
-            } else { // under
-                currentCondition = currentDigit <= 4;
-            }
+          // Martingale logic
+          let newStake = settings.stake;
+          let newRecoveryStep = b.recoveryStep;
+          let newRunsCompleted = b.runsCompleted;
+          let newRecoveryMode = b.recoveryMode;
 
-            // Check if we should consider entry
-            let shouldConsider = false;
-            
-            // ADDED: Recovery mode logic
-            if (bot.recoveryMode && bot.recoveryStep > 0) {
-                // In recovery mode, look for specific target
-                if (bot.recoveryTarget === 'OVER_3') {
-                    shouldConsider = currentDigit >= 3;
-                } else if (bot.recoveryTarget === 'UNDER_5') {
-                    shouldConsider = currentDigit <= 5;
-                } else {
-                    shouldConsider = currentCondition;
-                }
-            } else {
-                shouldConsider = currentCondition;
-            }
-
-            // Signal confirmation with multiple ticks
-            if (shouldConsider && meetsEntryThreshold(bot, analysis)) {
-                const newConfirmTicks = bot.entryConfirmed ? bot.confirmTicks + 1 : 1;
-                
-                if (newConfirmTicks >= globalSettings.confirmationTicks && !bot.entryConfirmed) {
-                    // Signal confirmed - execute trade
-                    bot.entryConfirmed = true;
-                    bot.status = 'confirming';
-                    
-                    // Execute trade after confirmation
-                    setTimeout(() => {
-                        executeTrade(bot.id, analysis);
-                    }, 100);
-                } else {
-                    bot.entryConfirmed = false;
-                    bot.confirmTicks = newConfirmTicks;
-                    bot.status = 'confirming';
-                }
-            } else {
-                // Reset confirmation if condition not met
-                bot.entryConfirmed = false;
-                bot.confirmTicks = 0;
-                bot.status = 'watching';
-            }
-
-            return bot;
-        }));
-    };
-
-    // UPDATED: Execute trade with enhanced logic
-    const executeTrade = (botId: string, analysis: MarketAnalysis) => {
-        const bot = bots.find(b => b.id === botId);
-        if (!bot || bot.isTrading || bot.tradeLock) return;
-
-        // Set trading lock to prevent duplicate trades
-        setBots(prev => prev.map(b => {
-            if (b.id === botId) {
-                return { 
-                    ...b, 
-                    isTrading: true,
-                    tradeLock: true,
-                    status: 'trading',
-                    lastTradeTime: Date.now()
-                };
-            }
-            return b;
-        }));
-
-        if (!demoMode && !isConnected) {
-            toast({
-                title: 'Not Connected',
-                description: 'Cannot execute live trade',
-                variant: 'destructive',
-            });
-            releaseTradeLock(botId);
-            return;
-        }
-
-        const lastTick = analysis.ticks[analysis.ticks.length - 1];
-        
-        // Determine current strategy based on recovery mode
-        let currentStrategy = bot.type;
-        if (bot.recoveryMode && bot.recoveryStep > 0) {
-            currentStrategy = bot.recoveryTarget || bot.type;
-        }
-        
-        // Simulate trade with realistic probability
-        setTimeout(() => {
-            // Calculate win probability based on current conditions
-            let winProbability = 0;
-            
-            if (bot.type === 'even') winProbability = analysis.evenPercentage / 100;
-            else if (bot.type === 'odd') winProbability = analysis.oddPercentage / 100;
-            else if (bot.type === 'over') winProbability = analysis.overPercentage / 100;
-            else if (bot.type === 'under') winProbability = analysis.underPercentage / 100;
-            
-            // Adjust probability based on recovery mode
-            if (bot.recoveryMode && bot.recoveryStep > 0) {
-                winProbability *= 0.9; // Slightly lower probability in recovery
-            }
-            
-            const won = Math.random() < winProbability;
-            const profit = won ? bot.currentStake * 0.95 : -bot.currentStake;
-
-            // Generate result digit based on outcome
-            let resultDigit;
+          if (settings.useMartingale) {
             if (won) {
-                // Generate a digit that satisfies the condition
-                if (bot.type === 'even') {
-                    const evens = [0,2,4,6,8];
-                    resultDigit = evens[Math.floor(Math.random() * evens.length)];
-                } else if (bot.type === 'odd') {
-                    const odds = [1,3,5,7,9];
-                    resultDigit = odds[Math.floor(Math.random() * odds.length)];
-                } else if (bot.type === 'over') {
-                    resultDigit = 5 + Math.floor(Math.random() * 5);
-                } else {
-                    resultDigit = Math.floor(Math.random() * 5);
-                }
+              newStake = settings.stake;
+              newRecoveryStep = 0;
+              newRecoveryMode = false;
+              newRunsCompleted = b.runsCompleted + 1;
+
+              // Check if max runs reached
+              if (newRunsCompleted >= settings.maxRuns) {
+                newRunsCompleted = 0;
+                toast.success(`${b.botName} completed ${settings.maxRuns} runs`);
+              }
             } else {
-                // Generate a digit that fails the condition
-                if (bot.type === 'even') {
-                    const odds = [1,3,5,7,9];
-                    resultDigit = odds[Math.floor(Math.random() * odds.length)];
-                } else if (bot.type === 'odd') {
-                    const evens = [0,2,4,6,8];
-                    resultDigit = evens[Math.floor(Math.random() * evens.length)];
-                } else if (bot.type === 'over') {
-                    resultDigit = Math.floor(Math.random() * 5);
-                } else {
-                    resultDigit = 5 + Math.floor(Math.random() * 5);
-                }
+              newRecoveryStep = b.recoveryStep + 1;
+              if (newRecoveryStep <= settings.maxSteps) {
+                newStake = settings.stake * Math.pow(settings.multiplier, newRecoveryStep);
+                newRecoveryMode = true;
+              } else {
+                newStake = settings.stake;
+                newRecoveryStep = 0;
+                newRecoveryMode = false;
+              }
             }
+          }
 
-            const trade: Trade = {
-                id: `trade-${Date.now()}-${Math.random()}`,
-                botId: bot.id,
-                botName: bot.name,
-                type: bot.type,
-                mode: bot.mode,
-                market: bot.market,
-                entry: currentStrategy,
-                stake: bot.currentStake,
-                result: won ? 'win' : 'loss',
-                profit,
-                entryDigit: lastTick.digit,
-                resultDigit,
-                timestamp: Date.now(),
-                confidence: analysis.signal.confidence,
-                strategy: currentStrategy,
-                recoveryStep: bot.recoveryStep
-            };
+          // Voice feedback
+          if (won) {
+            voiceSystem.current.tradeWon(b.botName, profit);
+          } else {
+            voiceSystem.current.tradeLost(b.botName, Math.abs(profit));
+          }
 
-            setActiveTrade(trade);
-            setTrades(prev => [trade, ...prev].slice(0, 100));
+          // Update balance
+          if (updateBalance) {
+            updateBalance(profit);
+          }
 
-            // Update bot stats with enhanced logic
-            setBots(prev => prev.map(b => {
-                if (b.id === botId) {
-                    const newTrades = b.trades + 1;
-                    const newWins = won ? b.wins + 1 : b.wins;
-                    const newLosses = won ? b.losses : b.losses + 1;
-                    const newPnl = b.totalPnl + profit;
-                    const newPeakPnl = Math.max(b.peakPnl, newPnl);
-
-                    // Update stake and recovery logic
-                    let newStake = b.stake;
-                    let newRecoveryStep = b.recoveryStep;
-                    let newRunsCompleted = b.runsCompleted;
-                    let newCurrentRun = b.currentRun;
-
-                    if (b.useMartingale) {
-                        if (won) {
-                            // Win: reset to initial stake
-                            newStake = b.initialStake;
-                            newRecoveryStep = 0;
-                            newRunsCompleted = b.runsCompleted + 1;
-                            
-                            // Check if max runs reached
-                            if (newRunsCompleted >= b.maxRuns) {
-                                newRunsCompleted = 0;
-                                newCurrentRun = 0;
-                                toast({
-                                    title: 'Runs Completed',
-                                    description: `${b.name} completed ${b.maxRuns} runs`,
-                                });
-                            } else {
-                                newCurrentRun = b.currentRun + 1;
-                            }
-                        } else {
-                            // Loss: apply martingale
-                            newRecoveryStep = b.recoveryStep + 1;
-                            if (newRecoveryStep <= b.maxSteps) {
-                                newStake = b.initialStake * Math.pow(b.multiplier, newRecoveryStep);
-                            } else {
-                                // Max steps reached, reset
-                                newStake = b.initialStake;
-                                newRecoveryStep = 0;
-                                toast({
-                                    title: 'Max Recovery Steps',
-                                    description: `${b.name} reached max recovery steps, resetting`,
-                                });
-                            }
-                        }
-                    }
-
-                    return {
-                        ...b,
-                        trades: newTrades,
-                        wins: newWins,
-                        losses: newLosses,
-                        totalPnl: newPnl,
-                        peakPnl: newPeakPnl,
-                        currentStake: newStake,
-                        recoveryStep: newRecoveryStep,
-                        currentRun: newCurrentRun,
-                        runsCompleted: newRunsCompleted,
-                        isTrading: false,
-                        tradeLock: false,
-                        entryConfirmed: false,
-                        confirmTicks: 0,
-                        status: 'watching'
-                    };
-                }
-                return b;
-            }));
-
-            // Update balance
-            if (demoMode) {
-                setBalance(prev => prev + profit);
-            }
-
-            // Show toast for trade result
-            toast({
-                title: won ? 'Trade Won! 🎉' : 'Trade Lost 💔',
-                description: `${bot.name} | ${currentStrategy} | Profit: $${profit.toFixed(2)}`,
-                variant: won ? 'default' : 'destructive',
-            });
-
-            setTimeout(() => {
-                setActiveTrade(null);
-            }, 3000);
-        }, 1500);
-    };
-
-    // ADDED: Release trade lock
-    const releaseTradeLock = (botId: string) => {
-        setBots(prev => prev.map(b => {
-            if (b.id === botId) {
-                return { ...b, isTrading: false, tradeLock: false };
-            }
-            return b;
-        }));
-    };
-
-    // UPDATED: Start bot
-    const startBot = (botId: string) => {
-        const bot = bots.find(b => b.id === botId);
-        if (!bot) return;
-        
-        if (!isConnected) {
-            toast({
-                title: 'Not Connected',
-                description: 'Please wait for WebSocket connection',
-                variant: 'destructive',
-            });
-            return;
-        }
-
-        if (!analysis) {
-            toast({
-                title: 'No Data',
-                description: 'Waiting for market data',
-                variant: 'destructive',
-            });
-            return;
-        }
-
-        setBots(prev => prev.map(b => {
-            if (b.id === botId) {
-                runningBotsRef.current.add(botId);
-                return { 
-                    ...b, 
-                    isRunning: true, 
-                    status: 'watching',
-                    currentStake: b.stake,
-                    initialStake: b.stake,
-                    recoveryStep: 0,
-                    consecutiveOpposite: 0,
-                    currentRun: 0,
-                    runsCompleted: 0,
-                    isTrading: false,
-                    tradeLock: false,
-                    entryConfirmed: false,
-                    confirmTicks: 0,
-                    totalPnl: 0,
-                    peakPnl: 0
-                };
-            }
-            return b;
-        }));
-
-        toast({
-            title: 'Bot Started',
-            description: `${bot.name} is now watching for signals`,
-        });
-    };
-
-    // UPDATED: Stop bot
-    const stopBot = (botId: string) => {
-        runningBotsRef.current.delete(botId);
-        
-        setBots(prev => prev.map(b => {
-            if (b.id === botId) {
-                return { 
-                    ...b, 
-                    isRunning: false, 
-                    status: 'stopped',
-                    isTrading: false,
-                    tradeLock: false,
-                    entryConfirmed: false,
-                    confirmTicks: 0
-                };
-            }
-            return b;
-        }));
-
-        toast({
-            title: 'Bot Stopped',
-            description: 'Bot has been stopped',
-        });
-    };
-
-    // Start all bots
-    const startAllBots = () => {
-        if (!isConnected) {
-            toast({
-                title: 'Not Connected',
-                description: 'Please wait for WebSocket connection',
-                variant: 'destructive',
-            });
-            return;
-        }
-
-        bots.forEach(bot => {
-            if (bot.enabled && !bot.isRunning) {
-                startBot(bot.id);
-            }
-        });
-    };
-
-    // Stop all bots
-    const stopAllBots = () => {
-        runningBotsRef.current.clear();
-        
-        setBots(prev => prev.map(b => ({
+          return {
             ...b,
-            isRunning: false,
-            status: 'stopped',
+            trades: newTrades,
+            wins: newWins,
+            losses: newLosses,
+            totalPnl: newPnl,
+            currentStake: newStake,
+            recoveryStep: newRecoveryStep,
+            runsCompleted: newRunsCompleted,
+            recoveryMode: newRecoveryMode,
+            lastTradeResult: won ? 'win' : 'loss',
             isTrading: false,
             tradeLock: false,
             entryConfirmed: false,
-            confirmTicks: 0
-        })));
-
-        toast({
-            title: 'All Bots Stopped',
-            description: 'All trading bots have been stopped',
-        });
-    };
-
-    // Toggle bot enabled
-    const toggleBotEnabled = (botId: string) => {
-        setBots(prev => prev.map(b => {
-            if (b.id === botId) {
-                if (b.isRunning) {
-                    stopBot(botId);
-                }
-                return { ...b, enabled: !b.enabled };
-            }
-            return b;
-        }));
-    };
-
-    // Reset bot stats
-    const resetBot = (botId: string) => {
-        setBots(prev => prev.map(b => {
-            if (b.id === botId) {
-                return {
-                    ...b,
-                    totalPnl: 0,
-                    trades: 0,
-                    wins: 0,
-                    losses: 0,
-                    currentRun: 0,
-                    recoveryStep: 0,
-                    currentStake: b.stake,
-                    initialStake: b.stake,
-                    consecutiveOpposite: 0,
-                    runsCompleted: 0,
-                    peakPnl: 0,
-                    isTrading: false,
-                    tradeLock: false,
-                    entryConfirmed: false,
-                    confirmTicks: 0
-                };
-            }
-            return b;
-        }));
-    };
-
-    // Calculate stats
-    const totalTrades = trades.filter(t => t.result !== 'pending').length;
-    const totalWins = trades.filter(t => t.result === 'win').length;
-    const totalPnl = bots.reduce((sum, b) => sum + b.totalPnl, 0);
-    const activeBots = bots.filter(b => b.isRunning).length;
-    const winRate = totalTrades > 0 ? (totalWins / totalTrades) * 100 : 0;
-
-    // Connect on mount
-    useEffect(() => {
-        connectWebSocket();
-        
-        return () => {
-            if (wsRef.current) {
-                wsRef.current.close();
-            }
-            if (reconnectTimeoutRef.current) {
-                clearTimeout(reconnectTimeoutRef.current);
-            }
-            if (pingIntervalRef.current) {
-                clearInterval(pingIntervalRef.current);
-            }
-        };
-    }, []);
-
-    // Change market
-    useEffect(() => {
-        if (isConnected) {
-            subscribeToMarket(selectedMarket);
-            ticksRef.current = [];
-            setAnalysis(null);
+            currentConfirmTicks: 0,
+            status: 'monitoring'
+          };
         }
-    }, [selectedMarket, isConnected]);
+        return b;
+      }));
 
-    return (
-        <div className="min-h-screen bg-gradient-to-br from-gray-900 via-slate-900 to-gray-900 text-gray-100">
-            {/* Animated Background */}
-            <div className="fixed inset-0 overflow-hidden pointer-events-none">
-                <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-900/20 via-gray-900 to-gray-900"></div>
-                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent"></div>
-                <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-purple-500 to-transparent"></div>
+      setTimeout(() => {
+        setActiveTrade(null);
+      }, 3000);
+    }, 1500);
+  }, [botInstances, botSettings, updateBalance]);
+
+  // FIXED: Process confirmed entries
+  useEffect(() => {
+    const processConfirmedEntries = () => {
+      botInstances.forEach(bot => {
+        if (bot.entryConfirmed && !bot.isTrading && !bot.tradeLock && bot.status === 'triggered') {
+          const analysis = marketAnalyses[bot.market];
+          if (analysis) {
+            executeTrade(bot.id, analysis);
+          }
+        }
+      });
+    };
+
+    const interval = setInterval(processConfirmedEntries, 500);
+    return () => clearInterval(interval);
+  }, [botInstances, marketAnalyses, executeTrade]);
+
+  // Detect bot signals from analysis
+  const detectBotSignals = (analysis: MarketAnalysis): string[] => {
+    const matchedBots: string[] = [];
+
+    BOT_CONFIGS.forEach(bot => {
+      if (analysis.conditions[bot.type as keyof typeof analysis.conditions]) {
+        matchedBots.push(bot.id);
+      }
+    });
+
+    return matchedBots;
+  };
+
+  // FIXED: Start a bot instance with proper configuration
+  const startBot = (match: BotMatch) => {
+    if (!isAuthorized) {
+      toast.error('Please connect your account first');
+      return;
+    }
+
+    const settings = botSettings[match.botId];
+    if (!settings) return;
+
+    if (balance < settings.stake) {
+      toast.error('Insufficient balance');
+      return;
+    }
+
+    const config = BOT_CONFIGS.find(b => b.id === match.botId)!;
+    
+    const newInstance: BotInstance = {
+      ...match,
+      id: `${match.botId}-${Date.now()}-${Math.random()}`,
+      isRunning: true,
+      isPaused: false,
+      isTrading: false,
+      tradeLock: false,
+      currentStake: settings.stake,
+      initialStake: settings.stake,
+      totalPnl: 0,
+      trades: 0,
+      wins: 0,
+      losses: 0,
+      consecutiveLosses: 0,
+      recoveryStep: 0,
+      maxSteps: settings.maxSteps,
+      multiplier: settings.multiplier,
+      stopLoss: settings.stopLoss,
+      takeProfit: settings.takeProfit,
+      maxRuns: settings.maxRuns,
+      runsCompleted: 0,
+      entryThreshold: settings.entryThreshold,
+      confirmationTicks: config.confirmationTicks,
+      currentConfirmTicks: 0,
+      entryConfirmed: false,
+      lastEntrySignal: null,
+      recoveryMode: false,
+      recoveryTarget: config.recoveryTarget || null,
+      recoveryBotId: null,
+      expanded: false,
+      status: 'monitoring'
+    };
+
+    setBotInstances(prev => [...prev, newInstance]);
+    voiceSystem.current.botStarted(match.botName);
+    toast.success(`${match.botName} started on ${match.market}`);
+  };
+
+  // Stop a bot instance
+  const stopBot = (index: number) => {
+    setBotInstances(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Pause/Resume a bot instance
+  const togglePauseBot = (index: number) => {
+    setBotInstances(prev => prev.map((bot, i) => 
+      i === index ? { ...bot, isPaused: !bot.isPaused } : bot
+    ));
+  };
+
+  // Update bot settings
+  const updateBotSetting = (botId: string, key: string, value: any) => {
+    setBotSettings(prev => ({
+      ...prev,
+      [botId]: {
+        ...prev[botId],
+        [key]: value
+      }
+    }));
+  };
+
+  // Main scan function
+  const startScan = useCallback(async () => {
+    if (isScanning) return;
+
+    setIsScanning(true);
+    setNoSignal(false);
+    setMatchedSignals([]);
+    setScanProgress(0);
+    setMarketAnalyses({});
+
+    // Start voice announcements
+    voiceSystem.current.scanAnnouncement();
+    
+    voiceIntervalRef.current = setInterval(() => {
+      voiceSystem.current.scanAnnouncement();
+    }, 20000);
+
+    const newMarketDigits: Record<string, number[]> = {};
+    const newAnalyses: Record<string, MarketAnalysis> = {};
+    const newMatches: BotMatch[] = [];
+    const usedBots = new Set<string>();
+
+    try {
+      // Scan all markets
+      for (let i = 0; i < ALL_MARKETS.length; i++) {
+        const market = ALL_MARKETS[i].symbol;
+        
+        // Update progress
+        setScanProgress(Math.round(((i + 1) / ALL_MARKETS.length) * 100));
+        setScanningMarket(market);
+
+        // Fetch ticks
+        const digits = await fetchTicks(market);
+        if (digits.length >= 1000) {
+          newMarketDigits[market] = digits;
+
+          // Analyze digits
+          const analysis = analyzeDigits(market, digits);
+          newAnalyses[market] = analysis;
+
+          // Detect matching bots
+          const matchingBotIds = detectBotSignals(analysis);
+
+          // Add matches (only one per bot)
+          for (const botId of matchingBotIds) {
+            if (!usedBots.has(botId)) {
+              const bot = BOT_CONFIGS.find(b => b.id === botId)!;
+              usedBots.add(botId);
+              
+              newMatches.push({
+                market,
+                botId,
+                botName: bot.name,
+                botType: bot.type,
+                analysis,
+                status: 'waiting',
+                entryCondition: false,
+                lastDigits: analysis.lastDigits
+              });
+              break;
+            }
+          }
+        }
+
+        // Small delay to prevent rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      setMarketDigits(newMarketDigits);
+      setMarketAnalyses(newAnalyses);
+      
+      if (newMatches.length > 0) {
+        setMatchedSignals(newMatches);
+        voiceSystem.current.signalFound();
+        toast.success(`Found ${newMatches.length} trading signals!`);
+      } else {
+        setNoSignal(true);
+        toast.info('NO SIGNAL FOUND');
+      }
+
+    } catch (error) {
+      console.error('Scan error:', error);
+      toast.error('Scan failed');
+    } finally {
+      setIsScanning(false);
+      setScanningMarket('');
+      
+      if (voiceIntervalRef.current) {
+        clearInterval(voiceIntervalRef.current);
+      }
+    }
+  }, [isScanning]);
+
+  // Monitor active bots
+  useEffect(() => {
+    const monitorBots = () => {
+      botInstances.forEach(bot => {
+        if (bot.isRunning && !bot.isPaused && !bot.isTrading) {
+          const analysis = marketAnalyses[bot.market];
+          if (analysis) {
+            checkBotEntries(analysis);
+          }
+        }
+      });
+    };
+
+    const interval = setInterval(monitorBots, 1000);
+    return () => clearInterval(interval);
+  }, [botInstances, marketAnalyses, checkBotEntries]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (voiceIntervalRef.current) {
+        clearInterval(voiceIntervalRef.current);
+      }
+      if (tradingIntervalRef.current) {
+        clearInterval(tradingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Get market icon
+  const getMarketIcon = (symbol: string) => {
+    const market = ALL_MARKETS.find(m => m.symbol === symbol);
+    return market?.icon || '📊';
+  };
+
+  // Calculate total stats
+  const totalStats = {
+    activeBots: botInstances.filter(b => b.isRunning).length,
+    totalPnl: botInstances.reduce((sum, bot) => sum + bot.totalPnl, 0),
+    totalTrades: botInstances.reduce((sum, bot) => sum + bot.trades, 0),
+    totalWins: botInstances.reduce((sum, bot) => sum + bot.wins, 0),
+    winRate: botInstances.reduce((sum, bot) => sum + (bot.wins / (bot.trades || 1)) * 100, 0) / (botInstances.length || 1)
+  };
+
+  return (
+    <div className="relative min-h-screen bg-gradient-to-b from-gray-900 to-gray-950 overflow-hidden">
+      <DollarBackground />
+
+      <div className="relative z-10 container mx-auto p-6 max-w-7xl">
+        {/* Header */}
+        <motion.div 
+          className="text-center mb-8"
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <h1 className="text-5xl font-bold mb-3 bg-gradient-to-r from-green-400 via-blue-500 to-purple-600 bg-clip-text text-transparent">
+            Automated Trading Scanner
+          </h1>
+          <p className="text-gray-400 text-lg">6 Professional Bots • Real-time Analysis • Automatic Execution</p>
+        </motion.div>
+
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+          <Card className="bg-gray-800/50 border-gray-700 backdrop-blur-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">Balance</p>
+                  <p className="text-2xl font-bold text-white">${balance?.toFixed(2) || '0.00'}</p>
+                </div>
+                <DollarSign className="w-8 h-8 text-green-400" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gray-800/50 border-gray-700 backdrop-blur-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">Active Bots</p>
+                  <p className="text-2xl font-bold text-white">{totalStats.activeBots}/6</p>
+                </div>
+                <Zap className="w-8 h-8 text-yellow-400" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gray-800/50 border-gray-700 backdrop-blur-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">Total P&L</p>
+                  <p className={`text-2xl font-bold ${totalStats.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    ${totalStats.totalPnl.toFixed(2)}
+                  </p>
+                </div>
+                <LineChart className="w-8 h-8 text-blue-400" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gray-800/50 border-gray-700 backdrop-blur-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">Win Rate</p>
+                  <p className="text-2xl font-bold text-white">{totalStats.winRate.toFixed(1)}%</p>
+                </div>
+                <Target className="w-8 h-8 text-purple-400" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gray-800/50 border-gray-700 backdrop-blur-sm">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">Connection</p>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${
+                      connectionQuality === 'excellent' ? 'bg-green-400 animate-pulse' :
+                      connectionQuality === 'good' ? 'bg-yellow-400' : 'bg-red-400'
+                    }`} />
+                    <span className="text-white">
+                      {connectionQuality === 'excellent' ? 'Excellent' :
+                       connectionQuality === 'good' ? 'Good' : 'Poor'}
+                    </span>
+                  </div>
+                </div>
+                {isAuthorized ? <Wifi className="w-8 h-8 text-green-400" /> : <WifiOff className="w-8 h-8 text-red-400" />}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Settings Panel */}
+        <Card className="bg-gray-800/50 border-gray-700 backdrop-blur-sm mb-6">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-4">
+              <Settings2 className="w-5 h-5 text-gray-400" />
+              <span className="text-sm text-gray-400">Sound Alerts:</span>
+              <Switch checked={sound} onCheckedChange={setSound} />
+              <div className="flex-1" />
+              <Badge variant="outline" className="border-green-500 text-green-400">
+                <Volume2 className="w-3 h-3 mr-1" />
+                Voice Alerts Active
+              </Badge>
             </div>
+          </CardContent>
+        </Card>
 
-            <div className="relative max-w-7xl mx-auto p-4 space-y-4">
-                {/* Header with Glassmorphism */}
-                <Card className="bg-gray-800/90 backdrop-blur-xl border-gray-700 shadow-2xl">
-                    <CardHeader className="pb-2">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-4">
-                                <div className="p-3 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl shadow-lg">
-                                    <Brain className="h-8 w-8 text-white" />
+        {/* SCAN Button */}
+        <div className="flex justify-center mb-8">
+          <motion.div
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <Button
+              onClick={startScan}
+              disabled={isScanning || !isAuthorized}
+              size="lg"
+              className="relative w-72 h-72 rounded-full bg-gradient-to-r from-green-500 via-blue-500 to-purple-600 hover:from-green-600 hover:via-blue-600 hover:to-purple-700 shadow-2xl"
+            >
+              <div className="absolute inset-0 rounded-full bg-white/20 animate-ping" />
+              <div className="absolute inset-0 rounded-full bg-gradient-to-r from-transparent via-white/10 to-transparent animate-pulse" />
+              <div className="relative flex flex-col items-center">
+                {isScanning ? (
+                  <>
+                    <ScanLine className="w-20 h-20 mb-3 animate-spin text-white" />
+                    <span className="text-3xl font-bold text-white">SCANNING</span>
+                    <span className="text-xl mt-2 text-white/90">{scanProgress}%</span>
+                    <span className="text-sm mt-2 text-white/70">{scanningMarket}</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-20 h-20 mb-3 text-white" />
+                    <span className="text-3xl font-bold text-white">SCAN</span>
+                    <span className="text-xl mt-2 text-white/90">All Markets</span>
+                    <span className="text-sm mt-2 text-white/70">{ALL_MARKETS.length} Markets</span>
+                  </>
+                )}
+              </div>
+            </Button>
+          </motion.div>
+        </div>
+
+        {/* Progress Bar */}
+        {isScanning && (
+          <div className="mb-8">
+            <Progress value={scanProgress} className="h-2 bg-gray-700" />
+          </div>
+        )}
+
+        {/* NO SIGNAL FOUND Message */}
+        <AnimatePresence>
+          {noSignal && (
+            <motion.div 
+              className="text-center py-12"
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <div className="text-7xl mb-4">🔍</div>
+              <h2 className="text-4xl font-bold text-gray-400 mb-2">NO SIGNAL FOUND</h2>
+              <p className="text-gray-500 text-lg">Try scanning again in a few minutes</p>
+              <Button 
+                variant="outline" 
+                className="mt-4 border-gray-600 text-gray-300"
+                onClick={startScan}
+                disabled={isScanning}
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Scan Again
+              </Button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Main Content Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-6">
+          <TabsList className="grid grid-cols-3 w-[400px] mx-auto mb-6 bg-gray-800">
+            <TabsTrigger value="signals" className="data-[state=active]:bg-gray-700">Signals</TabsTrigger>
+            <TabsTrigger value="bots" className="data-[state=active]:bg-gray-700">Active Bots ({botInstances.length})</TabsTrigger>
+            <TabsTrigger value="markets" className="data-[state=active]:bg-gray-700">All Markets</TabsTrigger>
+          </TabsList>
+
+          {/* Signals Tab */}
+          <TabsContent value="signals">
+            {matchedSignals.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {matchedSignals.map((signal, index) => {
+                  const bot = BOT_CONFIGS.find(b => b.id === signal.botId)!;
+                  const settings = botSettings[signal.botId];
+                  const isBotActive = botInstances.some(b => b.market === signal.market && b.botId === signal.botId && b.isRunning);
+                  
+                  return (
+                    <motion.div
+                      key={`${signal.market}-${signal.botId}`}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: index * 0.1 }}
+                    >
+                      <Card className={`bg-gray-800/80 border-2 ${bot.borderColor} backdrop-blur-sm hover:shadow-lg transition-all`}>
+                        <CardHeader className="pb-2">
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className={`p-2 rounded-lg ${bot.bgColor}`}>
+                                <span className="text-2xl">{getMarketIcon(signal.market)}</span>
+                              </div>
+                              <div>
+                                <CardTitle className="text-lg text-white">{signal.analysis.displayName}</CardTitle>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <Badge className={bot.bgColor + ' ' + bot.color}>
+                                    {bot.icon}
+                                    <span className="ml-1">{bot.name}</span>
+                                  </Badge>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          {/* Digit Analysis */}
+                          <div className="bg-gray-900/50 rounded-lg p-3 mb-3">
+                            <div className="grid grid-cols-4 gap-2 text-sm mb-2">
+                              <div>
+                                <span className="text-gray-400 text-xs">Most</span>
+                                <div className="text-xl font-bold text-white">{signal.analysis.mostAppearing}</div>
+                              </div>
+                              <div>
+                                <span className="text-gray-400 text-xs">2nd</span>
+                                <div className="text-xl font-bold text-white">{signal.analysis.secondMost}</div>
+                              </div>
+                              <div>
+                                <span className="text-gray-400 text-xs">3rd</span>
+                                <div className="text-xl font-bold text-white">{signal.analysis.thirdMost}</div>
+                              </div>
+                              <div>
+                                <span className="text-gray-400 text-xs">Least</span>
+                                <div className="text-xl font-bold text-white">{signal.analysis.leastAppearing}</div>
+                              </div>
+                            </div>
+
+                            {/* Digit Distribution Bars */}
+                            <div className="space-y-1 mt-3">
+                              {signal.analysis.digitFrequencies.slice(0, 5).map((f, i) => (
+                                <div key={i} className="flex items-center gap-2">
+                                  <span className="text-xs text-gray-400 w-4">{f.digit}</span>
+                                  <div className="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                    <motion.div 
+                                      className={`h-full ${bot.color.replace('text', 'bg')}`}
+                                      initial={{ width: 0 }}
+                                      animate={{ width: `${f.percentage}%` }}
+                                      transition={{ duration: 0.5, delay: i * 0.1 }}
+                                    />
+                                  </div>
+                                  <span className="text-xs text-gray-400">{f.percentage.toFixed(1)}%</span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Stats */}
+                            <div className="grid grid-cols-2 gap-2 mt-3">
+                              <div className="text-center">
+                                <span className="text-xs text-gray-400">Even %</span>
+                                <div className="text-sm font-bold text-white">{signal.analysis.evenPercentage.toFixed(1)}%</div>
+                              </div>
+                              <div className="text-center">
+                                <span className="text-xs text-gray-400">Odd %</span>
+                                <div className="text-sm font-bold text-white">{signal.analysis.oddPercentage.toFixed(1)}%</div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Bot Info */}
+                          <div className="text-xs text-gray-400 mb-3">
+                            {bot.description}
+                            {bot.recoveryLogic !== 'None' && (
+                              <div className="mt-1 text-yellow-400">Recovery: {bot.recoveryLogic}</div>
+                            )}
+                          </div>
+
+                          {/* Settings Preview */}
+                          {settings && (
+                            <div className="grid grid-cols-2 gap-2 mb-3 text-xs">
+                              <div>
+                                <span className="text-gray-400">Stake:</span>
+                                <span className="ml-1 text-white">${settings.stake.toFixed(2)}</span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Multiplier:</span>
+                                <span className="ml-1 text-white">{settings.multiplier}x</span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Threshold:</span>
+                                <span className="ml-1 text-white">{settings.entryThreshold}%</span>
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Max Runs:</span>
+                                <span className="ml-1 text-white">{settings.maxRuns}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Start Button */}
+                          {!isBotActive ? (
+                            <Button 
+                              className="w-full bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700"
+                              onClick={() => startBot(signal)}
+                              disabled={!isAuthorized}
+                            >
+                              <Play className="w-4 h-4 mr-2" />
+                              Start Bot
+                            </Button>
+                          ) : (
+                            <Button 
+                              className="w-full bg-gray-600 cursor-not-allowed"
+                              disabled
+                            >
+                              <CheckCircle2 className="w-4 h-4 mr-2" />
+                              Already Active
+                            </Button>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            ) : (
+              !noSignal && !isScanning && (
+                <div className="text-center py-12 text-gray-500">
+                  <Radio className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                  <p className="text-lg">No signals yet. Click SCAN to analyze all markets.</p>
+                </div>
+              )
+            )}
+          </TabsContent>
+
+          {/* Active Bots Tab */}
+          <TabsContent value="bots">
+            {botInstances.length > 0 ? (
+              <div className="grid grid-cols-1 gap-4">
+                {botInstances.map((bot, index) => {
+                  const botStrategy = BOT_CONFIGS.find(b => b.id === bot.botId)!;
+                  const settings = botSettings[bot.botId];
+                  
+                  return (
+                    <motion.div
+                      key={bot.id}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                    >
+                      <Card className={`bg-gray-800/80 border-2 ${botStrategy.borderColor}`}>
+                        <CardHeader className="pb-2">
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className={`p-2 rounded-lg ${botStrategy.bgColor}`}>
+                                {botStrategy.icon}
+                              </div>
+                              <div>
+                                <CardTitle className="text-white">{bot.botName}</CardTitle>
+                                <p className="text-sm text-gray-400">
+                                  {getMarketIcon(bot.market)} {bot.analysis.displayName}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge className={
+                                bot.isPaused ? 'bg-gray-500' :
+                                bot.status === 'trading' ? 'bg-green-500' :
+                                bot.status === 'monitoring' ? 'bg-yellow-500' :
+                                bot.status === 'triggered' ? 'bg-purple-500' :
+                                bot.status === 'confirming' ? 'bg-blue-500' : 'bg-gray-500'
+                              }>
+                                {bot.isPaused ? 'PAUSED' :
+                                 bot.status === 'trading' ? 'TRADING' :
+                                 bot.status === 'monitoring' ? 'MONITORING' :
+                                 bot.status === 'triggered' ? 'TRIGGERED' :
+                                 bot.status === 'confirming' ? 'CONFIRMING' : 'WAITING'}
+                              </Badge>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0"
+                                onClick={() => setBotInstances(prev => prev.map((b, i) => 
+                                  i === index ? { ...b, expanded: !b.expanded } : b
+                                ))}
+                              >
+                                {bot.expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                              </Button>
+                            </div>
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          {/* Bot Stats */}
+                          <div className="grid grid-cols-5 gap-2 mb-3">
+                            <div className="bg-gray-900/50 rounded p-2 text-center">
+                              <div className="text-xs text-gray-400">P&L</div>
+                              <div className={`font-bold ${bot.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                ${bot.totalPnl.toFixed(2)}
+                              </div>
+                            </div>
+                            <div className="bg-gray-900/50 rounded p-2 text-center">
+                              <div className="text-xs text-gray-400">Trades</div>
+                              <div className="font-bold text-white">{bot.trades}</div>
+                            </div>
+                            <div className="bg-gray-900/50 rounded p-2 text-center">
+                              <div className="text-xs text-gray-400">Wins</div>
+                              <div className="font-bold text-green-400">{bot.wins}</div>
+                            </div>
+                            <div className="bg-gray-900/50 rounded p-2 text-center">
+                              <div className="text-xs text-gray-400">Losses</div>
+                              <div className="font-bold text-red-400">{bot.losses}</div>
+                            </div>
+                            <div className="bg-gray-900/50 rounded p-2 text-center">
+                              <div className="text-xs text-gray-400">Runs</div>
+                              <div className="font-bold text-blue-400">{bot.runsCompleted}/{bot.maxRuns}</div>
+                            </div>
+                          </div>
+
+                          {/* Current Status */}
+                          <div className="grid grid-cols-4 gap-2 mb-3">
+                            <div className="bg-gray-900/50 rounded-lg p-2">
+                              <div className="text-xs text-gray-400">Current Stake</div>
+                              <div className="font-bold text-white">${bot.currentStake.toFixed(2)}</div>
+                            </div>
+                            <div className="bg-gray-900/50 rounded-lg p-2">
+                              <div className="text-xs text-gray-400">Recovery Step</div>
+                              <div className="font-bold text-orange-400">{bot.recoveryStep}/{bot.maxSteps}</div>
+                            </div>
+                            <div className="bg-gray-900/50 rounded-lg p-2">
+                              <div className="text-xs text-gray-400">Consecutive Losses</div>
+                              <div className="font-bold text-red-400">{bot.consecutiveLosses}</div>
+                            </div>
+                            <div className="bg-gray-900/50 rounded-lg p-2">
+                              <div className="text-xs text-gray-400">Confirmation</div>
+                              <div className="font-bold text-blue-400">{bot.currentConfirmTicks}/{bot.confirmationTicks}</div>
+                            </div>
+                          </div>
+
+                          {/* Recovery Progress */}
+                          {bot.recoveryStep > 0 && (
+                            <div className="mb-3">
+                              <div className="flex justify-between text-xs mb-1">
+                                <span className="text-gray-400">Recovery Progress</span>
+                                <span className="text-orange-400">Step {bot.recoveryStep}/{bot.maxSteps}</span>
+                              </div>
+                              <Progress value={(bot.recoveryStep / bot.maxSteps) * 100} className="h-1 bg-gray-700" />
+                            </div>
+                          )}
+
+                          {/* Run Progress */}
+                          <div className="mb-3">
+                            <div className="flex justify-between text-xs mb-1">
+                              <span className="text-gray-400">Run Progress</span>
+                              <span className="text-blue-400">{bot.runsCompleted}/{bot.maxRuns}</span>
+                            </div>
+                            <div className="flex gap-1">
+                              {[...Array(bot.maxRuns)].map((_, i) => (
+                                <div
+                                  key={i}
+                                  className={`flex-1 h-1 rounded-full ${
+                                    i < bot.runsCompleted ? `bg-${botStrategy.color.replace('text-', '')}` : 'bg-gray-700'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Expanded Settings */}
+                          {bot.expanded && settings && (
+                            <>
+                              <Separator className="my-3 bg-gray-700" />
+                              <div className="grid grid-cols-3 gap-3">
+                                <div>
+                                  <Label className="text-xs text-gray-400">Stake ($)</Label>
+                                  <Input
+                                    type="number"
+                                    value={settings.stake}
+                                    onChange={(e) => updateBotSetting(bot.botId, 'stake', parseFloat(e.target.value) || 0.1)}
+                                    disabled={bot.isRunning}
+                                    className="h-8 text-sm bg-gray-700 border-gray-600"
+                                    step="0.1"
+                                    min="0.1"
+                                  />
                                 </div>
                                 <div>
-                                    <CardTitle className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-                                        Deriv Trading Bot System
-                                    </CardTitle>
-                                    <CardDescription className="text-gray-400">
-                                        6 Advanced Bots • Real-time Analysis • Smart Entry Filters
-                                    </CardDescription>
-                                </div>
-                            </div>
-                            <div className="flex items-center space-x-3">
-                                <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => setSound(!sound)}
-                                    className="text-gray-400 hover:text-white hover:bg-gray-700"
-                                >
-                                    {sound ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-                                </Button>
-                                <div className="flex items-center space-x-2 px-3 py-1.5 bg-gray-700/50 rounded-lg">
-                                    <div className={`w-2 h-2 rounded-full ${
-                                        connectionQuality === 'excellent' ? 'bg-green-400 animate-pulse' :
-                                        connectionQuality === 'good' ? 'bg-yellow-400' : 'bg-red-400'
-                                    }`} />
-                                    <span className="text-xs text-gray-300">
-                                        {connectionQuality === 'excellent' ? 'Excellent' :
-                                         connectionQuality === 'good' ? 'Good' : 'Poor'}
-                                    </span>
-                                </div>
-                                <Badge variant="outline" className={`px-3 py-1 ${
-                                    isConnected ? 'bg-green-500/20 text-green-400 border-green-500/30' : 
-                                    'bg-red-500/20 text-red-400 border-red-500/30'
-                                }`}>
-                                    {isConnected ? <Wifi className="h-3 w-3 mr-1" /> : <WifiOff className="h-3 w-3 mr-1" />}
-                                    {isConnected ? 'LIVE' : 'OFFLINE'}
-                                </Badge>
-                            </div>
-                        </div>
-                    </CardHeader>
-
-                    {/* Stats Cards */}
-                    <CardContent className="pb-2">
-                        <div className="grid grid-cols-6 gap-3">
-                            <div className="bg-gray-700/50 rounded-lg p-3 border border-gray-600">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-xs text-gray-400">Mode</span>
-                                    <Badge variant={demoMode ? "outline" : "default"} className="text-xs">
-                                        {demoMode ? 'DEMO' : 'LIVE'}
-                                    </Badge>
-                                </div>
-                                <Switch checked={!demoMode} onCheckedChange={(v) => setDemoMode(!v)} className="mt-2" />
-                            </div>
-                            
-                            <div className="bg-gray-700/50 rounded-lg p-3 border border-gray-600">
-                                <div className="text-xs text-gray-400 mb-1">Balance</div>
-                                <div className="text-xl font-bold text-green-400">${balance.toFixed(2)}</div>
-                                <div className="text-xs text-gray-500">Available</div>
-                            </div>
-                            
-                            <div className="bg-gray-700/50 rounded-lg p-3 border border-gray-600">
-                                <div className="text-xs text-gray-400 mb-1">Total P&L</div>
-                                <div className={`text-xl font-bold ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                    ${totalPnl.toFixed(2)}
-                                </div>
-                                <div className="text-xs text-gray-500">All bots</div>
-                            </div>
-                            
-                            <div className="bg-gray-700/50 rounded-lg p-3 border border-gray-600">
-                                <div className="text-xs text-gray-400 mb-1">Active Bots</div>
-                                <div className="text-xl font-bold text-blue-400">{activeBots}/6</div>
-                                <Progress value={(activeBots / 6) * 100} className="h-1 mt-1" />
-                            </div>
-                            
-                            <div className="bg-gray-700/50 rounded-lg p-3 border border-gray-600">
-                                <div className="text-xs text-gray-400 mb-1">Win Rate</div>
-                                <div className="text-xl font-bold text-purple-400">{winRate.toFixed(1)}%</div>
-                                <div className="text-xs text-gray-500">{totalWins}/{totalTrades} wins</div>
-                            </div>
-
-                            {/* ADDED: Global Settings */}
-                            <div className="bg-gray-700/50 rounded-lg p-3 border border-gray-600">
-                                <div className="text-xs text-gray-400 mb-1">Confirmation</div>
-                                <div className="flex items-center space-x-2">
-                                    <Input
-                                        type="number"
-                                        value={globalSettings.confirmationTicks}
-                                        onChange={(e) => setGlobalSettings(prev => ({ 
-                                            ...prev, 
-                                            confirmationTicks: parseInt(e.target.value) || 2 
-                                        }))}
-                                        className="w-16 h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                        min="1"
-                                        max="5"
-                                    />
-                                    <span className="text-xs text-gray-400">ticks</span>
-                                </div>
-                            </div>
-                        </div>
-                    </CardContent>
-
-                    {/* Control Bar */}
-                    <CardFooter className="flex justify-between pt-2">
-                        <div className="flex space-x-3">
-                            <Select value={selectedMarket} onValueChange={setSelectedMarket}>
-                                <SelectTrigger className="w-[240px] bg-gray-700 border-gray-600 text-gray-200">
-                                    <SelectValue placeholder="Select Market" />
-                                </SelectTrigger>
-                                <SelectContent className="bg-gray-800 border-gray-700">
-                                    {MARKETS.map(m => (
-                                        <SelectItem key={m.value} value={m.value} className="text-gray-200 hover:bg-gray-700">
-                                            <span className="flex items-center">
-                                                <span className="mr-2">{m.icon}</span>
-                                                <span>{m.label}</span>
-                                                <Badge variant="outline" className="ml-2 text-[8px] bg-gray-700">
-                                                    {m.group}
-                                                </Badge>
-                                            </span>
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                            
-                            <Button 
-                                variant="default" 
-                                size="sm"
-                                onClick={startAllBots}
-                                className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700"
-                            >
-                                <Play className="h-4 w-4 mr-2" />
-                                Start All
-                            </Button>
-                            <Button 
-                                variant="destructive" 
-                                size="sm"
-                                onClick={stopAllBots}
-                                className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700"
-                            >
-                                <StopCircle className="h-4 w-4 mr-2" />
-                                Stop All
-                            </Button>
-                        </div>
-
-                        <div className="flex items-center space-x-4">
-                            <div className="flex items-center space-x-2 bg-gray-700/30 px-3 py-1.5 rounded-lg">
-                                <Signal className="h-4 w-4 text-blue-400" />
-                                <span className="text-xs text-gray-300">Ticks: {tickCount}</span>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                                <Label className="text-xs text-gray-400">Min Vol</Label>
-                                <Input 
+                                  <Label className="text-xs text-gray-400">Multiplier</Label>
+                                  <Input
                                     type="number"
-                                    value={globalVolatility.min}
-                                    onChange={(e) => setGlobalVolatility(prev => ({ ...prev, min: parseInt(e.target.value) || 0 }))}
-                                    className="w-16 h-7 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                    min="0"
-                                    max="100"
-                                />
-                            </div>
-                            <div className="flex items-center space-x-2">
-                                <Label className="text-xs text-gray-400">Max Vol</Label>
-                                <Input 
+                                    value={settings.multiplier}
+                                    onChange={(e) => updateBotSetting(bot.botId, 'multiplier', parseFloat(e.target.value) || 1.5)}
+                                    disabled={bot.isRunning}
+                                    className="h-8 text-sm bg-gray-700 border-gray-600"
+                                    step="0.1"
+                                    min="1.1"
+                                  />
+                                </div>
+                                <div>
+                                  <Label className="text-xs text-gray-400">Max Steps</Label>
+                                  <Input
                                     type="number"
-                                    value={globalVolatility.max}
-                                    onChange={(e) => setGlobalVolatility(prev => ({ ...prev, max: parseInt(e.target.value) || 100 }))}
-                                    className="w-16 h-7 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                    min="0"
-                                    max="100"
-                                />
+                                    value={settings.maxSteps}
+                                    onChange={(e) => updateBotSetting(bot.botId, 'maxSteps', parseInt(e.target.value) || 1)}
+                                    disabled={bot.isRunning}
+                                    className="h-8 text-sm bg-gray-700 border-gray-600"
+                                    min="1"
+                                    max="5"
+                                  />
+                                </div>
+                                <div>
+                                  <Label className="text-xs text-gray-400">Stop Loss ($)</Label>
+                                  <Input
+                                    type="number"
+                                    value={settings.stopLoss}
+                                    onChange={(e) => updateBotSetting(bot.botId, 'stopLoss', parseFloat(e.target.value) || 0)}
+                                    disabled={bot.isRunning}
+                                    className="h-8 text-sm bg-gray-700 border-gray-600"
+                                  />
+                                </div>
+                                <div>
+                                  <Label className="text-xs text-gray-400">Take Profit ($)</Label>
+                                  <Input
+                                    type="number"
+                                    value={settings.takeProfit}
+                                    onChange={(e) => updateBotSetting(bot.botId, 'takeProfit', parseFloat(e.target.value) || 0)}
+                                    disabled={bot.isRunning}
+                                    className="h-8 text-sm bg-gray-700 border-gray-600"
+                                  />
+                                </div>
+                                <div>
+                                  <Label className="text-xs text-gray-400">Entry Threshold %</Label>
+                                  <Input
+                                    type="number"
+                                    value={settings.entryThreshold}
+                                    onChange={(e) => updateBotSetting(bot.botId, 'entryThreshold', parseFloat(e.target.value) || 50)}
+                                    disabled={bot.isRunning}
+                                    className="h-8 text-sm bg-gray-700 border-gray-600"
+                                    min="50"
+                                    max="90"
+                                  />
+                                </div>
+                                <div>
+                                  <Label className="text-xs text-gray-400">Max Runs</Label>
+                                  <Input
+                                    type="number"
+                                    value={settings.maxRuns}
+                                    onChange={(e) => updateBotSetting(bot.botId, 'maxRuns', parseInt(e.target.value) || 1)}
+                                    disabled={bot.isRunning}
+                                    className="h-8 text-sm bg-gray-700 border-gray-600"
+                                    min="1"
+                                    max="10"
+                                  />
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Label className="text-xs text-gray-400">Martingale</Label>
+                                  <Switch
+                                    checked={settings.useMartingale}
+                                    onCheckedChange={(v) => updateBotSetting(bot.botId, 'useMartingale', v)}
+                                    disabled={bot.isRunning}
+                                  />
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Label className="text-xs text-gray-400">Entry Filter</Label>
+                                  <Switch
+                                    checked={settings.useEntryFilter}
+                                    onCheckedChange={(v) => updateBotSetting(bot.botId, 'useEntryFilter', v)}
+                                    disabled={bot.isRunning}
+                                  />
+                                </div>
+                              </div>
+                            </>
+                          )}
+
+                          {/* Trading Lock Indicator */}
+                          {bot.isTrading && (
+                            <div className="mt-3 text-center">
+                              <Badge className="bg-yellow-500 animate-pulse">
+                                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                Trading in progress...
+                              </Badge>
                             </div>
-                        </div>
-                    </CardFooter>
-                </Card>
+                          )}
 
-                {/* Live Analysis Dashboard */}
-                {analysis && (
-                    <Card className="bg-gray-800/90 backdrop-blur-xl border-gray-700 shadow-xl overflow-hidden">
-                        <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 to-purple-500/5"></div>
-                        <CardHeader className="relative pb-2">
-                            <div className="flex items-center justify-between">
-                                <CardTitle className="text-lg flex items-center">
-                                    <Activity className="h-5 w-5 mr-2 text-blue-400" />
-                                    Live Market Analysis - {selectedMarket}
-                                </CardTitle>
-                                <Badge className={`px-3 py-1 ${
-                                    analysis.signal.strength === 'STRONG' ? 'bg-green-500/20 text-green-400' :
-                                    analysis.signal.strength === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
-                                    'bg-gray-500/20 text-gray-400'
-                                }`}>
-                                    {analysis.signal.strength} SIGNAL
-                                </Badge>
-                            </div>
-                        </CardHeader>
-                        <CardContent className="relative">
-                            <div className="grid grid-cols-12 gap-4">
-                                {/* Digit Distribution */}
-                                <div className="col-span-4 bg-gray-700/30 rounded-lg p-3 border border-gray-600">
-                                    <div className="text-xs text-gray-400 mb-2 flex items-center">
-                                        <BarChart className="h-3 w-3 mr-1" />
-                                        Digit Distribution (1000 ticks)
-                                    </div>
-                                    <div className="grid grid-cols-5 gap-2">
-                                        {[0,1,2,3,4,5,6,7,8,9].map(d => (
-                                            <div key={d} className="text-center">
-                                                <div className={`text-sm font-bold ${
-                                                    d === analysis.lastDigits[analysis.lastDigits.length - 1] 
-                                                        ? 'text-yellow-400' 
-                                                        : 'text-gray-300'
-                                                }`}>
-                                                    {d}
-                                                </div>
-                                                <Progress 
-                                                    value={analysis.digitPercentages[d]} 
-                                                    className="h-1.5 mt-1"
-                                                />
-                                                <div className="text-[8px] text-gray-500 mt-1">
-                                                    {analysis.digitPercentages[d].toFixed(1)}%
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* Percentages */}
-                                <div className="col-span-3 bg-gray-700/30 rounded-lg p-3 border border-gray-600">
-                                    <div className="text-xs text-gray-400 mb-2 flex items-center">
-                                        <PieChart className="h-3 w-3 mr-1" />
-                                        Market Statistics
-                                    </div>
-                                    <div className="space-y-3">
-                                        <div>
-                                            <div className="flex justify-between text-xs mb-1">
-                                                <span className="text-purple-400">Even</span>
-                                                <span className="text-purple-400 font-bold">{analysis.evenPercentage.toFixed(1)}%</span>
-                                            </div>
-                                            <Progress value={analysis.evenPercentage} className="h-1.5" />
-                                        </div>
-                                        <div>
-                                            <div className="flex justify-between text-xs mb-1">
-                                                <span className="text-orange-400">Odd</span>
-                                                <span className="text-orange-400 font-bold">{analysis.oddPercentage.toFixed(1)}%</span>
-                                            </div>
-                                            <Progress value={analysis.oddPercentage} className="h-1.5" />
-                                        </div>
-                                        <div>
-                                            <div className="flex justify-between text-xs mb-1">
-                                                <span className="text-blue-400">Over (5-9)</span>
-                                                <span className="text-blue-400 font-bold">{analysis.overPercentage.toFixed(1)}%</span>
-                                            </div>
-                                            <Progress value={analysis.overPercentage} className="h-1.5" />
-                                        </div>
-                                        <div>
-                                            <div className="flex justify-between text-xs mb-1">
-                                                <span className="text-green-400">Under (0-4)</span>
-                                                <span className="text-green-400 font-bold">{analysis.underPercentage.toFixed(1)}%</span>
-                                            </div>
-                                            <Progress value={analysis.underPercentage} className="h-1.5" />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Current Signal & Streaks */}
-                                <div className="col-span-3 bg-gray-700/30 rounded-lg p-3 border border-gray-600">
-                                    <div className="text-xs text-gray-400 mb-2 flex items-center">
-                                        <Radio className="h-3 w-3 mr-1" />
-                                        Current Signal
-                                    </div>
-                                    {analysis.signal.type !== 'NONE' ? (
-                                        <div className="space-y-3">
-                                            <div className="flex items-center justify-between">
-                                                <Badge className={`
-                                                    px-3 py-1 text-sm
-                                                    ${analysis.signal.type === 'EVEN' ? 'bg-purple-500' : ''}
-                                                    ${analysis.signal.type === 'ODD' ? 'bg-orange-500' : ''}
-                                                    ${analysis.signal.type === 'OVER' ? 'bg-blue-500' : ''}
-                                                    ${analysis.signal.type === 'UNDER' ? 'bg-green-500' : ''}
-                                                `}>
-                                                    BUY {analysis.signal.type}
-                                                </Badge>
-                                                <Badge variant="outline" className="text-xs border-gray-600">
-                                                    {analysis.signal.mode}
-                                                </Badge>
-                                            </div>
-                                            <div>
-                                                <div className="flex justify-between text-xs mb-1">
-                                                    <span className="text-gray-400">Confidence</span>
-                                                    <span className="text-yellow-400">{analysis.signal.confidence.toFixed(0)}%</span>
-                                                </div>
-                                                <Progress value={analysis.signal.confidence} className="h-1.5" />
-                                            </div>
-                                            <div className="grid grid-cols-2 gap-2 text-xs">
-                                                <div className="bg-gray-800/50 rounded p-2">
-                                                    <div className="text-gray-500">Even Streak</div>
-                                                    <div className="text-lg font-bold text-purple-400">{analysis.currentEvenStreak}</div>
-                                                </div>
-                                                <div className="bg-gray-800/50 rounded p-2">
-                                                    <div className="text-gray-500">Odd Streak</div>
-                                                    <div className="text-lg font-bold text-orange-400">{analysis.currentOddStreak}</div>
-                                                </div>
-                                                <div className="bg-gray-800/50 rounded p-2">
-                                                    <div className="text-gray-500">Over Streak</div>
-                                                    <div className="text-lg font-bold text-blue-400">{analysis.currentOverStreak}</div>
-                                                </div>
-                                                <div className="bg-gray-800/50 rounded p-2">
-                                                    <div className="text-gray-500">Under Streak</div>
-                                                    <div className="text-lg font-bold text-green-400">{analysis.currentUnderStreak}</div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div className="h-32 flex items-center justify-center text-gray-500">
-                                            No clear signal
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Volatility & Trends */}
-                                <div className="col-span-2 bg-gray-700/30 rounded-lg p-3 border border-gray-600">
-                                    <div className="text-xs text-gray-400 mb-2 flex items-center">
-                                        <Gauge className="h-3 w-3 mr-1" />
-                                        Market Conditions
-                                    </div>
-                                    <div className="space-y-3">
-                                        <div className="bg-gray-800/50 rounded p-2">
-                                            <div className="text-xs text-gray-500">Volatility</div>
-                                            <div className="flex items-center justify-between mt-1">
-                                                <div className="flex items-center space-x-1">
-                                                    {VOLATILITY_ICONS[analysis.volatility.level]}
-                                                    <span className="text-sm font-bold">{analysis.volatility.level}</span>
-                                                </div>
-                                                <Badge variant="outline" className="text-[8px] border-gray-600">
-                                                    Δ{analysis.volatility.averageChange.toFixed(2)}
-                                                </Badge>
-                                            </div>
-                                        </div>
-                                        <div className="bg-gray-800/50 rounded p-2">
-                                            <div className="text-xs text-gray-500">50-Tick Trend</div>
-                                            <div className="flex items-center justify-between mt-1">
-                                                <span className={`text-sm font-bold ${
-                                                    analysis.trend50 === 'UP' ? 'text-green-400' :
-                                                    analysis.trend50 === 'DOWN' ? 'text-red-400' : 'text-yellow-400'
-                                                }`}>
-                                                    {analysis.trend50}
-                                                </span>
-                                                <Badge variant="outline" className="text-[8px] border-gray-600">
-                                                    {analysis.momentum20 > 0 ? '+' : ''}{analysis.momentum20.toFixed(1)}%
-                                                </Badge>
-                                            </div>
-                                        </div>
-                                        <div className="bg-gray-800/50 rounded p-2">
-                                            <div className="text-xs text-gray-500">Last Digit</div>
-                                            <div className="text-2xl font-bold text-center text-yellow-400">
-                                                {analysis.lastDigits[analysis.lastDigits.length - 1]}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Last 20 Digits */}
-                            <div className="mt-4 bg-gray-700/30 rounded-lg p-3 border border-gray-600">
-                                <div className="text-xs text-gray-400 mb-2">Last 20 Digits</div>
-                                <div className="flex space-x-1">
-                                    {analysis.last20Digits.map((d, i) => (
-                                        <div
-                                            key={i}
-                                            className={`
-                                                w-8 h-8 flex items-center justify-center text-xs font-bold rounded-lg
-                                                ${d >= 5 ? 'bg-blue-500/20 text-blue-400' : 'bg-green-500/20 text-green-400'}
-                                                ${i === analysis.last20Digits.length - 1 ? 'ring-2 ring-yellow-400' : ''}
-                                            `}
-                                        >
-                                            {d}
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
+                          {/* Control Buttons */}
+                          <div className="flex gap-2 mt-3">
+                            <Button
+                              variant="outline"
+                              className={`flex-1 ${bot.isPaused ? 'border-yellow-500 text-yellow-400' : 'border-gray-600'}`}
+                              onClick={() => togglePauseBot(index)}
+                              disabled={bot.isTrading}
+                            >
+                              {bot.isPaused ? (
+                                <>
+                                  <Play className="w-4 h-4 mr-2" />
+                                  Resume
+                                </>
+                              ) : (
+                                <>
+                                  <Pause className="w-4 h-4 mr-2" />
+                                  Pause
+                                </>
+                              )}
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              className="flex-1"
+                              onClick={() => stopBot(index)}
+                              disabled={bot.isTrading}
+                            >
+                              <StopCircle className="w-4 h-4 mr-2" />
+                              Stop
+                            </Button>
+                          </div>
                         </CardContent>
-                    </Card>
-                )}
+                      </Card>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-12 text-gray-500">
+                <Zap className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                <p className="text-lg">No active bots. Start a bot from the Signals tab.</p>
+              </div>
+            )}
+          </TabsContent>
 
-                {/* Bots Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {bots.map((bot, index) => {
-                        const config = BOT_CONFIGS[index];
-                        
-                        return (
-                            <Card 
-                                key={bot.id} 
-                                className={`
-                                    bg-gray-800/90 backdrop-blur-xl border-gray-700 shadow-xl overflow-hidden
-                                    transition-all duration-300 hover:shadow-2xl hover:scale-[1.02]
-                                    ${bot.isRunning ? `ring-2 ring-${config.color}-500/50` : ''}
-                                    ${!bot.enabled ? 'opacity-50' : ''}
-                                `}
-                            >
-                                <div className={`absolute inset-0 bg-gradient-to-br ${config.bg} opacity-20`}></div>
-                                
-                                <CardHeader className="relative p-3">
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center space-x-3">
-                                            <div className={`p-2 rounded-lg bg-${config.color}-500/20`}>
-                                                {config.icon}
-                                            </div>
-                                            <div>
-                                                <CardTitle className="text-sm font-bold text-white">
-                                                    {bot.name}
-                                                </CardTitle>
-                                                <CardDescription className="text-xs text-gray-400">
-                                                    {config.description}
-                                                </CardDescription>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center space-x-1">
-                                            <Switch
-                                                checked={bot.enabled}
-                                                onCheckedChange={() => toggleBotEnabled(bot.id)}
-                                                className="scale-75"
-                                            />
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="h-6 w-6 p-0 text-gray-400 hover:text-white hover:bg-gray-700"
-                                                onClick={() => setBots(prev => prev.map(b => 
-                                                    b.id === bot.id ? { ...b, expanded: !b.expanded } : b
-                                                ))}
-                                            >
-                                                {bot.expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                                            </Button>
-                                        </div>
-                                    </div>
-                                </CardHeader>
+          {/* All Markets Tab */}
+          <TabsContent value="markets">
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              {ALL_MARKETS.map((market) => {
+                const analysis = marketAnalyses[market.symbol];
+                const hasSignal = matchedSignals.some(s => s.market === market.symbol);
+                
+                return (
+                  <Card key={market.symbol} className={`bg-gray-800/50 border-gray-700 hover:border-gray-600 transition-colors ${hasSignal ? 'border-green-500/50' : ''}`}>
+                    <CardContent className="p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-2xl">{market.icon}</span>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-white">{market.name}</p>
+                          <p className="text-xs text-gray-400">{market.symbol}</p>
+                        </div>
+                        {hasSignal && (
+                          <Badge className="bg-green-500">Signal</Badge>
+                        )}
+                      </div>
+                      
+                      {analysis ? (
+                        <div className="text-xs">
+                          <div className="grid grid-cols-4 gap-1 mt-2">
+                            <div className="text-center">
+                              <div className="text-gray-400">Most</div>
+                              <div className="font-bold text-white">{analysis.mostAppearing}</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-gray-400">2nd</div>
+                              <div className="font-bold text-white">{analysis.secondMost}</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-gray-400">3rd</div>
+                              <div className="font-bold text-white">{analysis.thirdMost}</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="text-gray-400">Least</div>
+                              <div className="font-bold text-white">{analysis.leastAppearing}</div>
+                            </div>
+                          </div>
+                          
+                          <div className="flex gap-1 mt-2 flex-wrap">
+                            {analysis.conditions.over1 && <Badge className="bg-blue-500/20 text-blue-400 text-[8px]">OVER 1</Badge>}
+                            {analysis.conditions.under8 && <Badge className="bg-orange-500/20 text-orange-400 text-[8px]">UNDER 8</Badge>}
+                            {analysis.conditions.even && <Badge className="bg-green-500/20 text-green-400 text-[8px]">EVEN</Badge>}
+                            {analysis.conditions.odd && <Badge className="bg-purple-500/20 text-purple-400 text-[8px]">ODD</Badge>}
+                            {analysis.conditions.over3 && <Badge className="bg-cyan-500/20 text-cyan-400 text-[8px]">OVER 3</Badge>}
+                            {analysis.conditions.under6 && <Badge className="bg-rose-500/20 text-rose-400 text-[8px]">UNDER 6</Badge>}
+                          </div>
 
-                                <CardContent className="relative p-3 pt-0">
-                                    {/* Status Badge and Key Info */}
-                                    <div className="flex items-center justify-between mb-3">
-                                        <Badge 
-                                            variant="outline" 
-                                            className={`
-                                                px-2 py-0.5 text-xs border
-                                                ${bot.isRunning ? 
-                                                    bot.status === 'trading' ? 'bg-green-500/20 text-green-400 border-green-500/30' :
-                                                    bot.status === 'watching' ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30' :
-                                                    bot.status === 'recovery' ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' :
-                                                    bot.status === 'confirming' ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' :
-                                                    'bg-gray-500/20 text-gray-400 border-gray-500/30'
-                                                : 'bg-gray-700 text-gray-400 border-gray-600'
-                                                }
-                                            `}
-                                        >
-                                            {bot.isRunning ? (
-                                                <>
-                                                    {bot.status === 'trading' && <Activity className="h-3 w-3 mr-1 animate-pulse" />}
-                                                    {bot.status === 'watching' && <Eye className="h-3 w-3 mr-1" />}
-                                                    {bot.status === 'recovery' && <RefreshCw className="h-3 w-3 mr-1 animate-spin" />}
-                                                    {bot.status === 'confirming' && <Timer className="h-3 w-3 mr-1" />}
-                                                    {bot.status.toUpperCase()}
-                                                </>
-                                            ) : 'STOPPED'}
-                                        </Badge>
-                                        
-                                        <div className="flex items-center space-x-2">
-                                            <span className="text-xs text-gray-400">P&L:</span>
-                                            <span className={`text-xs font-bold ${
-                                                bot.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'
-                                            }`}>
-                                                ${bot.totalPnl.toFixed(2)}
-                                            </span>
-                                        </div>
-                                    </div>
-
-                                    {/* Stats Grid */}
-                                    <div className="grid grid-cols-4 gap-1 mb-3">
-                                        <div className="bg-gray-700/30 rounded p-1 text-center">
-                                            <div className="text-[8px] text-gray-500">Trades</div>
-                                            <div className="text-xs font-bold text-white">{bot.trades}</div>
-                                        </div>
-                                        <div className="bg-gray-700/30 rounded p-1 text-center">
-                                            <div className="text-[8px] text-gray-500">Wins</div>
-                                            <div className="text-xs font-bold text-green-400">{bot.wins}</div>
-                                        </div>
-                                        <div className="bg-gray-700/30 rounded p-1 text-center">
-                                            <div className="text-[8px] text-gray-500">Losses</div>
-                                            <div className="text-xs font-bold text-red-400">{bot.losses}</div>
-                                        </div>
-                                        <div className="bg-gray-700/30 rounded p-1 text-center">
-                                            <div className="text-[8px] text-gray-500">Run</div>
-                                            <div className="text-xs font-bold text-blue-400">{bot.currentRun}/{bot.maxRuns}</div>
-                                        </div>
-                                    </div>
-
-                                    {/* Current Stake and Strategy */}
-                                    <div className="flex items-center justify-between mb-2 text-xs">
-                                        <div className="flex items-center space-x-2">
-                                            <Badge variant="outline" className="text-[8px] border-gray-600">
-                                                Stake: ${bot.currentStake.toFixed(2)}
-                                            </Badge>
-                                            {bot.recoveryStep > 0 && (
-                                                <Badge variant="outline" className="text-[8px] bg-orange-500/20 text-orange-400 border-orange-500/30">
-                                                    Step {bot.recoveryStep}/{bot.maxSteps}
-                                                </Badge>
-                                            )}
-                                        </div>
-                                        {bot.recoveryMode && bot.recoveryStep > 0 && (
-                                            <Badge variant="outline" className="text-[8px] bg-purple-500/20 text-purple-400 border-purple-500/30">
-                                                {bot.recoveryTarget}
-                                            </Badge>
-                                        )}
-                                    </div>
-
-                                    {/* Recovery Progress */}
-                                    {bot.recoveryStep > 0 && (
-                                        <div className="mb-3">
-                                            <Progress 
-                                                value={(bot.recoveryStep / bot.maxSteps) * 100} 
-                                                className="h-1 bg-gray-700"
-                                            />
-                                        </div>
-                                    )}
-
-                                    {/* Run Progress */}
-                                    <div className="flex space-x-1 mb-2">
-                                        {[...Array(bot.maxRuns)].map((_, i) => (
-                                            <div
-                                                key={i}
-                                                className={`flex-1 h-1 rounded-full ${
-                                                    i < bot.runsCompleted ? `bg-${config.color}-500` : 'bg-gray-700'
-                                                }`}
-                                            />
-                                        ))}
-                                    </div>
-
-                                    {/* Trading Lock Indicator */}
-                                    {bot.isTrading && (
-                                        <div className="mt-2 text-center">
-                                            <Badge variant="outline" className="text-[8px] bg-yellow-500/20 text-yellow-400 border-yellow-500/30 animate-pulse">
-                                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                                Trading in progress...
-                                            </Badge>
-                                        </div>
-                                    )}
-
-                                    {/* Expanded Settings */}
-                                    {bot.expanded && (
-                                        <>
-                                            <Separator className="my-3 bg-gray-700" />
-                                            <div className="grid grid-cols-2 gap-2">
-                                                <div>
-                                                    <Label className="text-[8px] text-gray-400">Initial Stake ($)</Label>
-                                                    <Input
-                                                        type="number"
-                                                        value={bot.stake}
-                                                        onChange={e => setBots(prev => prev.map(b => 
-                                                            b.id === bot.id ? { ...b, stake: parseFloat(e.target.value) || 0.1 } : b
-                                                        ))}
-                                                        disabled={bot.isRunning}
-                                                        className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                                        step="0.1"
-                                                        min="0.1"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <Label className="text-[8px] text-gray-400">Entry Threshold %</Label>
-                                                    <Input
-                                                        type="number"
-                                                        value={bot.entryThreshold}
-                                                        onChange={e => setBots(prev => prev.map(b => 
-                                                            b.id === bot.id ? { ...b, entryThreshold: parseFloat(e.target.value) || 50 } : b
-                                                        ))}
-                                                        disabled={bot.isRunning}
-                                                        className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                                        min="50"
-                                                        max="90"
-                                                        step="1"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <Label className="text-[8px] text-gray-400">Take Profit ($)</Label>
-                                                    <Input
-                                                        type="number"
-                                                        value={bot.takeProfit}
-                                                        onChange={e => setBots(prev => prev.map(b => 
-                                                            b.id === bot.id ? { ...b, takeProfit: parseFloat(e.target.value) || 0 } : b
-                                                        ))}
-                                                        disabled={bot.isRunning}
-                                                        className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <Label className="text-[8px] text-gray-400">Stop Loss ($)</Label>
-                                                    <Input
-                                                        type="number"
-                                                        value={bot.stopLoss}
-                                                        onChange={e => setBots(prev => prev.map(b => 
-                                                            b.id === bot.id ? { ...b, stopLoss: parseFloat(e.target.value) || 0 } : b
-                                                        ))}
-                                                        disabled={bot.isRunning}
-                                                        className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <Label className="text-[8px] text-gray-400">Max Runs</Label>
-                                                    <Input
-                                                        type="number"
-                                                        value={bot.maxRuns}
-                                                        onChange={e => setBots(prev => prev.map(b => 
-                                                            b.id === bot.id ? { ...b, maxRuns: parseInt(e.target.value) || 1 } : b
-                                                        ))}
-                                                        disabled={bot.isRunning}
-                                                        className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                                        min="1"
-                                                        max="10"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <Label className="text-[8px] text-gray-400">Duration (ticks)</Label>
-                                                    <Select
-                                                        value={bot.duration.toString()}
-                                                        onValueChange={v => setBots(prev => prev.map(b => 
-                                                            b.id === bot.id ? { ...b, duration: parseInt(v) } : b
-                                                        ))}
-                                                        disabled={bot.isRunning}
-                                                    >
-                                                        <SelectTrigger className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200">
-                                                            <SelectValue />
-                                                        </SelectTrigger>
-                                                        <SelectContent className="bg-gray-800 border-gray-700">
-                                                            {[1,2,3,4,5,6,7,8,9,10].map(d => (
-                                                                <SelectItem key={d} value={d.toString()} className="text-xs text-gray-200">
-                                                                    {d} ticks
-                                                                </SelectItem>
-                                                            ))}
-                                                        </SelectContent>
-                                                    </Select>
-                                                </div>
-                                                <div className="col-span-2">
-                                                    <div className="flex items-center justify-between">
-                                                        <Label className="text-[8px] text-gray-400">Martingale</Label>
-                                                        <Switch
-                                                            checked={bot.useMartingale}
-                                                            onCheckedChange={v => setBots(prev => prev.map(b => 
-                                                                b.id === bot.id ? { ...b, useMartingale: v } : b
-                                                            ))}
-                                                            disabled={bot.isRunning}
-                                                            className="scale-75"
-                                                        />
-                                                    </div>
-                                                    {bot.useMartingale && (
-                                                        <div className="grid grid-cols-2 gap-2 mt-2">
-                                                            <div>
-                                                                <Label className="text-[8px] text-gray-400">Multiplier</Label>
-                                                                <Input
-                                                                    type="number"
-                                                                    value={bot.multiplier}
-                                                                    onChange={e => setBots(prev => prev.map(b => 
-                                                                        b.id === bot.id ? { ...b, multiplier: parseFloat(e.target.value) || 1.5 } : b
-                                                                    ))}
-                                                                    disabled={bot.isRunning}
-                                                                    className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                                                    step="0.1"
-                                                                    min="1.1"
-                                                                />
-                                                            </div>
-                                                            <div>
-                                                                <Label className="text-[8px] text-gray-400">Max Steps</Label>
-                                                                <Input
-                                                                    type="number"
-                                                                    value={bot.maxSteps}
-                                                                    onChange={e => setBots(prev => prev.map(b => 
-                                                                        b.id === bot.id ? { ...b, maxSteps: parseInt(e.target.value) || 1 } : b
-                                                                    ))}
-                                                                    disabled={bot.isRunning}
-                                                                    className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                                                    min="1"
-                                                                    max="5"
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                                <div className="col-span-2">
-                                                    <div className="flex items-center justify-between">
-                                                        <Label className="text-[8px] text-gray-400">Entry Filter</Label>
-                                                        <Switch
-                                                            checked={bot.useEntryFilter}
-                                                            onCheckedChange={v => setBots(prev => prev.map(b => 
-                                                                b.id === bot.id ? { ...b, useEntryFilter: v } : b
-                                                            ))}
-                                                            disabled={bot.isRunning}
-                                                            className="scale-75"
-                                                        />
-                                                    </div>
-                                                </div>
-                                                <div className="col-span-2">
-                                                    <Label className="text-[8px] text-gray-400">Volatility Range</Label>
-                                                    <div className="flex items-center space-x-2">
-                                                        <Input
-                                                            type="number"
-                                                            value={bot.minVolatility}
-                                                            onChange={e => setBots(prev => prev.map(b => 
-                                                                b.id === bot.id ? { ...b, minVolatility: parseInt(e.target.value) || 0 } : b
-                                                            ))}
-                                                            disabled={bot.isRunning}
-                                                            className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                                            min="0"
-                                                            max="100"
-                                                            placeholder="Min"
-                                                        />
-                                                        <span className="text-gray-400">-</span>
-                                                        <Input
-                                                            type="number"
-                                                            value={bot.maxVolatility}
-                                                            onChange={e => setBots(prev => prev.map(b => 
-                                                                b.id === bot.id ? { ...b, maxVolatility: parseInt(e.target.value) || 100 } : b
-                                                            ))}
-                                                            disabled={bot.isRunning}
-                                                            className="h-6 text-xs bg-gray-700 border-gray-600 text-gray-200"
-                                                            min="0"
-                                                            max="100"
-                                                            placeholder="Max"
-                                                        />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </>
-                                    )}
-                                </CardContent>
-
-                                <CardFooter className="relative p-3 pt-0 flex space-x-2">
-                                    {!bot.isRunning ? (
-                                        <Button
-                                            className="flex-1 h-7 text-xs bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700"
-                                            onClick={() => startBot(bot.id)}
-                                            disabled={!bot.enabled || !isConnected || !analysis}
-                                        >
-                                            <Play className="h-3 w-3 mr-1" />
-                                            Start Bot
-                                        </Button>
-                                    ) : (
-                                        <Button
-                                            variant="destructive"
-                                            className="flex-1 h-7 text-xs bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700"
-                                            onClick={() => stopBot(bot.id)}
-                                        >
-                                            <StopCircle className="h-3 w-3 mr-1" />
-                                            Stop Bot
-                                        </Button>
-                                    )}
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="h-7 w-7 p-0 border-gray-600 text-gray-400 hover:text-white hover:bg-gray-700"
-                                        onClick={() => resetBot(bot.id)}
-                                        disabled={bot.isRunning}
-                                    >
-                                        <RefreshCw className="h-3 w-3" />
-                                    </Button>
-                                </CardFooter>
-                            </Card>
-                        );
-                    })}
-                </div>
-
-                {/* Tabs */}
-                <Tabs value={selectedTab} onValueChange={setSelectedTab} className="mt-6">
-                    <TabsList className="bg-gray-800 border-gray-700">
-                        <TabsTrigger value="bots" className="data-[state=active]:bg-gray-700">Bots</TabsTrigger>
-                        <TabsTrigger value="trades" className="data-[state=active]:bg-gray-700">Trade History ({trades.length})</TabsTrigger>
-                    </TabsList>
-
-                    <TabsContent value="trades">
-                        <Card className="bg-gray-800/90 backdrop-blur-xl border-gray-700">
-                            <CardHeader>
-                                <CardTitle className="text-lg text-white">Trade History</CardTitle>
-                                <CardDescription className="text-gray-400">Last 100 trades</CardDescription>
-                            </CardHeader>
-                            <CardContent>
-                                {trades.length === 0 ? (
-                                    <div className="text-center text-gray-500 py-12">
-                                        <Activity className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                                        <p>No trades yet</p>
-                                        <p className="text-sm">Start bots to see trades</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-2 max-h-[400px] overflow-y-auto pr-2">
-                                        {trades.map((trade, i) => (
-                                            <div
-                                                key={i}
-                                                className={`
-                                                    flex items-center justify-between p-3 rounded-lg text-sm
-                                                    ${trade.result === 'win' ? 'bg-green-500/10 border border-green-500/20' : 
-                                                      'bg-red-500/10 border border-red-500/20'}
-                                                    ${activeTrade?.id === trade.id ? 'ring-2 ring-yellow-400' : ''}
-                                                `}
-                                            >
-                                                <div className="flex items-center space-x-3">
-                                                    <span className="text-xs text-gray-400">
-                                                        {new Date(trade.timestamp).toLocaleTimeString()}
-                                                    </span>
-                                                    <Badge variant="outline" className="text-[8px] border-gray-600">
-                                                        {trade.botName}
-                                                    </Badge>
-                                                    <Badge variant="outline" className="text-[8px] border-gray-600">
-                                                        {trade.strategy}
-                                                    </Badge>
-                                                    <span className="text-xs text-gray-300">
-                                                        {trade.entryDigit} → {trade.resultDigit}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center space-x-4">
-                                                    {trade.recoveryStep > 0 && (
-                                                        <Badge variant="outline" className="text-[8px] bg-orange-500/20 text-orange-400 border-orange-500/30">
-                                                            Step {trade.recoveryStep}
-                                                        </Badge>
-                                                    )}
-                                                    <Badge variant="outline" className="text-[8px] border-gray-600">
-                                                        {trade.confidence.toFixed(0)}%
-                                                    </Badge>
-                                                    <span className="text-xs text-gray-400">
-                                                        ${trade.stake.toFixed(2)}
-                                                    </span>
-                                                    <span className={`text-xs font-bold w-16 text-right ${
-                                                        trade.result === 'win' ? 'text-green-400' : 'text-red-400'
-                                                    }`}>
-                                                        {trade.result === 'win' ? '+' : '-'}${Math.abs(trade.profit).toFixed(2)}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </CardContent>
-                        </Card>
-                    </TabsContent>
-                </Tabs>
-
-                {/* Status Bar */}
-                <div className="fixed bottom-4 right-4 flex space-x-2">
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={connectWebSocket}
-                        disabled={isConnected}
-                        className="bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700"
-                    >
-                        <RefreshCw className={`h-4 w-4 mr-2 ${isConnecting ? 'animate-spin' : ''}`} />
-                        {isConnecting ? 'Connecting...' : isConnected ? 'Connected' : 'Reconnect'}
-                    </Button>
-                    <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={stopAllBots}
-                        disabled={activeBots === 0}
-                        className="bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
-                    >
-                        <StopCircle className="h-4 w-4 mr-2" />
-                        Stop All ({activeBots})
-                    </Button>
-                </div>
+                          <div className="mt-2 text-center">
+                            <span className="text-gray-400">Volatility: </span>
+                            <span className="text-white">{analysis.volatility.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-500 text-center py-2">Not scanned yet</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
-        </div>
-    );
+          </TabsContent>
+        </Tabs>
+
+        {/* Recent Trades */}
+        {trades.length > 0 && (
+          <Card className="mt-6 bg-gray-800/50 border-gray-700">
+            <CardHeader>
+              <CardTitle className="text-white">Recent Trades</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                {trades.slice(0, 10).map((trade, i) => (
+                  <div
+                    key={i}
+                    className={`flex items-center justify-between p-2 rounded-lg ${
+                      trade.result === 'win' ? 'bg-green-500/10 border border-green-500/20' : 
+                      'bg-red-500/10 border border-red-500/20'
+                    } ${activeTrade?.id === trade.id ? 'ring-2 ring-yellow-400' : ''}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-400">
+                        {new Date(trade.timestamp).toLocaleTimeString()}
+                      </span>
+                      <Badge variant="outline" className="text-[10px] border-gray-600">
+                        {trade.botName}
+                      </Badge>
+                      {trade.recoveryStep > 0 && (
+                        <Badge variant="outline" className="text-[10px] bg-orange-500/20 text-orange-400">
+                          Step {trade.recoveryStep}
+                        </Badge>
+                      )}
+                      <span className="text-xs text-gray-300">
+                        {trade.entryDigit} → {trade.resultDigit}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <span className="text-xs text-gray-400">
+                        ${trade.stake.toFixed(2)}
+                      </span>
+                      <span className={`text-xs font-bold w-16 text-right ${
+                        trade.result === 'win' ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {trade.result === 'win' ? '+' : '-'}${Math.abs(trade.profit).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
 }
