@@ -9,11 +9,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
-  Loader2, Play, StopCircle, Pause, TrendingUp, TrendingDown, 
-  CircleDot, RefreshCw, Trash2, DollarSign, Volume2, AlertCircle,
-  CheckCircle2, XCircle, Clock, Zap, Shield, Target, Activity,
-  BarChart3, LineChart, PieChart, Radio, ScanLine, Sparkles,
-  Settings, TrendingUp as TrendUp, TrendingDown as TrendDown, Gauge
+  Play, StopCircle, Pause, TrendingUp, TrendingDown, 
+  CircleDot, RefreshCw, Trash2, DollarSign, Volume2,
+  CheckCircle2, Clock, Zap, Target, Activity,
+  LineChart, Radio, ScanLine, Sparkles
 } from 'lucide-react';
 
 interface DigitFrequency {
@@ -32,8 +31,8 @@ interface MarketAnalysis {
   digitFrequencies: DigitFrequency[];
   evenPercentage: number;
   oddPercentage: number;
-  lowDigitsPercentage: number; // 0,1,2 sum
-  highDigitsPercentage: number; // 7,8,9 sum
+  lowDigitsPercentage: number;
+  highDigitsPercentage: number;
   overUnderStats: {
     over3: number;
     under6: number;
@@ -41,15 +40,15 @@ interface MarketAnalysis {
     under8: number;
   };
   conditions: {
-    typeA: boolean; // digits 0,1,2 < 10%
-    typeB: boolean; // digits 7,8,9 < 10%
-    evenDominant: boolean; // even > 55%
+    typeA: boolean;
+    typeB: boolean;
+    evenDominant: boolean;
   };
   recommendedEntry: number;
   botType: 'TYPE_A' | 'TYPE_B' | 'EVEN_ODD' | null;
 }
 
-interface BotConfig {
+interface BotInstance {
   id: string;
   market: string;
   displayName: string;
@@ -57,13 +56,8 @@ interface BotConfig {
   entryDigit: number;
   stake: number;
   multiplier: number;
-  tpLevel?: number;
-  slLevel?: number;
   stopCondition: 'profit';
   recoveryActive: boolean;
-}
-
-interface BotInstance extends BotConfig {
   isRunning: boolean;
   isPaused: boolean;
   currentStake: number;
@@ -93,14 +87,13 @@ const ALL_MARKETS = [
   { symbol: 'Jump Bear', name: 'Jump Bear', icon: '🐻' }
 ];
 
-const CONTRACT_PAYOUT = 9.5; // Digit match pays 9.5x
+const CONTRACT_PAYOUT = 9.5;
 
 export default function AutoTrade() {
   const { isAuthorized, balance } = useAuth();
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
   const [scanningMarket, setScanningMarket] = useState('');
-  const [marketDigits, setMarketDigits] = useState<Record<string, number[]>>({});
   const [marketAnalyses, setMarketAnalyses] = useState<Record<string, MarketAnalysis>>({});
   const [availableSignals, setAvailableSignals] = useState<MarketAnalysis[]>([]);
   const [noSignal, setNoSignal] = useState(false);
@@ -111,10 +104,8 @@ export default function AutoTrade() {
   const [globalMultiplier, setGlobalMultiplier] = useState(2.0);
   const [tradeHistory, setTradeHistory] = useState<Array<{time: string, message: string, type: string}>>([]);
   
-  const voiceSystem = useRef<SpeechSynthesis | null>(null);
   const scanIntervalRef = useRef<NodeJS.Timeout>();
 
-  // Fetch ticks for a single market
   const fetchTicks = async (market: string): Promise<number[]> => {
     try {
       const ticks = await derivApi.getTicks(market, 1000);
@@ -128,7 +119,6 @@ export default function AutoTrade() {
     }
   };
 
-  // Analyze digit frequencies with new requirements
   const analyzeDigits = (symbol: string, digits: number[]): MarketAnalysis => {
     const total = digits.length;
     const freq = Array(10).fill(0);
@@ -143,24 +133,19 @@ export default function AutoTrade() {
     const evenPercentage = (evenCount / total) * 100;
     const oddPercentage = (oddCount / total) * 100;
     
-    // Condition A: digits 0,1,2 appear in less than 10%
     const lowDigitsPercentage = percentages[0] + percentages[1] + percentages[2];
     const conditionTypeA = lowDigitsPercentage < 10;
     
-    // Condition B: digits 7,8,9 appear in less than 10%
     const highDigitsPercentage = percentages[7] + percentages[8] + percentages[9];
     const conditionTypeB = highDigitsPercentage < 10;
     
-    // Even/Odd condition: even percentage > 55%
     const conditionEvenDominant = evenPercentage > 55;
     
-    // Determine recommended entry digit
     let recommendedEntry = 0;
     let botType: 'TYPE_A' | 'TYPE_B' | 'EVEN_ODD' | null = null;
     
     if (conditionTypeA) {
       botType = 'TYPE_A';
-      // Choose best among 0,1,2
       let best = 0;
       if (percentages[1] > percentages[best]) best = 1;
       if (percentages[2] > percentages[best]) best = 2;
@@ -173,7 +158,6 @@ export default function AutoTrade() {
       recommendedEntry = best;
     } else if (conditionEvenDominant) {
       botType = 'EVEN_ODD';
-      // Focus on digit 4 or most appearing even digit
       const evens = [0, 2, 4, 6, 8];
       let bestEven = evens.reduce((a, b) => percentages[a] > percentages[b] ? a : b, 4);
       recommendedEntry = bestEven;
@@ -214,7 +198,6 @@ export default function AutoTrade() {
     setTradeHistory(prev => [{ time, message, type }, ...prev].slice(0, 200));
   };
 
-  // Execute a single trade
   const executeTrade = async (bot: BotInstance): Promise<boolean> => {
     try {
       const ticks = await derivApi.getTicks(bot.market, 1);
@@ -246,7 +229,6 @@ export default function AutoTrade() {
     }
   };
 
-  // Bot execution loop with 3 consecutive contracts and Martingale recovery
   const runBot = useCallback(async (botId: string) => {
     const botIndex = botInstances.findIndex(b => b.id === botId);
     if (botIndex === -1) return;
@@ -263,30 +245,25 @@ export default function AutoTrade() {
     const maxRecoveryAttempts = 5;
     
     while (contractsExecuted < maxContracts && bot.isRunning && !bot.isPaused) {
-      // Stop condition: stop only when in profit
       if (bot.totalPnl > 0) {
         addTradeLog(`🏁 ${bot.displayName} | Profit achieved ($${bot.totalPnl.toFixed(2)}). Stopping bot.`, 'info');
         bot.isRunning = false;
         break;
       }
       
-      // Execute trade
       bot.currentStake = currentStake;
       const isWin = await executeTrade(bot);
       contractsExecuted++;
       
       if (isWin) {
-        // Win achieved - stop bot
         addTradeLog(`🎯 ${bot.displayName} | Win achieved! Total PnL: $${bot.totalPnl.toFixed(2)}. Stopping.`, 'win');
         bot.isRunning = false;
         break;
       } else {
-        // Loss - activate Martingale recovery
         if (recoveryAttempts < maxRecoveryAttempts && bot.totalPnl <= 0) {
           recoveryAttempts++;
           currentStake = bot.stake * Math.pow(bot.multiplier, recoveryAttempts);
           addTradeLog(`🔄 ${bot.displayName} | Recovery #${recoveryAttempts} | New stake: $${currentStake.toFixed(2)}`, 'info');
-          // Continue loop without incrementing contract count for recovery
           contractsExecuted--;
         } else if (recoveryAttempts >= maxRecoveryAttempts) {
           addTradeLog(`⚠️ ${bot.displayName} | Max recovery attempts reached. Stopping.`, 'info');
@@ -301,11 +278,9 @@ export default function AutoTrade() {
       bot.isRunning = false;
     }
     
-    // Update bot instances
     setBotInstances(prev => prev.map(b => b.id === botId ? bot : b));
   }, [botInstances]);
 
-  // Start a new bot
   const startBot = (analysis: MarketAnalysis, stake: number, multiplier: number) => {
     if (!isAuthorized) {
       toast.error('Please connect your account first');
@@ -347,11 +322,9 @@ export default function AutoTrade() {
     setBotInstances(prev => [...prev, newBot]);
     addTradeLog(`🚀 Started ${botTypeName} on ${analysis.displayName} | Entry: ${analysis.recommendedEntry} | Stake: $${stake} | Multiplier: ${multiplier}x`, 'info');
     
-    // Start the bot loop
     setTimeout(() => runBot(newBot.id), 100);
   };
 
-  // Stop a bot
   const stopBot = (botId: string) => {
     setBotInstances(prev => prev.map(bot => 
       bot.id === botId ? { ...bot, isRunning: false } : bot
@@ -362,14 +335,12 @@ export default function AutoTrade() {
     }
   };
 
-  // Pause/Resume bot
   const togglePauseBot = (botId: string) => {
     setBotInstances(prev => prev.map(bot =>
       bot.id === botId ? { ...bot, isPaused: !bot.isPaused } : bot
     ));
   };
 
-  // Main scan function
   const startScan = useCallback(async () => {
     if (isScanning) return;
     
@@ -422,13 +393,24 @@ export default function AutoTrade() {
     }
   }, [isScanning]);
 
-  // Calculate total stats
+  useEffect(() => {
+    return () => {
+      if (scanIntervalRef.current) {
+        clearInterval(scanIntervalRef.current);
+      }
+    };
+  }, []);
+
   const totalStats = {
     activeBots: botInstances.filter(b => b.isRunning).length,
     totalPnl: botInstances.reduce((sum, bot) => sum + bot.totalPnl, 0),
     totalTrades: botInstances.reduce((sum, bot) => sum + bot.trades, 0),
     totalWins: botInstances.reduce((sum, bot) => sum + bot.wins, 0),
-    winRate: botInstances.reduce((sum, bot) => sum + (bot.wins / (bot.trades || 1)) * 100, 0) / (botInstances.filter(b => b.trades > 0).length || 1)
+    winRate: (() => {
+      const activeWithTrades = botInstances.filter(b => b.trades > 0);
+      if (activeWithTrades.length === 0) return 0;
+      return activeWithTrades.reduce((sum, bot) => sum + (bot.wins / (bot.trades || 1)) * 100, 0) / activeWithTrades.length;
+    })()
   };
 
   const getBotColor = (botType: string | null) => {
@@ -439,16 +421,15 @@ export default function AutoTrade() {
   };
 
   const getBotIcon = (botType: string | null) => {
-    if (botType === 'TYPE_A') return <TrendUp className="w-5 h-5 text-emerald-400" />;
-    if (botType === 'TYPE_B') return <TrendDown className="w-5 h-5 text-blue-400" />;
+    if (botType === 'TYPE_A') return <TrendingUp className="w-5 h-5 text-emerald-400" />;
+    if (botType === 'TYPE_B') return <TrendingDown className="w-5 h-5 text-blue-400" />;
     if (botType === 'EVEN_ODD') return <CircleDot className="w-5 h-5 text-purple-400" />;
     return <Zap className="w-5 h-5" />;
   };
 
   return (
-    <div className="relative min-h-screen bg-gradient-to-b from-gray-900 to-gray-950 overflow-hidden">
+    <div className="relative min-h-screen bg-gradient-to-b from-gray-900 to-gray-950">
       <div className="relative z-10 container mx-auto p-6 max-w-7xl">
-        {/* Header */}
         <motion.div 
           className="text-center mb-8"
           initial={{ opacity: 0, y: -20 }}
@@ -460,9 +441,8 @@ export default function AutoTrade() {
           <p className="text-gray-400 text-lg">Digit Analysis • 3-Contract Runs • Martingale Recovery</p>
         </motion.div>
 
-        {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <Card className="bg-gray-800/50 border-gray-700 backdrop-blur-sm">
+          <Card className="bg-gray-800/50 border-gray-700">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -474,7 +454,7 @@ export default function AutoTrade() {
             </CardContent>
           </Card>
 
-          <Card className="bg-gray-800/50 border-gray-700 backdrop-blur-sm">
+          <Card className="bg-gray-800/50 border-gray-700">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -486,7 +466,7 @@ export default function AutoTrade() {
             </CardContent>
           </Card>
 
-          <Card className="bg-gray-800/50 border-gray-700 backdrop-blur-sm">
+          <Card className="bg-gray-800/50 border-gray-700">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -500,7 +480,7 @@ export default function AutoTrade() {
             </CardContent>
           </Card>
 
-          <Card className="bg-gray-800/50 border-gray-700 backdrop-blur-sm">
+          <Card className="bg-gray-800/50 border-gray-700">
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -513,8 +493,7 @@ export default function AutoTrade() {
           </Card>
         </div>
 
-        {/* Global Settings */}
-        <Card className="bg-gray-800/50 border-gray-700 backdrop-blur-sm mb-6">
+        <Card className="bg-gray-800/50 border-gray-700 mb-6">
           <CardContent className="p-4">
             <div className="flex items-center gap-6 flex-wrap">
               <div className="flex items-center gap-2">
@@ -548,7 +527,6 @@ export default function AutoTrade() {
           </CardContent>
         </Card>
 
-        {/* SCAN Button */}
         <div className="flex justify-center mb-8">
           <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
             <Button
@@ -578,14 +556,12 @@ export default function AutoTrade() {
           </motion.div>
         </div>
 
-        {/* Progress Bar */}
         {isScanning && (
           <div className="mb-8">
             <Progress value={scanProgress} className="h-2 bg-gray-700" />
           </div>
         )}
 
-        {/* No Signal Message */}
         <AnimatePresence>
           {noSignal && !isScanning && (
             <motion.div 
@@ -596,7 +572,7 @@ export default function AutoTrade() {
             >
               <div className="text-7xl mb-4">🔍</div>
               <h2 className="text-4xl font-bold text-gray-400 mb-2">NO SIGNAL FOUND</h2>
-              <p className="text-gray-500 text-lg">No markets with digits 0,1,2 <10% or 7,8,9 <10% or Even >55%</p>
+              <p className="text-gray-500 text-lg">No markets with digits 0,1,2 {'<10%'} or 7,8,9 {'<10%'} or Even {'>55%'}</p>
               <Button 
                 variant="outline" 
                 className="mt-4 border-gray-600 text-gray-300"
@@ -610,7 +586,6 @@ export default function AutoTrade() {
           )}
         </AnimatePresence>
 
-        {/* Main Content Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-6">
           <TabsList className="grid grid-cols-3 w-[400px] mx-auto mb-6 bg-gray-800">
             <TabsTrigger value="signals" className="data-[state=active]:bg-gray-700">Signals ({availableSignals.length})</TabsTrigger>
@@ -618,7 +593,6 @@ export default function AutoTrade() {
             <TabsTrigger value="logs" className="data-[state=active]:bg-gray-700">Trade Logs</TabsTrigger>
           </TabsList>
 
-          {/* Signals Tab */}
           <TabsContent value="signals">
             {availableSignals.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -632,7 +606,7 @@ export default function AutoTrade() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: index * 0.05 }}
                     >
-                      <Card className={`bg-gray-800/80 border-2 ${getBotColor(signal.botType)} backdrop-blur-sm hover:shadow-lg transition-all`}>
+                      <Card className={`bg-gray-800/80 border-2 ${getBotColor(signal.botType)} hover:shadow-lg transition-all`}>
                         <CardHeader className="pb-2">
                           <div className="flex items-start justify-between">
                             <div className="flex items-center gap-3">
@@ -650,7 +624,6 @@ export default function AutoTrade() {
                           </div>
                         </CardHeader>
                         <CardContent>
-                          {/* Digit Analysis Summary */}
                           <div className="bg-gray-900/50 rounded-lg p-3 mb-3">
                             <div className="grid grid-cols-3 gap-2 text-center mb-3">
                               <div>
@@ -672,7 +645,6 @@ export default function AutoTrade() {
                               <span className="text-gray-400">7,8,9: <span className={signal.highDigitsPercentage < 10 ? 'text-emerald-400' : 'text-gray-300'}>{signal.highDigitsPercentage.toFixed(1)}%</span></span>
                             </div>
                             
-                            {/* Digit Distribution */}
                             <div className="space-y-1">
                               {signal.digitFrequencies.slice(0, 5).map((f, i) => (
                                 <div key={i} className="flex items-center gap-2">
@@ -690,7 +662,6 @@ export default function AutoTrade() {
                             </div>
                           </div>
 
-                          {/* Bot Settings */}
                           <div className="grid grid-cols-2 gap-2 mb-3">
                             <div>
                               <label className="text-xs text-gray-400">Stake ($)</label>
@@ -716,13 +687,14 @@ export default function AutoTrade() {
                             </div>
                           </div>
 
-                          {/* Start Button */}
                           {!isBotActive ? (
                             <Button 
                               className="w-full bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800"
                               onClick={() => {
-                                const stake = parseFloat((document.getElementById(`stake-${signal.symbol}`) as HTMLInputElement)?.value || globalStake.toString());
-                                const mult = parseFloat((document.getElementById(`mult-${signal.symbol}`) as HTMLInputElement)?.value || globalMultiplier.toString());
+                                const stakeInput = document.getElementById(`stake-${signal.symbol}`) as HTMLInputElement;
+                                const multInput = document.getElementById(`mult-${signal.symbol}`) as HTMLInputElement;
+                                const stake = parseFloat(stakeInput?.value || globalStake.toString());
+                                const mult = parseFloat(multInput?.value || globalMultiplier.toString());
                                 startBot(signal, stake, mult);
                               }}
                               disabled={!isAuthorized}
@@ -747,13 +719,12 @@ export default function AutoTrade() {
                 <div className="text-center py-12 text-gray-500">
                   <Radio className="w-16 h-16 mx-auto mb-4 opacity-50" />
                   <p className="text-lg">Click SCAN to analyze all markets for trading signals.</p>
-                  <p className="text-sm mt-2">Looking for: digits 0,1,2 &lt;10% OR digits 7,8,9 &lt;10% OR Even% &gt;55%</p>
+                  <p className="text-sm mt-2">Looking for: digits 0,1,2 {'<10%'} OR digits 7,8,9 {'<10%'} OR Even% {'>55%'}</p>
                 </div>
               )
             )}
           </TabsContent>
 
-          {/* Active Bots Tab */}
           <TabsContent value="bots">
             {botInstances.filter(b => b.isRunning).length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -847,7 +818,6 @@ export default function AutoTrade() {
             )}
           </TabsContent>
 
-          {/* Trade Logs Tab */}
           <TabsContent value="logs">
             <Card className="bg-gray-800/80 border-gray-700">
               <CardHeader className="pb-2">
