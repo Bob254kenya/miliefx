@@ -24,7 +24,7 @@ const navItems = [
   { title: 'Chart', url: '/chart', icon: Activity },
   { title: 'Ramz Analysistool', url: '/markets', icon: BarChart3 },
   { title: 'Free Bots', url: '/smart-bot', icon: Zap },
-  { title: 'Auto Trading Bots', url: '/auto-trade', icon: Bot },
+  { title: 'Advanced Tool $ Speed Bot', url: '/auto-trade', icon: Bot },
   { title: 'Copy Trading', url: '/copy-trading', icon: Users },
   { title: 'Account', url: '/settings', icon: Settings },
 ];
