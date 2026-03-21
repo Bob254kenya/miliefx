@@ -5,15 +5,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Progress } from '@/components/ui/progress';
 import { 
   Play, StopCircle, Settings, TrendingUp, TrendingDown, Zap, Shield, Target, 
-  Copy, Plus, Trash2, Eye, EyeOff, Bot, RefreshCw, Users, Crown, 
-  BarChart3, Activity, AlertCircle, CheckCircle, XCircle, Clock
+  Copy, Plus, Trash2, Bot, RefreshCw, Users, Crown, 
+  BarChart3, Activity, AlertCircle, CheckCircle, XCircle, Clock, 
+  Gauge, Rocket, Brain, Sparkles, GitBranch, Radio, Signal
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
@@ -31,13 +32,15 @@ interface Signal {
   extra: string;
   direction: 'OVER' | 'UNDER' | 'ODD' | 'EVEN' | 'RISE' | 'FALL';
   timestamp: Date;
+  price: number;
+  digit: number;
 }
 
 interface BotConfig {
   id: string;
   name: string;
   enabled: boolean;
-  signalType: string | null;
+  signalType: 'OVER' | 'UNDER' | 'ODD' | 'EVEN' | 'RISE' | 'FALL' | 'ANY';
   symbol: string | null;
   stake: number;
   martingaleMultiplier: number;
@@ -48,6 +51,9 @@ interface BotConfig {
   isCopyTrading: boolean;
   masterBotId?: string;
   copyRatio?: number;
+  minSignalStrength: number;
+  maxConcurrentTrades: number;
+  tradingInterval: number;
 }
 
 interface BotInstance {
@@ -63,6 +69,8 @@ interface BotInstance {
   losses: number;
   lastTrade: Date | null;
   activeSignal: Signal | null;
+  pendingTrades: number;
+  lastSignalStrength: number;
 }
 
 interface TradeLog {
@@ -78,6 +86,8 @@ interface TradeLog {
   pnl: number;
   balance: number;
   isCopyTrade: boolean;
+  signalStrength: number;
+  exitDigit: number;
 }
 
 const VOLATILITIES = {
@@ -90,10 +100,11 @@ const VOLATILITIES = {
 const TICK_DEPTH = 1000;
 let signalIdCounter = 0;
 let botIdCounter = 0;
+let tradeIdCounter = 0;
 
-// Helper: compute digit frequencies
-function computeDigitStats(ticks: number[], thresholdDigit: number) {
-  if (!ticks || ticks.length < 100) return null;
+// Helper: compute digit frequencies and get last digit
+function computeDigitStats(ticks: number[], thresholdDigit: number = 5) {
+  if (!ticks || ticks.length < 50) return null;
   const recent = ticks.slice(-TICK_DEPTH);
   const freq = Array(10).fill(0);
   recent.forEach(d => { if (d >= 0 && d <= 9) freq[d]++; });
@@ -114,6 +125,9 @@ function computeDigitStats(ticks: number[], thresholdDigit: number) {
   let oddCount = 0, evenCount = 0;
   recent.forEach(d => { if (d % 2 === 0) evenCount++; else oddCount++; });
 
+  const lastDigit = ticks[ticks.length - 1] || 0;
+  const lastPrice = lastDigit; // Simplified for demo
+
   return {
     mostAppearing,
     secondMost,
@@ -122,11 +136,171 @@ function computeDigitStats(ticks: number[], thresholdDigit: number) {
     underRate: underCount / recent.length,
     oddRate: oddCount / recent.length,
     evenRate: evenCount / recent.length,
-    totalTicks: recent.length
+    totalTicks: recent.length,
+    lastDigit,
+    lastPrice
   };
 }
 
-// Wait for next tick
+// Generate signals from tick data with strength calculation
+function generateSignalsFromTicks(ticksMap: Map<string, number[]>, contractType: string): Signal[] {
+  const signals: Signal[] = [];
+  
+  for (const [symbol, ticks] of ticksMap.entries()) {
+    if (!ticks || ticks.length < 100) continue;
+    const stats = computeDigitStats(ticks, 5);
+    if (!stats) continue;
+    
+    const { mostAppearing, secondMost, overRate, underRate, oddRate, evenRate, lastDigit, lastPrice } = stats;
+    
+    if (contractType === 'overunder') {
+      // OVER signal
+      if (mostAppearing >= 5) {
+        let strength = 0.65 + (overRate * 0.3);
+        if (secondMost >= 5) strength += 0.05;
+        if (mostAppearing >= 8) strength += 0.05;
+        strength = Math.min(0.96, strength);
+        
+        signals.push({
+          id: `sig_${Date.now()}_${signalIdCounter++}`,
+          type: "Under/Over",
+          name: "📈 OVER",
+          strength,
+          symbol: symbol,
+          detail: `Most digit ${mostAppearing} (5-9 zone) | Over rate ${(overRate * 100).toFixed(0)}% | Last: ${lastDigit}`,
+          extra: `Threshold 5 | Most:${mostAppearing} 2nd:${secondMost}`,
+          direction: 'OVER',
+          timestamp: new Date(),
+          price: lastPrice,
+          digit: lastDigit
+        });
+      }
+      
+      // UNDER signal
+      if (mostAppearing <= 6) {
+        let strength = 0.65 + (underRate * 0.3);
+        if (secondMost <= 6) strength += 0.05;
+        if (mostAppearing <= 2) strength += 0.05;
+        strength = Math.min(0.96, strength);
+        
+        signals.push({
+          id: `sig_${Date.now()}_${signalIdCounter++}`,
+          type: "Under/Over",
+          name: "📉 UNDER",
+          strength,
+          symbol: symbol,
+          detail: `Most digit ${mostAppearing} (0-6 zone) | Under rate ${(underRate * 100).toFixed(0)}% | Last: ${lastDigit}`,
+          extra: `Threshold 5 | Most:${mostAppearing} 2nd:${secondMost}`,
+          direction: 'UNDER',
+          timestamp: new Date(),
+          price: lastPrice,
+          digit: lastDigit
+        });
+      }
+    }
+    
+    if (contractType === 'evenodd') {
+      // ODD signal
+      if (mostAppearing % 2 === 1) {
+        let strength = 0.62 + (oddRate * 0.3);
+        if (secondMost % 2 === 1) strength += 0.05;
+        strength = Math.min(0.94, strength);
+        
+        signals.push({
+          id: `sig_${Date.now()}_${signalIdCounter++}`,
+          type: "Odd/Even",
+          name: "🎲 ODD",
+          strength,
+          symbol: symbol,
+          detail: `Most digit ${mostAppearing} (odd) | Odd winrate ${(oddRate * 100).toFixed(0)}% | Last: ${lastDigit}`,
+          extra: `Most digit ${mostAppearing} → Odd bias`,
+          direction: 'ODD',
+          timestamp: new Date(),
+          price: lastPrice,
+          digit: lastDigit
+        });
+      }
+      
+      // EVEN signal
+      if (mostAppearing % 2 === 0) {
+        let strength = 0.62 + (evenRate * 0.3);
+        if (secondMost % 2 === 0) strength += 0.05;
+        strength = Math.min(0.94, strength);
+        
+        signals.push({
+          id: `sig_${Date.now()}_${signalIdCounter++}`,
+          type: "Odd/Even",
+          name: "🎲 EVEN",
+          strength,
+          symbol: symbol,
+          detail: `Most digit ${mostAppearing} (even) | Even winrate ${(evenRate * 100).toFixed(0)}% | Last: ${lastDigit}`,
+          extra: `Most digit ${mostAppearing} → Even bias`,
+          direction: 'EVEN',
+          timestamp: new Date(),
+          price: lastPrice,
+          digit: lastDigit
+        });
+      }
+    }
+  }
+  
+  signals.sort((a, b) => b.strength - a.strength);
+  return signals;
+}
+
+// Execute a trade for a bot
+async function executeTrade(
+  bot: BotInstance,
+  signal: Signal,
+  balance: number,
+  recordLossFn: (stake: number, symbol: string, duration: number) => void
+): Promise<{ won: boolean; pnl: number; exitDigit: number }> {
+  // Determine contract type based on signal direction
+  let contractTypeParam = '';
+  let barrier = '';
+  
+  if (signal.direction === 'OVER') {
+    contractTypeParam = 'DIGITOVER';
+    barrier = '5';
+  } else if (signal.direction === 'UNDER') {
+    contractTypeParam = 'DIGITUNDER';
+    barrier = '5';
+  } else if (signal.direction === 'ODD') {
+    contractTypeParam = 'DIGITODD';
+  } else if (signal.direction === 'EVEN') {
+    contractTypeParam = 'DIGITEVEN';
+  }
+  
+  try {
+    await waitForNextTick(signal.symbol as MarketSymbol);
+    
+    const buyParams: any = {
+      contract_type: contractTypeParam,
+      symbol: signal.symbol,
+      duration: 1,
+      duration_unit: 't',
+      basis: 'stake',
+      amount: bot.currentStake,
+    };
+    if (barrier) buyParams.barrier = barrier;
+    
+    const { contractId } = await derivApi.buyContract(buyParams);
+    const result = await derivApi.waitForContractResult(contractId);
+    const won = result.status === 'won';
+    const pnl = result.profit;
+    const exitDigit = getLastDigit(result.sellPrice || 0);
+    
+    if (!won && result.sellPrice) {
+      recordLossFn(bot.currentStake, signal.symbol, 6000);
+    }
+    
+    return { won, pnl, exitDigit };
+  } catch (err) {
+    console.error('Trade error:', err);
+    return { won: false, pnl: -bot.currentStake, exitDigit: 0 };
+  }
+}
+
 function waitForNextTick(symbol: string): Promise<{ quote: number }> {
   return new Promise((resolve) => {
     const unsub = derivApi.onMessage((data: any) => {
@@ -138,93 +312,7 @@ function waitForNextTick(symbol: string): Promise<{ quote: number }> {
   });
 }
 
-// Generate signals from tick data
-function generateSignalsFromTicks(ticksMap: Map<string, number[]>, contractType: string): Signal[] {
-  const signals: Signal[] = [];
-  
-  for (const [symbol, ticks] of ticksMap.entries()) {
-    if (!ticks || ticks.length < 200) continue;
-    const stats = computeDigitStats(ticks, 5);
-    if (!stats) continue;
-    
-    const { mostAppearing, secondMost, leastAppearing, overRate, underRate, oddRate, evenRate } = stats;
-    
-    if (contractType === 'overunder') {
-      // OVER signal
-      if (mostAppearing >= 5) {
-        const strength = 0.68 + (overRate * 0.25);
-        if (secondMost >= 5) strength + 0.08;
-        signals.push({
-          id: `sig_${Date.now()}_${signalIdCounter++}`,
-          type: "Under/Over",
-          name: "📈 OVER",
-          strength: Math.min(0.96, strength),
-          symbol: symbol,
-          detail: `Most digit ${mostAppearing} in 5-9 zone | Over rate ${(overRate * 100).toFixed(0)}%`,
-          extra: `Threshold 5 | Most:${mostAppearing} 2nd:${secondMost}`,
-          direction: 'OVER',
-          timestamp: new Date()
-        });
-      }
-      
-      // UNDER signal
-      if (mostAppearing <= 6) {
-        const strength = 0.68 + (underRate * 0.25);
-        if (secondMost <= 6) strength + 0.08;
-        signals.push({
-          id: `sig_${Date.now()}_${signalIdCounter++}`,
-          type: "Under/Over",
-          name: "📉 UNDER",
-          strength: Math.min(0.96, strength),
-          symbol: symbol,
-          detail: `Most digit ${mostAppearing} in 0-6 zone | Under rate ${(underRate * 100).toFixed(0)}%`,
-          extra: `Threshold 5 | Most:${mostAppearing} 2nd:${secondMost}`,
-          direction: 'UNDER',
-          timestamp: new Date()
-        });
-      }
-    }
-    
-    if (contractType === 'evenodd') {
-      // ODD signal
-      if (mostAppearing % 2 === 1) {
-        const strength = 0.65 + (oddRate * 0.25);
-        signals.push({
-          id: `sig_${Date.now()}_${signalIdCounter++}`,
-          type: "Odd/Even",
-          name: "🎲 ODD",
-          strength: Math.min(0.94, strength),
-          symbol: symbol,
-          detail: `Most digit ${mostAppearing} (odd) | Odd winrate ${(oddRate * 100).toFixed(0)}%`,
-          extra: `Most digit ${mostAppearing} → Odd bias`,
-          direction: 'ODD',
-          timestamp: new Date()
-        });
-      }
-      
-      // EVEN signal
-      if (mostAppearing % 2 === 0) {
-        const strength = 0.65 + (evenRate * 0.25);
-        signals.push({
-          id: `sig_${Date.now()}_${signalIdCounter++}`,
-          type: "Odd/Even",
-          name: "🎲 EVEN",
-          strength: Math.min(0.94, strength),
-          symbol: symbol,
-          detail: `Most digit ${mostAppearing} (even) | Even winrate ${(evenRate * 100).toFixed(0)}%`,
-          extra: `Most digit ${mostAppearing} → Even bias`,
-          direction: 'EVEN',
-          timestamp: new Date()
-        });
-      }
-    }
-  }
-  
-  signals.sort((a, b) => b.strength - a.strength);
-  return signals;
-}
-
-export function MultiBotSignalForge() {
+export function AdaptiveMultiBot() {
   const { isAuthorized, balance, activeAccount } = useAuth();
   const { recordLoss } = useLossRequirement();
 
@@ -234,8 +322,7 @@ export function MultiBotSignalForge() {
   const [liveSignals, setLiveSignals] = useState<Signal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [connectedMarkets, setConnectedMarkets] = useState(0);
-  const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
-  const [showCreateBotDialog, setShowCreateBotDialog] = useState(false);
+  const [lastSignalUpdate, setLastSignalUpdate] = useState<Date>(new Date());
 
   // Bot State
   const [bots, setBots] = useState<BotInstance[]>([]);
@@ -246,18 +333,18 @@ export function MultiBotSignalForge() {
   const ticksMapRef = useRef<Map<string, number[]>>(new Map());
   const wsConnectionsRef = useRef<Map<string, WebSocket>>(new Map());
   const runningBotsRef = useRef<Set<string>>(new Set());
-  const botIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const botLoopsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
-  // Load default bots on init (minimum 5 bots)
+  // Initialize default bots (5 bots with different signal types)
   useEffect(() => {
     const defaultBots: BotInstance[] = [
       {
-        id: `bot_${Date.now()}_1`,
+        id: `bot_over_${Date.now()}`,
         config: {
-          id: `bot_${Date.now()}_1`,
-          name: "OVER Aggressor",
+          id: `bot_over_${Date.now()}`,
+          name: "🟢 OVER HUNTER",
           enabled: true,
-          signalType: "OVER",
+          signalType: 'OVER',
           symbol: null,
           stake: 0.5,
           martingaleMultiplier: 2,
@@ -266,6 +353,9 @@ export function MultiBotSignalForge() {
           stopLoss: 5,
           recoveryThreshold: 3,
           isCopyTrading: false,
+          minSignalStrength: 0.65,
+          maxConcurrentTrades: 1,
+          tradingInterval: 3000,
         },
         status: 'idle',
         currentStake: 0.5,
@@ -277,14 +367,16 @@ export function MultiBotSignalForge() {
         losses: 0,
         lastTrade: null,
         activeSignal: null,
+        pendingTrades: 0,
+        lastSignalStrength: 0,
       },
       {
-        id: `bot_${Date.now()}_2`,
+        id: `bot_under_${Date.now()}`,
         config: {
-          id: `bot_${Date.now()}_2`,
-          name: "UNDER Hunter",
+          id: `bot_under_${Date.now()}`,
+          name: "🔴 UNDER SEEKER",
           enabled: true,
-          signalType: "UNDER",
+          signalType: 'UNDER',
           symbol: null,
           stake: 0.5,
           martingaleMultiplier: 2,
@@ -293,6 +385,9 @@ export function MultiBotSignalForge() {
           stopLoss: 5,
           recoveryThreshold: 8,
           isCopyTrading: false,
+          minSignalStrength: 0.65,
+          maxConcurrentTrades: 1,
+          tradingInterval: 3000,
         },
         status: 'idle',
         currentStake: 0.5,
@@ -304,14 +399,16 @@ export function MultiBotSignalForge() {
         losses: 0,
         lastTrade: null,
         activeSignal: null,
+        pendingTrades: 0,
+        lastSignalStrength: 0,
       },
       {
-        id: `bot_${Date.now()}_3`,
+        id: `bot_odd_${Date.now()}`,
         config: {
-          id: `bot_${Date.now()}_3`,
-          name: "ODD Seeker",
+          id: `bot_odd_${Date.now()}`,
+          name: "🟣 ODD MASTER",
           enabled: true,
-          signalType: "ODD",
+          signalType: 'ODD',
           symbol: null,
           stake: 0.5,
           martingaleMultiplier: 2,
@@ -320,6 +417,9 @@ export function MultiBotSignalForge() {
           stopLoss: 5,
           recoveryThreshold: 3,
           isCopyTrading: false,
+          minSignalStrength: 0.65,
+          maxConcurrentTrades: 1,
+          tradingInterval: 3000,
         },
         status: 'idle',
         currentStake: 0.5,
@@ -331,14 +431,16 @@ export function MultiBotSignalForge() {
         losses: 0,
         lastTrade: null,
         activeSignal: null,
+        pendingTrades: 0,
+        lastSignalStrength: 0,
       },
       {
-        id: `bot_${Date.now()}_4`,
+        id: `bot_even_${Date.now()}`,
         config: {
-          id: `bot_${Date.now()}_4`,
-          name: "EVEN Master",
+          id: `bot_even_${Date.now()}`,
+          name: "🟡 EVEN SLAYER",
           enabled: true,
-          signalType: "EVEN",
+          signalType: 'EVEN',
           symbol: null,
           stake: 0.5,
           martingaleMultiplier: 2,
@@ -347,6 +449,9 @@ export function MultiBotSignalForge() {
           stopLoss: 5,
           recoveryThreshold: 3,
           isCopyTrading: false,
+          minSignalStrength: 0.65,
+          maxConcurrentTrades: 1,
+          tradingInterval: 3000,
         },
         status: 'idle',
         currentStake: 0.5,
@@ -358,27 +463,32 @@ export function MultiBotSignalForge() {
         losses: 0,
         lastTrade: null,
         activeSignal: null,
+        pendingTrades: 0,
+        lastSignalStrength: 0,
       },
       {
-        id: `bot_${Date.now()}_5`,
+        id: `bot_smart_${Date.now()}`,
         config: {
-          id: `bot_${Date.now()}_5`,
-          name: "Signal Follower",
+          id: `bot_smart_${Date.now()}`,
+          name: "🧠 SMART FOLLOWER",
           enabled: true,
-          signalType: null,
+          signalType: 'ANY',
           symbol: null,
-          stake: 0.5,
-          martingaleMultiplier: 2,
-          martingaleMaxSteps: 3,
-          takeProfit: 10,
-          stopLoss: 5,
-          recoveryThreshold: 3,
+          stake: 0.35,
+          martingaleMultiplier: 1.8,
+          martingaleMaxSteps: 2,
+          takeProfit: 8,
+          stopLoss: 4,
+          recoveryThreshold: 2,
           isCopyTrading: true,
-          masterBotId: `bot_${Date.now()}_1`,
-          copyRatio: 0.5,
+          masterBotId: `bot_over_${Date.now()}`,
+          copyRatio: 0.7,
+          minSignalStrength: 0.7,
+          maxConcurrentTrades: 1,
+          tradingInterval: 4000,
         },
         status: 'idle',
-        currentStake: 0.25,
+        currentStake: 0.35,
         martingaleStep: 0,
         consecutiveLosses: 0,
         totalPnL: 0,
@@ -387,6 +497,8 @@ export function MultiBotSignalForge() {
         losses: 0,
         lastTrade: null,
         activeSignal: null,
+        pendingTrades: 0,
+        lastSignalStrength: 0,
       },
     ];
     setBots(defaultBots);
@@ -420,9 +532,13 @@ export function MultiBotSignalForge() {
           ticks.push(digit);
           if (ticks.length > 2500) ticks.shift();
           ticksMapRef.current.set(symbol, [...ticks]);
-          // Update signals on every tick
+          
+          // Generate signals on every tick
           const newSignals = generateSignalsFromTicks(ticksMapRef.current, contractType);
-          setLiveSignals(newSignals.slice(0, 10));
+          setLiveSignals(newSignals);
+          setLastSignalUpdate(new Date());
+          setConnectedMarkets(ticksMapRef.current.size);
+          setIsLoading(false);
         }
       }
     };
@@ -452,277 +568,255 @@ export function MultiBotSignalForge() {
     symbols.forEach(symbol => connectMarket(symbol));
     
     setTimeout(() => {
-      setConnectedMarkets(ticksMapRef.current.size);
       setIsLoading(false);
-    }, 3000);
+    }, 5000);
   }, [connectMarket]);
 
-  // Execute a trade for a specific bot
-  const executeTradeForBot = useCallback(async (bot: BotInstance, signal: Signal) => {
-    if (!isAuthorized) return null;
-    
-    const tradeId = `trade_${Date.now()}_${bot.id}`;
-    const now = new Date();
-    
-    // Determine contract type based on signal direction
-    let contractTypeParam = '';
-    let barrier = '';
-    
-    if (signal.direction === 'OVER') {
-      contractTypeParam = 'DIGITOVER';
-      barrier = '5';
-    } else if (signal.direction === 'UNDER') {
-      contractTypeParam = 'DIGITUNDER';
-      barrier = '5';
-    } else if (signal.direction === 'ODD') {
-      contractTypeParam = 'DIGITODD';
-    } else if (signal.direction === 'EVEN') {
-      contractTypeParam = 'DIGITEVEN';
+  // Bot trading loop - dynamically adapts to signals
+  const startBotLoop = useCallback((bot: BotInstance) => {
+    if (botLoopsRef.current.has(bot.id)) {
+      clearInterval(botLoopsRef.current.get(bot.id));
     }
     
-    // Add to logs as pending
-    setTradeLogs(prev => [{
-      id: tradeId,
-      botId: bot.id,
-      botName: bot.config.name,
-      time: now,
-      symbol: signal.symbol,
-      signalType: signal.type,
-      direction: signal.direction,
-      stake: bot.currentStake,
-      result: 'Pending',
-      pnl: 0,
-      balance: balance,
-      isCopyTrade: bot.config.isCopyTrading,
-    }, ...prev].slice(0, 200));
-    
-    try {
-      await waitForNextTick(signal.symbol as MarketSymbol);
-      
-      const buyParams: any = {
-        contract_type: contractTypeParam,
-        symbol: signal.symbol,
-        duration: 1,
-        duration_unit: 't',
-        basis: 'stake',
-        amount: bot.currentStake,
-      };
-      if (barrier) buyParams.barrier = barrier;
-      
-      const { contractId } = await derivApi.buyContract(buyParams);
-      const result = await derivApi.waitForContractResult(contractId);
-      const won = result.status === 'won';
-      const pnl = result.profit;
-      
-      // Update bot stats
-      const newConsecutiveLosses = won ? 0 : bot.consecutiveLosses + 1;
-      const newStatus = (newConsecutiveLosses >= bot.config.recoveryThreshold && !won) ? 'recovery' : bot.status;
-      
-      let newStake = bot.currentStake;
-      let newMartingaleStep = bot.martingaleStep;
-      
-      if (!won && bot.config.martingaleMultiplier > 1 && bot.martingaleStep < bot.config.martingaleMaxSteps) {
-        newStake = bot.currentStake * bot.config.martingaleMultiplier;
-        newMartingaleStep = bot.martingaleStep + 1;
-      } else if (won) {
-        newStake = bot.config.stake;
-        newMartingaleStep = 0;
+    const interval = setInterval(async () => {
+      const currentBot = bots.find(b => b.id === bot.id);
+      if (!currentBot || currentBot.status !== 'running' || !currentBot.config.enabled) {
+        return;
       }
       
-      const newTotalPnL = bot.totalPnL + pnl;
-      const newTotalTrades = bot.totalTrades + 1;
-      const newWins = bot.wins + (won ? 1 : 0);
-      const newLosses = bot.losses + (won ? 0 : 1);
+      // Find matching signal for this bot
+      let matchingSignals = liveSignals;
       
-      // Update bot
+      if (currentBot.config.signalType !== 'ANY') {
+        matchingSignals = liveSignals.filter(s => s.direction === currentBot.config.signalType);
+      }
+      
+      // Filter by minimum signal strength
+      matchingSignals = matchingSignals.filter(s => s.strength >= currentBot.config.minSignalStrength);
+      
+      if (matchingSignals.length === 0) {
+        // No strong signal, bot waits
+        setBots(prev => prev.map(b => 
+          b.id === currentBot.id ? { ...b, lastSignalStrength: 0 } : b
+        ));
+        return;
+      }
+      
+      // Check concurrent trades limit
+      if (currentBot.pendingTrades >= currentBot.config.maxConcurrentTrades) {
+        return;
+      }
+      
+      // Select best signal (highest strength)
+      const bestSignal = matchingSignals[0];
+      
+      // Update bot's last signal strength
       setBots(prev => prev.map(b => 
-        b.id === bot.id ? {
-          ...b,
-          status: newStatus,
-          currentStake: newStake,
-          martingaleStep: newMartingaleStep,
-          consecutiveLosses: newConsecutiveLosses,
-          totalPnL: newTotalPnL,
-          totalTrades: newTotalTrades,
-          wins: newWins,
-          losses: newLosses,
-          lastTrade: now,
-          activeSignal: signal,
-        } : b
+        b.id === currentBot.id ? { ...b, lastSignalStrength: bestSignal.strength, activeSignal: bestSignal } : b
       ));
       
-      // Update trade log
-      setTradeLogs(prev => prev.map(log => 
-        log.id === tradeId ? { ...log, result: won ? 'Win' : 'Loss', pnl, balance: balance + pnl } : log
-      ));
-      
-      // Update global stats
-      setGlobalPnL(prev => prev + pnl);
-      setGlobalTrades(prev => prev + 1);
-      
-      // Record loss for virtual trading
-      if (!won && activeAccount?.is_virtual) {
-        recordLoss(bot.currentStake, signal.symbol, 6000);
+      // Check if we should enter recovery mode
+      let isInRecovery = false;
+      if (currentBot.consecutiveLosses >= currentBot.config.recoveryThreshold) {
+        isInRecovery = true;
+        if (currentBot.status !== 'recovery') {
+          setBots(prev => prev.map(b => 
+            b.id === currentBot.id ? { ...b, status: 'recovery' } : b
+          ));
+          toast.warning(`${currentBot.config.name}: Entering recovery mode after ${currentBot.consecutiveLosses} losses`);
+        }
+      } else if (currentBot.status === 'recovery' && currentBot.consecutiveLosses === 0) {
+        setBots(prev => prev.map(b => 
+          b.id === currentBot.id ? { ...b, status: 'running' } : b
+        ));
+        toast.success(`${currentBot.config.name}: Recovery complete! Back to normal mode`);
       }
       
-      // Copy trading: notify copy bots
-      if (!bot.config.isCopyTrading && bot.config.isCopyTrading === false) {
-        setBots(prev => prev.map(copyBot => {
-          if (copyBot.config.isCopyTrading && copyBot.config.masterBotId === bot.id) {
-            const copyStake = bot.currentStake * (copyBot.config.copyRatio || 0.5);
-            // Schedule copy trade
-            setTimeout(() => {
-              executeTradeForBot({ ...copyBot, currentStake: copyStake }, signal);
-            }, 100);
-            return copyBot;
+      // Execute trade
+      const tradeId = `trade_${Date.now()}_${currentBot.id}_${tradeIdCounter++}`;
+      const now = new Date();
+      
+      // Add pending trade log
+      setTradeLogs(prev => [{
+        id: tradeId,
+        botId: currentBot.id,
+        botName: currentBot.config.name,
+        time: now,
+        symbol: bestSignal.symbol,
+        signalType: bestSignal.type,
+        direction: bestSignal.direction,
+        stake: currentBot.currentStake,
+        result: 'Pending',
+        pnl: 0,
+        balance: balance,
+        isCopyTrade: currentBot.config.isCopyTrading,
+        signalStrength: bestSignal.strength,
+        exitDigit: 0,
+      }, ...prev].slice(0, 200));
+      
+      setBots(prev => prev.map(b => 
+        b.id === currentBot.id ? { ...b, pendingTrades: b.pendingTrades + 1 } : b
+      ));
+      
+      try {
+        const result = await executeTrade(currentBot, bestSignal, balance, recordLoss);
+        
+        const newConsecutiveLosses = result.won ? 0 : currentBot.consecutiveLosses + 1;
+        let newStake = currentBot.currentStake;
+        let newMartingaleStep = currentBot.martingaleStep;
+        
+        if (!result.won && currentBot.config.martingaleMultiplier > 1 && 
+            currentBot.martingaleStep < currentBot.config.martingaleMaxSteps) {
+          newStake = currentBot.currentStake * currentBot.config.martingaleMultiplier;
+          newMartingaleStep = currentBot.martingaleStep + 1;
+        } else if (result.won) {
+          newStake = currentBot.config.stake;
+          newMartingaleStep = 0;
+        }
+        
+        const newTotalPnL = currentBot.totalPnL + result.pnl;
+        const newTotalTrades = currentBot.totalTrades + 1;
+        const newWins = currentBot.wins + (result.won ? 1 : 0);
+        const newLosses = currentBot.losses + (result.won ? 0 : 1);
+        
+        // Update trade log with result
+        setTradeLogs(prev => prev.map(log => 
+          log.id === tradeId ? { 
+            ...log, 
+            result: result.won ? 'Win' : 'Loss', 
+            pnl: result.pnl, 
+            balance: balance + result.pnl,
+            exitDigit: result.exitDigit
+          } : log
+        ));
+        
+        // Update bot stats
+        setBots(prev => prev.map(b => 
+          b.id === currentBot.id ? {
+            ...b,
+            currentStake: newStake,
+            martingaleStep: newMartingaleStep,
+            consecutiveLosses: newConsecutiveLosses,
+            totalPnL: newTotalPnL,
+            totalTrades: newTotalTrades,
+            wins: newWins,
+            losses: newLosses,
+            lastTrade: now,
+            pendingTrades: Math.max(0, b.pendingTrades - 1),
+          } : b
+        ));
+        
+        setGlobalPnL(prev => prev + result.pnl);
+        setGlobalTrades(prev => prev + 1);
+        
+        // Toast notification for trade result
+        if (result.won) {
+          toast.success(`${currentBot.config.name}: ✅ WIN! +$${result.pnl.toFixed(2)} on ${bestSignal.symbol}`);
+        } else {
+          toast.error(`${currentBot.config.name}: ❌ LOSS! -$${currentBot.currentStake.toFixed(2)} on ${bestSignal.symbol}`);
+        }
+        
+        // Check TP/SL
+        if (newTotalPnL >= currentBot.config.takeProfit) {
+          toast.success(`${currentBot.config.name}: 🎯 Take Profit reached! +$${newTotalPnL.toFixed(2)}`);
+          setBots(prev => prev.map(b => b.id === currentBot.id ? { ...b, status: 'idle' } : b));
+          runningBotsRef.current.delete(currentBot.id);
+          if (botLoopsRef.current.has(currentBot.id)) {
+            clearInterval(botLoopsRef.current.get(currentBot.id));
+            botLoopsRef.current.delete(currentBot.id);
           }
-          return copyBot;
-        }));
+        }
+        if (newTotalPnL <= -currentBot.config.stopLoss) {
+          toast.error(`${currentBot.config.name}: 🛑 Stop Loss reached! $${newTotalPnL.toFixed(2)}`);
+          setBots(prev => prev.map(b => b.id === currentBot.id ? { ...b, status: 'idle' } : b));
+          runningBotsRef.current.delete(currentBot.id);
+          if (botLoopsRef.current.has(currentBot.id)) {
+            clearInterval(botLoopsRef.current.get(currentBot.id));
+            botLoopsRef.current.delete(currentBot.id);
+          }
+        }
+        
+        // Copy trading: if this bot is a master, trigger followers
+        if (!currentBot.config.isCopyTrading) {
+          const followers = bots.filter(b => 
+            b.config.isCopyTrading && b.config.masterBotId === currentBot.id && b.status === 'running'
+          );
+          
+          for (const follower of followers) {
+            const copyStake = currentBot.currentStake * (follower.config.copyRatio || 0.5);
+            if (copyStake >= 0.35) {
+              // Schedule copy trade with slight delay
+              setTimeout(() => {
+                const updatedFollower = bots.find(b => b.id === follower.id);
+                if (updatedFollower && updatedFollower.status === 'running') {
+                  const copySignal = { ...bestSignal };
+                  const copyTradeId = `copy_${Date.now()}_${follower.id}`;
+                  setTradeLogs(prev => [{
+                    id: copyTradeId,
+                    botId: follower.id,
+                    botName: follower.config.name,
+                    time: new Date(),
+                    symbol: copySignal.symbol,
+                    signalType: copySignal.type,
+                    direction: copySignal.direction,
+                    stake: copyStake,
+                    result: result.won ? 'Win' : 'Loss',
+                    pnl: result.won ? result.pnl * (follower.config.copyRatio || 0.5) : -copyStake,
+                    balance: balance,
+                    isCopyTrade: true,
+                    signalStrength: copySignal.strength,
+                    exitDigit: result.exitDigit,
+                  }, ...prev].slice(0, 200));
+                  
+                  setBots(prev => prev.map(b => 
+                    b.id === follower.id ? {
+                      ...b,
+                      totalPnL: b.totalPnL + (result.won ? result.pnl * (follower.config.copyRatio || 0.5) : -copyStake),
+                      totalTrades: b.totalTrades + 1,
+                      wins: b.wins + (result.won ? 1 : 0),
+                      losses: b.losses + (result.won ? 0 : 1),
+                    } : b
+                  ));
+                }
+              }, 500);
+            }
+          }
+        }
+        
+      } catch (err) {
+        console.error(`Bot ${currentBot.config.name} trade error:`, err);
+        setBots(prev => prev.map(b => 
+          b.id === currentBot.id ? { ...b, pendingTrades: Math.max(0, b.pendingTrades - 1) } : b
+        ));
       }
       
-      // Check TP/SL for this bot
-      if (newTotalPnL >= bot.config.takeProfit) {
-        toast.success(`${bot.config.name}: 🎯 Take Profit reached! +$${newTotalPnL.toFixed(2)}`);
-        setBots(prev => prev.map(b => b.id === bot.id ? { ...b, status: 'idle' } : b));
-        runningBotsRef.current.delete(bot.id);
-        if (botIntervalsRef.current.has(bot.id)) {
-          clearInterval(botIntervalsRef.current.get(bot.id));
-          botIntervalsRef.current.delete(bot.id);
-        }
-      }
-      if (newTotalPnL <= -bot.config.stopLoss) {
-        toast.error(`${bot.config.name}: 🛑 Stop Loss reached! $${newTotalPnL.toFixed(2)}`);
-        setBots(prev => prev.map(b => b.id === bot.id ? { ...b, status: 'idle' } : b));
-        runningBotsRef.current.delete(bot.id);
-        if (botIntervalsRef.current.has(bot.id)) {
-          clearInterval(botIntervalsRef.current.get(bot.id));
-          botIntervalsRef.current.delete(bot.id);
-        }
-      }
-      
-      return { won, pnl };
-    } catch (err: any) {
-      setTradeLogs(prev => prev.map(log => 
-        log.id === tradeId ? { ...log, result: 'Loss', pnl: -bot.currentStake } : log
-      ));
-      setBots(prev => prev.map(b => 
-        b.id === bot.id ? { ...b, totalPnL: b.totalPnL - bot.currentStake, totalTrades: b.totalTrades + 1, losses: b.losses + 1 } : b
-      ));
-      setGlobalPnL(prev => prev - bot.currentStake);
-      setGlobalTrades(prev => prev + 1);
-      return { won: false, pnl: -bot.currentStake };
-    }
-  }, [isAuthorized, balance, activeAccount, recordLoss]);
-
+    }, bot.config.tradingInterval);
+    
+    botLoopsRef.current.set(bot.id, interval);
+  }, [bots, liveSignals, balance, recordLoss]);
+  
   // Start a specific bot
-  const startBot = useCallback(async (botId: string) => {
+  const startBot = useCallback((botId: string) => {
     const bot = bots.find(b => b.id === botId);
     if (!bot || !bot.config.enabled) return;
     if (runningBotsRef.current.has(botId)) return;
     
     runningBotsRef.current.add(botId);
-    setBots(prev => prev.map(b => b.id === botId ? { ...b, status: 'running' } : b));
+    setBots(prev => prev.map(b => b.id === botId ? { ...b, status: 'running', consecutiveLosses: 0, martingaleStep: 0, currentStake: b.config.stake } : b));
     
-    const interval = setInterval(async () => {
-      const currentBot = bots.find(b => b.id === botId);
-      if (!currentBot || currentBot.status !== 'running') {
-        clearInterval(interval);
-        botIntervalsRef.current.delete(botId);
-        runningBotsRef.current.delete(botId);
-        return;
-      }
-      
-      // Find matching signal for this bot
-      let matchingSignal: Signal | null = null;
-      
-      if (currentBot.config.signalType) {
-        matchingSignal = liveSignals.find(s => s.direction === currentBot.config.signalType) || null;
-      } else if (currentBot.config.symbol) {
-        matchingSignal = liveSignals.find(s => s.symbol === currentBot.config.symbol) || null;
-      } else {
-        matchingSignal = liveSignals[0] || null;
-      }
-      
-      if (matchingSignal && matchingSignal.strength > 0.6) {
-        await executeTradeForBot(currentBot, matchingSignal);
-      }
-    }, 3000);
-    
-    botIntervalsRef.current.set(botId, interval);
-    toast.success(`${bot.config.name} started`);
-  }, [bots, liveSignals, executeTradeForBot]);
+    startBotLoop(bot);
+    toast.success(`${bot.config.name} started - waiting for signals`);
+  }, [bots, startBotLoop]);
   
   // Stop a specific bot
   const stopBot = useCallback((botId: string) => {
-    if (botIntervalsRef.current.has(botId)) {
-      clearInterval(botIntervalsRef.current.get(botId));
-      botIntervalsRef.current.delete(botId);
+    if (botLoopsRef.current.has(botId)) {
+      clearInterval(botLoopsRef.current.get(botId));
+      botLoopsRef.current.delete(botId);
     }
     runningBotsRef.current.delete(botId);
-    setBots(prev => prev.map(b => b.id === botId ? { ...b, status: 'idle' } : b));
+    setBots(prev => prev.map(b => b.id === botId ? { ...b, status: 'idle', pendingTrades: 0 } : b));
     toast.info(`Bot stopped`);
-  }, []);
-  
-  // Create a new bot from signal
-  const createBotFromSignal = useCallback((signal: Signal, customConfig?: Partial<BotConfig>) => {
-    const newBotId = `bot_${Date.now()}_${botIdCounter++}`;
-    const newBot: BotInstance = {
-      id: newBotId,
-      config: {
-        id: newBotId,
-        name: `${signal.direction} Bot ${bots.length + 1}`,
-        enabled: true,
-        signalType: signal.direction,
-        symbol: signal.symbol,
-        stake: customConfig?.stake || 0.5,
-        martingaleMultiplier: customConfig?.martingaleMultiplier || 2,
-        martingaleMaxSteps: customConfig?.martingaleMaxSteps || 3,
-        takeProfit: customConfig?.takeProfit || 10,
-        stopLoss: customConfig?.stopLoss || 5,
-        recoveryThreshold: signal.direction === 'UNDER' ? 8 : 3,
-        isCopyTrading: customConfig?.isCopyTrading || false,
-        masterBotId: customConfig?.masterBotId,
-        copyRatio: customConfig?.copyRatio,
-      },
-      status: 'idle',
-      currentStake: customConfig?.stake || 0.5,
-      martingaleStep: 0,
-      consecutiveLosses: 0,
-      totalPnL: 0,
-      totalTrades: 0,
-      wins: 0,
-      losses: 0,
-      lastTrade: null,
-      activeSignal: signal,
-    };
-    
-    setBots(prev => [...prev, newBot]);
-    toast.success(`Bot "${newBot.config.name}" created from ${signal.name} signal!`);
-    setShowCreateBotDialog(false);
-    setSelectedSignal(null);
-  }, [bots.length]);
-  
-  // Delete a bot
-  const deleteBot = useCallback((botId: string) => {
-    if (runningBotsRef.current.has(botId)) {
-      stopBot(botId);
-    }
-    setBots(prev => prev.filter(b => b.id !== botId));
-    toast.info(`Bot removed`);
-  }, [stopBot]);
-  
-  // Toggle bot enabled state
-  const toggleBotEnabled = useCallback((botId: string) => {
-    setBots(prev => prev.map(b => 
-      b.id === botId ? { ...b, config: { ...b.config, enabled: !b.config.enabled } } : b
-    ));
-  }, []);
-  
-  // Update bot config
-  const updateBotConfig = useCallback((botId: string, updates: Partial<BotConfig>) => {
-    setBots(prev => prev.map(b => 
-      b.id === botId ? { ...b, config: { ...b.config, ...updates } } : b
-    ));
   }, []);
   
   // Start all bots
@@ -743,6 +837,61 @@ export function MultiBotSignalForge() {
     });
   }, [bots, stopBot]);
   
+  // Delete a bot
+  const deleteBot = useCallback((botId: string) => {
+    if (runningBotsRef.current.has(botId)) {
+      stopBot(botId);
+    }
+    setBots(prev => prev.filter(b => b.id !== botId));
+    toast.info(`Bot removed`);
+  }, [stopBot]);
+  
+  // Add new bot
+  const addBot = useCallback((signalType: 'OVER' | 'UNDER' | 'ODD' | 'EVEN' | 'ANY' = 'ANY') => {
+    const newBotId = `bot_${Date.now()}_${botIdCounter++}`;
+    const newBot: BotInstance = {
+      id: newBotId,
+      config: {
+        id: newBotId,
+        name: `🤖 ${signalType === 'ANY' ? 'Flex' : signalType} Bot ${bots.length + 1}`,
+        enabled: true,
+        signalType: signalType,
+        symbol: null,
+        stake: 0.5,
+        martingaleMultiplier: 2,
+        martingaleMaxSteps: 3,
+        takeProfit: 10,
+        stopLoss: 5,
+        recoveryThreshold: signalType === 'UNDER' ? 8 : 3,
+        isCopyTrading: false,
+        minSignalStrength: 0.65,
+        maxConcurrentTrades: 1,
+        tradingInterval: 3000,
+      },
+      status: 'idle',
+      currentStake: 0.5,
+      martingaleStep: 0,
+      consecutiveLosses: 0,
+      totalPnL: 0,
+      totalTrades: 0,
+      wins: 0,
+      losses: 0,
+      lastTrade: null,
+      activeSignal: null,
+      pendingTrades: 0,
+      lastSignalStrength: 0,
+    };
+    setBots(prev => [...prev, newBot]);
+    toast.success(`New ${signalType === 'ANY' ? 'Flex' : signalType} bot created!`);
+  }, [bots.length]);
+  
+  // Update bot config
+  const updateBotConfig = useCallback((botId: string, updates: Partial<BotConfig>) => {
+    setBots(prev => prev.map(b => 
+      b.id === botId ? { ...b, config: { ...b.config, ...updates } } : b
+    ));
+  }, []);
+  
   // Load markets on mount
   useEffect(() => {
     loadGroup(marketGroup);
@@ -752,22 +901,26 @@ export function MultiBotSignalForge() {
   useEffect(() => {
     return () => {
       wsConnectionsRef.current.forEach((ws) => ws.close());
-      botIntervalsRef.current.forEach((interval) => clearInterval(interval));
+      botLoopsRef.current.forEach((interval) => clearInterval(interval));
     };
   }, []);
   
   const globalWinRate = globalTrades > 0 ? ((bots.reduce((acc, b) => acc + b.wins, 0) / globalTrades) * 100).toFixed(1) : '0';
-
+  const activeBotsCount = bots.filter(b => b.status === 'running').length;
+  
+  // Get top 5 strongest signals for display
+  const topSignals = liveSignals.slice(0, 5);
+  
   return (
     <div className="space-y-6 max-w-7xl mx-auto p-4">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold bg-gradient-to-r from-orange-400 to-purple-400 bg-clip-text text-transparent">
-            ⚡ MULTI-BOT SIGNAL FORGE
+            ⚡ ADAPTIVE MULTI-BOT SIGNAL FORGE
           </h2>
           <p className="text-xs text-muted-foreground mt-1">
-            {bots.length} Active Bots | {connectedMarkets} Markets | Copy Trading Enabled
+            {bots.length} Bots | {activeBotsCount} Active | {connectedMarkets} Markets | Real-time Adaptation
           </p>
         </div>
         <div className="flex gap-3">
@@ -804,54 +957,99 @@ export function MultiBotSignalForge() {
           <Button onClick={stopAllBots} variant="destructive">
             <StopCircle className="w-4 h-4 mr-2" /> Stop All
           </Button>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="gap-2">
+                <Plus className="w-4 h-4" /> Add Bot
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Create New Trading Bot</DialogTitle>
+              </DialogHeader>
+              <div className="grid grid-cols-2 gap-3 py-4">
+                <Button variant="outline" className="h-20 flex-col gap-2" onClick={() => addBot('OVER')}>
+                  <TrendingUp className="w-6 h-6 text-green-500" />
+                  <span>OVER Bot</span>
+                </Button>
+                <Button variant="outline" className="h-20 flex-col gap-2" onClick={() => addBot('UNDER')}>
+                  <TrendingDown className="w-6 h-6 text-red-500" />
+                  <span>UNDER Bot</span>
+                </Button>
+                <Button variant="outline" className="h-20 flex-col gap-2" onClick={() => addBot('ODD')}>
+                  <Sparkles className="w-6 h-6 text-purple-500" />
+                  <span>ODD Bot</span>
+                </Button>
+                <Button variant="outline" className="h-20 flex-col gap-2" onClick={() => addBot('EVEN')}>
+                  <Target className="w-6 h-6 text-yellow-500" />
+                  <span>EVEN Bot</span>
+                </Button>
+                <Button variant="outline" className="h-20 flex-col gap-2 col-span-2" onClick={() => addBot('ANY')}>
+                  <Brain className="w-6 h-6 text-blue-500" />
+                  <span>Smart Flex Bot (follows best signal)</span>
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
       {/* Global Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
         <Card className="bg-gradient-to-br from-blue-900/30 to-purple-900/30">
-          <CardContent className="pt-4">
+          <CardContent className="pt-3 pb-2">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground">Global P/L</p>
-                <p className={`text-2xl font-bold ${globalPnL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                <p className="text-[10px] text-muted-foreground">Global P/L</p>
+                <p className={`text-xl font-bold ${globalPnL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                   ${globalPnL.toFixed(2)}
                 </p>
               </div>
-              <BarChart3 className="w-8 h-8 text-blue-400 opacity-50" />
+              <BarChart3 className="w-6 h-6 text-blue-400 opacity-50" />
             </div>
           </CardContent>
         </Card>
         <Card className="bg-gradient-to-br from-green-900/30 to-teal-900/30">
-          <CardContent className="pt-4">
+          <CardContent className="pt-3 pb-2">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground">Total Trades</p>
-                <p className="text-2xl font-bold">{globalTrades}</p>
+                <p className="text-[10px] text-muted-foreground">Total Trades</p>
+                <p className="text-xl font-bold">{globalTrades}</p>
               </div>
-              <Activity className="w-8 h-8 text-green-400 opacity-50" />
+              <Activity className="w-6 h-6 text-green-400 opacity-50" />
             </div>
           </CardContent>
         </Card>
         <Card className="bg-gradient-to-br from-yellow-900/30 to-orange-900/30">
-          <CardContent className="pt-4">
+          <CardContent className="pt-3 pb-2">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground">Win Rate</p>
-                <p className="text-2xl font-bold text-yellow-500">{globalWinRate}%</p>
+                <p className="text-[10px] text-muted-foreground">Win Rate</p>
+                <p className="text-xl font-bold text-yellow-500">{globalWinRate}%</p>
               </div>
-              <Target className="w-8 h-8 text-yellow-400 opacity-50" />
+              <Target className="w-6 h-6 text-yellow-400 opacity-50" />
             </div>
           </CardContent>
         </Card>
         <Card className="bg-gradient-to-br from-purple-900/30 to-pink-900/30">
-          <CardContent className="pt-4">
+          <CardContent className="pt-3 pb-2">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-muted-foreground">Active Bots</p>
-                <p className="text-2xl font-bold">{bots.filter(b => b.status === 'running').length}/{bots.length}</p>
+                <p className="text-[10px] text-muted-foreground">Active Bots</p>
+                <p className="text-xl font-bold">{activeBotsCount}/{bots.length}</p>
               </div>
-              <Bot className="w-8 h-8 text-purple-400 opacity-50" />
+              <Bot className="w-6 h-6 text-purple-400 opacity-50" />
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-gradient-to-br from-cyan-900/30 to-blue-900/30">
+          <CardContent className="pt-3 pb-2">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] text-muted-foreground">Last Signal</p>
+                <p className="text-xs font-mono">{lastSignalUpdate.toLocaleTimeString()}</p>
+              </div>
+              <Radio className="w-6 h-6 text-cyan-400 animate-pulse" />
             </div>
           </CardContent>
         </Card>
@@ -860,130 +1058,54 @@ export function MultiBotSignalForge() {
       {/* Live Signals Section */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold flex items-center gap-2">
-            <Zap className="w-5 h-5 text-yellow-500" /> Live Signals
+          <h3 className="text-md font-semibold flex items-center gap-2">
+            <Zap className="w-4 h-4 text-yellow-500" /> LIVE SIGNALS
           </h3>
-          <Dialog open={showCreateBotDialog} onOpenChange={setShowCreateBotDialog}>
-            <DialogTrigger asChild>
-              <Button size="sm" variant="outline" className="gap-2">
-                <Plus className="w-4 h-4" /> Create Bot from Signal
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create New Trading Bot</DialogTitle>
-              </DialogHeader>
-              {selectedSignal && (
-                <div className="space-y-4">
-                  <Alert className="bg-green-500/10 border-green-500">
-                    <AlertCircle className="w-4 h-4" />
-                    <AlertDescription>
-                      Creating bot from signal: <strong>{selectedSignal.name}</strong> on {selectedSignal.symbol}
-                    </AlertDescription>
-                  </Alert>
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-sm font-medium">Bot Name</label>
-                      <Input 
-                        defaultValue={`${selectedSignal.direction} Bot ${bots.length + 1}`}
-                        id="botName"
-                        placeholder="Enter bot name"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium">Stake ($)</label>
-                      <Input type="number" defaultValue={0.5} step="0.1" id="stake" />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium">Martingale Multiplier</label>
-                      <Input type="number" defaultValue={2} step="0.1" id="multiplier" />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium">Take Profit ($)</label>
-                      <Input type="number" defaultValue={10} id="tp" />
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium">Stop Loss ($)</label>
-                      <Input type="number" defaultValue={5} id="sl" />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Switch id="copyTrading" />
-                      <label className="text-sm">Enable Copy Trading (as master)</label>
-                    </div>
-                  </div>
-                  <Button onClick={() => {
-                    const name = (document.getElementById('botName') as HTMLInputElement)?.value;
-                    const stake = parseFloat((document.getElementById('stake') as HTMLInputElement)?.value || '0.5');
-                    const multiplier = parseFloat((document.getElementById('multiplier') as HTMLInputElement)?.value || '2');
-                    const tp = parseFloat((document.getElementById('tp') as HTMLInputElement)?.value || '10');
-                    const sl = parseFloat((document.getElementById('sl') as HTMLInputElement)?.value || '5');
-                    const isCopy = (document.getElementById('copyTrading') as HTMLInputElement)?.checked;
-                    
-                    createBotFromSignal(selectedSignal, {
-                      name: name || `${selectedSignal.direction} Bot`,
-                      stake,
-                      martingaleMultiplier: multiplier,
-                      takeProfit: tp,
-                      stopLoss: sl,
-                      isCopyTrading: isCopy,
-                    });
-                  }} className="w-full">
-                    Create Bot
-                  </Button>
-                </div>
-              )}
-            </DialogContent>
-          </Dialog>
+          <Badge variant="outline" className="text-[10px] animate-pulse">
+            {isLoading ? 'Loading...' : `${liveSignals.length} active signals`}
+          </Badge>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
           {isLoading ? (
             Array.from({ length: 5 }).map((_, i) => (
               <Card key={i} className="bg-gray-800/50 animate-pulse">
-                <CardContent className="p-3">
-                  <div className="h-16 bg-gray-700 rounded" />
+                <CardContent className="p-2">
+                  <div className="h-14 bg-gray-700 rounded" />
                 </CardContent>
               </Card>
             ))
+          ) : topSignals.length === 0 ? (
+            <div className="col-span-full text-center py-6 text-muted-foreground text-sm">
+              <Signal className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              Waiting for market data...
+            </div>
           ) : (
-            liveSignals.slice(0, 5).map((signal) => (
+            topSignals.map((signal) => (
               <Card 
                 key={signal.id}
                 className={`cursor-pointer transition-all hover:scale-105 ${
-                  signal.direction === 'OVER' || signal.direction === 'ODD' || signal.direction === 'RISE'
+                  signal.direction === 'OVER' || signal.direction === 'ODD' 
                     ? 'border-green-500/50 hover:border-green-500' 
                     : 'border-red-500/50 hover:border-red-500'
                 }`}
-                onClick={() => {
-                  setSelectedSignal(signal);
-                  setShowCreateBotDialog(true);
-                }}
               >
-                <CardContent className="p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <Badge className="text-[10px]">{signal.symbol}</Badge>
-                    <span className="text-xs font-mono text-yellow-500">{Math.round(signal.strength * 100)}%</span>
+                <CardContent className="p-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <Badge className="text-[8px]">{signal.symbol}</Badge>
+                    <span className="text-[10px] font-mono text-yellow-500">{Math.round(signal.strength * 100)}%</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {signal.direction === 'OVER' || signal.direction === 'ODD' || signal.direction === 'RISE' ? 
-                      <TrendingUp className="w-5 h-5 text-green-500" /> : 
-                      <TrendingDown className="w-5 h-5 text-red-500" />
+                  <div className="flex items-center gap-1">
+                    {signal.direction === 'OVER' || signal.direction === 'ODD' ? 
+                      <TrendingUp className="w-3 h-3 text-green-500" /> : 
+                      <TrendingDown className="w-3 h-3 text-red-500" />
                     }
-                    <span className="font-bold text-lg">{signal.name}</span>
+                    <span className="font-bold text-sm">{signal.name}</span>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{signal.detail}</p>
-                  <Button 
-                    size="sm" 
-                    variant="ghost" 
-                    className="w-full mt-2 text-xs"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedSignal(signal);
-                      setShowCreateBotDialog(true);
-                    }}
-                  >
-                    <Bot className="w-3 h-3 mr-1" /> Create Bot
-                  </Button>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-[8px] text-muted-foreground">Last: {signal.digit}</span>
+                    <Progress value={signal.strength * 100} className="w-12 h-1" />
+                  </div>
                 </CardContent>
               </Card>
             ))
@@ -991,144 +1113,131 @@ export function MultiBotSignalForge() {
         </div>
       </div>
 
-      {/* Bots Grid - Minimum 5 bots */}
+      {/* Bots Grid - Dynamically trading based on signals */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold flex items-center gap-2">
-            <Bot className="w-5 h-5 text-primary" /> Active Trading Bots ({bots.length})
+          <h3 className="text-md font-semibold flex items-center gap-2">
+            <Bot className="w-4 h-4 text-primary" /> TRADING BOTS
           </h3>
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => {
-              // Create empty bot template
-              const newBotId = `bot_${Date.now()}_${botIdCounter++}`;
-              const newBot: BotInstance = {
-                id: newBotId,
-                config: {
-                  id: newBotId,
-                  name: `Custom Bot ${bots.length + 1}`,
-                  enabled: true,
-                  signalType: null,
-                  symbol: null,
-                  stake: 0.5,
-                  martingaleMultiplier: 2,
-                  martingaleMaxSteps: 3,
-                  takeProfit: 10,
-                  stopLoss: 5,
-                  recoveryThreshold: 3,
-                  isCopyTrading: false,
-                },
-                status: 'idle',
-                currentStake: 0.5,
-                martingaleStep: 0,
-                consecutiveLosses: 0,
-                totalPnL: 0,
-                totalTrades: 0,
-                wins: 0,
-                losses: 0,
-                lastTrade: null,
-                activeSignal: null,
-              };
-              setBots(prev => [...prev, newBot]);
-              toast.success('New bot created');
-            }}>
-              <Plus className="w-4 h-4 mr-1" /> Add Bot
+            <Button size="sm" variant="outline" onClick={() => addBot('ANY')} className="text-xs">
+              <Plus className="w-3 h-3 mr-1" /> Quick Bot
             </Button>
           </div>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {bots.map((bot) => (
-            <Card key={bot.id} className={`relative overflow-hidden ${bot.status === 'running' ? 'ring-2 ring-green-500' : ''}`}>
+            <Card key={bot.id} className={`relative overflow-hidden ${bot.status === 'running' ? 'ring-2 ring-green-500/50' : ''} ${bot.status === 'recovery' ? 'ring-2 ring-orange-500/50' : ''}`}>
               <div className={`absolute top-0 left-0 right-0 h-1 ${
-                bot.config.signalType === 'OVER' || bot.config.signalType === 'ODD' ? 'bg-green-500' :
-                bot.config.signalType === 'UNDER' || bot.config.signalType === 'EVEN' ? 'bg-red-500' :
+                bot.config.signalType === 'OVER' ? 'bg-green-500' :
+                bot.config.signalType === 'UNDER' ? 'bg-red-500' :
+                bot.config.signalType === 'ODD' ? 'bg-purple-500' :
+                bot.config.signalType === 'EVEN' ? 'bg-yellow-500' :
                 'bg-blue-500'
               }`} />
-              <CardHeader className="pb-2">
+              <CardHeader className="pb-1">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Bot className="w-4 h-4 text-muted-foreground" />
-                    <CardTitle className="text-base">{bot.config.name}</CardTitle>
+                    {bot.status === 'running' ? (
+                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                    ) : bot.status === 'recovery' ? (
+                      <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
+                    ) : (
+                      <div className="w-2 h-2 rounded-full bg-gray-500" />
+                    )}
+                    <CardTitle className="text-sm">{bot.config.name}</CardTitle>
                     {bot.config.isCopyTrading && (
                       <Badge variant="outline" className="text-[8px]">
-                        <Copy className="w-3 h-3 mr-1" /> Copy
+                        <Copy className="w-2 h-2 mr-1" /> Copy
                       </Badge>
                     )}
                   </div>
                   <div className="flex items-center gap-1">
                     <Switch 
                       checked={bot.config.enabled} 
-                      onCheckedChange={() => toggleBotEnabled(bot.id)}
+                      onCheckedChange={(checked) => updateBotConfig(bot.id, { enabled: checked })}
                       disabled={bot.status === 'running'}
+                      className="scale-75"
                     />
                     <Button 
                       size="sm" 
                       variant="ghost" 
-                      className="h-7 w-7 p-0"
+                      className="h-6 w-6 p-0"
                       onClick={() => deleteBot(bot.id)}
                     >
                       <Trash2 className="w-3 h-3 text-red-500" />
                     </Button>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 mt-1">
+                <div className="flex items-center gap-1 mt-1">
                   <Badge variant={bot.status === 'running' ? 'default' : bot.status === 'recovery' ? 'destructive' : 'secondary'} 
-                         className={bot.status === 'running' ? 'bg-green-500' : bot.status === 'recovery' ? 'bg-orange-500' : ''}>
-                    {bot.status === 'running' ? '🟢 RUNNING' : bot.status === 'recovery' ? '🔄 RECOVERY' : '⚫ IDLE'}
+                         className={`text-[8px] h-4 ${bot.status === 'running' ? 'bg-green-600' : bot.status === 'recovery' ? 'bg-orange-600' : ''}`}>
+                    {bot.status === 'running' ? 'RUNNING' : bot.status === 'recovery' ? 'RECOVERY' : 'IDLE'}
                   </Badge>
-                  {bot.config.signalType && (
-                    <Badge variant="outline">{bot.config.signalType} Signal</Badge>
-                  )}
+                  <Badge variant="outline" className="text-[8px]">{bot.config.signalType}</Badge>
                   {bot.martingaleStep > 0 && (
-                    <Badge variant="outline" className="text-yellow-500">Mx{bot.martingaleStep}</Badge>
+                    <Badge variant="outline" className="text-[8px] text-yellow-500">Mx{bot.martingaleStep}</Badge>
                   )}
                 </div>
               </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="grid grid-cols-3 gap-2 text-center">
+              <CardContent className="space-y-2 pb-2">
+                {/* Stats */}
+                <div className="grid grid-cols-3 gap-1 text-center">
                   <div>
-                    <p className="text-xs text-muted-foreground">P/L</p>
-                    <p className={`font-mono font-bold ${bot.totalPnL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                    <p className="text-[8px] text-muted-foreground">P/L</p>
+                    <p className={`text-xs font-mono font-bold ${bot.totalPnL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                       ${bot.totalPnL.toFixed(2)}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">Trades</p>
-                    <p className="font-mono font-bold">{bot.totalTrades}</p>
+                    <p className="text-[8px] text-muted-foreground">Trades</p>
+                    <p className="text-xs font-mono font-bold">{bot.totalTrades}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-muted-foreground">Win Rate</p>
-                    <p className="font-mono font-bold">
+                    <p className="text-[8px] text-muted-foreground">WR</p>
+                    <p className="text-xs font-mono font-bold">
                       {bot.totalTrades > 0 ? ((bot.wins / bot.totalTrades) * 100).toFixed(0) : 0}%
                     </p>
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <span className="text-muted-foreground">Stake:</span>
-                    <span className="float-right font-mono">${bot.currentStake.toFixed(2)}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Recovery:</span>
-                    <span className="float-right font-mono">{bot.consecutiveLosses}/{bot.config.recoveryThreshold}</span>
-                  </div>
-                </div>
-                
+                {/* Current Signal Indicator */}
                 {bot.activeSignal && (
-                  <Alert className="p-2 bg-muted/30">
-                    <div className="flex items-center gap-1 text-xs">
-                      <Activity className="w-3 h-3" />
-                      <span className="truncate">{bot.activeSignal.name} @ {bot.activeSignal.symbol}</span>
+                  <div className="bg-muted/30 rounded p-1">
+                    <div className="flex items-center justify-between text-[9px]">
+                      <span className="text-muted-foreground">Current Signal:</span>
+                      <span className={`font-mono ${bot.activeSignal.direction === 'OVER' || bot.activeSignal.direction === 'ODD' ? 'text-green-500' : 'text-red-500'}`}>
+                        {bot.activeSignal.name} @ {Math.round(bot.activeSignal.strength * 100)}%
+                      </span>
                     </div>
-                  </Alert>
+                    <Progress value={bot.lastSignalStrength * 100} className="h-1 mt-1" />
+                  </div>
                 )}
                 
-                <div className="flex gap-2">
+                {/* Consecutive Losses Bar */}
+                {bot.consecutiveLosses > 0 && (
+                  <div className="space-y-0.5">
+                    <div className="flex justify-between text-[8px]">
+                      <span className="text-muted-foreground">Loss Streak</span>
+                      <span className={bot.consecutiveLosses >= bot.config.recoveryThreshold ? 'text-orange-500 font-bold' : ''}>
+                        {bot.consecutiveLosses}/{bot.config.recoveryThreshold}
+                      </span>
+                    </div>
+                    <Progress 
+                      value={(bot.consecutiveLosses / bot.config.recoveryThreshold) * 100} 
+                      className="h-1" 
+                      indicatorClassName={bot.consecutiveLosses >= bot.config.recoveryThreshold ? 'bg-orange-500' : 'bg-red-500'}
+                    />
+                  </div>
+                )}
+                
+                {/* Controls */}
+                <div className="flex gap-2 pt-1">
                   {bot.status !== 'running' ? (
                     <Button 
                       size="sm" 
-                      className="flex-1 bg-green-600 hover:bg-green-700"
+                      className="flex-1 h-7 text-[11px] bg-green-600 hover:bg-green-700"
                       onClick={() => startBot(bot.id)}
                       disabled={!bot.config.enabled}
                     >
@@ -1138,7 +1247,7 @@ export function MultiBotSignalForge() {
                     <Button 
                       size="sm" 
                       variant="destructive" 
-                      className="flex-1"
+                      className="flex-1 h-7 text-[11px]"
                       onClick={() => stopBot(bot.id)}
                     >
                       <StopCircle className="w-3 h-3 mr-1" /> Stop
@@ -1146,70 +1255,119 @@ export function MultiBotSignalForge() {
                   )}
                   <Dialog>
                     <DialogTrigger asChild>
-                      <Button size="sm" variant="outline" className="flex-1">
+                      <Button size="sm" variant="outline" className="flex-1 h-7 text-[11px]">
                         <Settings className="w-3 h-3 mr-1" /> Config
                       </Button>
                     </DialogTrigger>
-                    <DialogContent>
+                    <DialogContent className="max-w-md">
                       <DialogHeader>
                         <DialogTitle>Configure {bot.config.name}</DialogTitle>
                       </DialogHeader>
-                      <div className="space-y-4">
+                      <div className="space-y-3 py-2">
                         <div>
-                          <label className="text-sm font-medium">Bot Name</label>
+                          <label className="text-xs font-medium">Bot Name</label>
                           <Input 
                             value={bot.config.name}
                             onChange={(e) => updateBotConfig(bot.id, { name: e.target.value })}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium">Signal Type</label>
-                          <Select value={bot.config.signalType || 'any'} onValueChange={(v) => updateBotConfig(bot.id, { signalType: v === 'any' ? null : v })}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="any">Any Signal</SelectItem>
-                              <SelectItem value="OVER">OVER Only</SelectItem>
-                              <SelectItem value="UNDER">UNDER Only</SelectItem>
-                              <SelectItem value="ODD">ODD Only</SelectItem>
-                              <SelectItem value="EVEN">EVEN Only</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium">Stake ($)</label>
-                          <Input 
-                            type="number" 
-                            step="0.1"
-                            value={bot.config.stake}
-                            onChange={(e) => updateBotConfig(bot.id, { stake: parseFloat(e.target.value) })}
+                            className="h-8 text-sm"
                           />
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           <div>
-                            <label className="text-sm font-medium">Take Profit</label>
+                            <label className="text-xs font-medium">Signal Type</label>
+                            <Select value={bot.config.signalType} onValueChange={(v: any) => updateBotConfig(bot.id, { signalType: v })}>
+                              <SelectTrigger className="h-8 text-xs">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="ANY">Any Signal</SelectItem>
+                                <SelectItem value="OVER">OVER Only</SelectItem>
+                                <SelectItem value="UNDER">UNDER Only</SelectItem>
+                                <SelectItem value="ODD">ODD Only</SelectItem>
+                                <SelectItem value="EVEN">EVEN Only</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium">Min Strength</label>
+                            <Input 
+                              type="number" 
+                              step="0.05"
+                              value={bot.config.minSignalStrength}
+                              onChange={(e) => updateBotConfig(bot.id, { minSignalStrength: parseFloat(e.target.value) })}
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-xs font-medium">Stake ($)</label>
+                            <Input 
+                              type="number" 
+                              step="0.1"
+                              value={bot.config.stake}
+                              onChange={(e) => updateBotConfig(bot.id, { stake: parseFloat(e.target.value) })}
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium">Recovery</label>
+                            <Input 
+                              type="number"
+                              value={bot.config.recoveryThreshold}
+                              onChange={(e) => updateBotConfig(bot.id, { recoveryThreshold: parseInt(e.target.value) })}
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-xs font-medium">Take Profit</label>
                             <Input 
                               type="number"
                               value={bot.config.takeProfit}
                               onChange={(e) => updateBotConfig(bot.id, { takeProfit: parseFloat(e.target.value) })}
+                              className="h-8 text-xs"
                             />
                           </div>
                           <div>
-                            <label className="text-sm font-medium">Stop Loss</label>
+                            <label className="text-xs font-medium">Stop Loss</label>
                             <Input 
                               type="number"
                               value={bot.config.stopLoss}
                               onChange={(e) => updateBotConfig(bot.id, { stopLoss: parseFloat(e.target.value) })}
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-xs font-medium">Martingale</label>
+                            <Input 
+                              type="number"
+                              step="0.1"
+                              value={bot.config.martingaleMultiplier}
+                              onChange={(e) => updateBotConfig(bot.id, { martingaleMultiplier: parseFloat(e.target.value) })}
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-xs font-medium">Max Steps</label>
+                            <Input 
+                              type="number"
+                              value={bot.config.martingaleMaxSteps}
+                              onChange={(e) => updateBotConfig(bot.id, { martingaleMaxSteps: parseInt(e.target.value) })}
+                              className="h-8 text-xs"
                             />
                           </div>
                         </div>
                         <div>
-                          <label className="text-sm font-medium">Recovery Threshold (losses)</label>
+                          <label className="text-xs font-medium">Trading Interval (ms)</label>
                           <Input 
                             type="number"
-                            value={bot.config.recoveryThreshold}
-                            onChange={(e) => updateBotConfig(bot.id, { recoveryThreshold: parseInt(e.target.value) })}
+                            value={bot.config.tradingInterval}
+                            onChange={(e) => updateBotConfig(bot.id, { tradingInterval: parseInt(e.target.value) })}
+                            className="h-8 text-xs"
                           />
                         </div>
                         <div className="flex items-center gap-2">
@@ -1217,21 +1375,8 @@ export function MultiBotSignalForge() {
                             checked={bot.config.isCopyTrading}
                             onCheckedChange={(checked) => updateBotConfig(bot.id, { isCopyTrading: checked })}
                           />
-                          <label className="text-sm">Enable Copy Trading (as master)</label>
+                          <label className="text-xs">Enable as Master (for copy trading)</label>
                         </div>
-                        {bot.config.isCopyTrading && (
-                          <div>
-                            <label className="text-sm font-medium">Copy Ratio (for followers)</label>
-                            <Input 
-                              type="number"
-                              step="0.1"
-                              min="0.1"
-                              max="1"
-                              value={bot.config.copyRatio || 0.5}
-                              onChange={(e) => updateBotConfig(bot.id, { copyRatio: parseFloat(e.target.value) })}
-                            />
-                          </div>
-                        )}
                       </div>
                     </DialogContent>
                   </Dialog>
@@ -1242,56 +1387,54 @@ export function MultiBotSignalForge() {
         </div>
       </div>
 
-      {/* Trade Logs */}
+      {/* Recent Trades */}
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
             <Clock className="w-4 h-4" /> Recent Trades
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ScrollArea className="h-[300px]">
-            <table className="w-full text-sm">
+          <ScrollArea className="h-[250px]">
+            <table className="w-full text-xs">
               <thead className="sticky top-0 bg-background">
                 <tr className="border-b">
-                  <th className="text-left p-2">Time</th>
-                  <th className="text-left p-2">Bot</th>
-                  <th className="text-left p-2">Signal</th>
-                  <th className="text-right p-2">Stake</th>
-                  <th className="text-center p-2">Result</th>
-                  <th className="text-right p-2">P/L</th>
-                  <th className="text-center p-2">Copy</th>
-                </tr>
+                  <th className="text-left p-1">Time</th>
+                  <th className="text-left p-1">Bot</th>
+                  <th className="text-left p-1">Signal</th>
+                  <th className="text-right p-1">Stake</th>
+                  <th className="text-center p-1">Result</th>
+                  <th className="text-right p-1">P/L</th>
+                  <th className="text-center p-1">Digit</th>
+                 </tr>
               </thead>
               <tbody>
                 {tradeLogs.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-8 text-muted-foreground">
+                    <td colSpan={7} className="text-center py-6 text-muted-foreground">
                       No trades yet. Start bots to see activity.
                     </td>
                   </tr>
                 ) : (
-                  tradeLogs.slice(0, 50).map((log) => (
+                  tradeLogs.slice(0, 30).map((log) => (
                     <tr key={log.id} className="border-b hover:bg-muted/30">
-                      <td className="p-2 font-mono text-xs">{log.time.toLocaleTimeString()}</td>
-                      <td className="p-2 text-xs">{log.botName}</td>
-                      <td className="p-2 text-xs">{log.direction}</td>
-                      <td className="p-2 text-right font-mono text-xs">${log.stake.toFixed(2)}</td>
-                      <td className="p-2 text-center">
+                      <td className="p-1 font-mono text-[10px]">{log.time.toLocaleTimeString()}</td>
+                      <td className="p-1 text-[10px]">{log.botName}</td>
+                      <td className="p-1 text-[10px]">{log.direction}</td>
+                      <td className="p-1 text-right font-mono text-[10px]">${log.stake.toFixed(2)}</td>
+                      <td className="p-1 text-center">
                         {log.result === 'Win' ? (
-                          <CheckCircle className="w-4 h-4 text-green-500 inline" />
+                          <CheckCircle className="w-3 h-3 text-green-500 inline" />
                         ) : log.result === 'Loss' ? (
-                          <XCircle className="w-4 h-4 text-red-500 inline" />
+                          <XCircle className="w-3 h-3 text-red-500 inline" />
                         ) : (
-                          <Clock className="w-4 h-4 text-yellow-500 inline animate-pulse" />
+                          <Clock className="w-3 h-3 text-yellow-500 inline animate-pulse" />
                         )}
                       </td>
-                      <td className={`p-2 text-right font-mono text-xs ${log.pnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                      <td className={`p-1 text-right font-mono text-[10px] ${log.pnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                         {log.pnl >= 0 ? '+' : ''}{log.pnl.toFixed(2)}
                       </td>
-                      <td className="p-2 text-center">
-                        {log.isCopyTrade && <Copy className="w-3 h-3 text-blue-500 inline" />}
-                      </td>
+                      <td className="p-1 text-center font-mono text-[10px]">{log.exitDigit || '-'}</td>
                     </tr>
                   ))
                 )}
@@ -1302,11 +1445,12 @@ export function MultiBotSignalForge() {
       </Card>
 
       {/* Footer */}
-      <div className="flex justify-between items-center text-xs text-muted-foreground border-t border-border pt-4">
+      <div className="flex justify-between items-center text-[10px] text-muted-foreground border-t border-border pt-3">
         <div className="flex items-center gap-4">
-          <span>⚡ {bots.length} Active Bots</span>
-          <span>📊 {connectedMarkets} Live Markets</span>
-          <span>🔄 Copy Trading Enabled</span>
+          <span>⚡ {bots.length} Bots</span>
+          <span>📊 {connectedMarkets} Markets</span>
+          <span>🔄 Adaptive Trading</span>
+          <span>🎯 Signal Strength Filtering</span>
         </div>
         <div>
           Balance: <span className="font-mono font-bold">${balance.toFixed(2)}</span>
@@ -1316,4 +1460,4 @@ export function MultiBotSignalForge() {
   );
 }
 
-export default MultiBotSignalForge;
+export default AdaptiveMultiBot;
