@@ -12,9 +12,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { 
   Play, StopCircle, Settings, TrendingUp, TrendingDown, Zap, Shield, Target, 
-  Copy, Plus, Trash2, Bot, RefreshCw, Users, Crown, 
-  BarChart3, Activity, AlertCircle, CheckCircle, XCircle, Clock, 
-  Gauge, Rocket, Brain, Sparkles, GitBranch, Radio, Signal
+  Plus, Trash2, Bot, BarChart3, Activity, AlertCircle, CheckCircle, XCircle, Clock, 
+  Sparkles, Brain, Signal, Gauge, Rocket
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
@@ -48,9 +47,6 @@ interface BotConfig {
   takeProfit: number;
   stopLoss: number;
   recoveryThreshold: number;
-  isCopyTrading: boolean;
-  masterBotId?: string;
-  copyRatio?: number;
   minSignalStrength: number;
   maxConcurrentTrades: number;
   tradingInterval: number;
@@ -85,7 +81,6 @@ interface TradeLog {
   result: 'Win' | 'Loss' | 'Pending';
   pnl: number;
   balance: number;
-  isCopyTrade: boolean;
   signalStrength: number;
   exitDigit: number;
 }
@@ -102,7 +97,7 @@ let signalIdCounter = 0;
 let botIdCounter = 0;
 let tradeIdCounter = 0;
 
-// Helper: compute digit frequencies and get last digit
+// Helper: compute digit frequencies
 function computeDigitStats(ticks: number[], thresholdDigit: number = 5) {
   if (!ticks || ticks.length < 50) return null;
   const recent = ticks.slice(-TICK_DEPTH);
@@ -113,12 +108,6 @@ function computeDigitStats(ticks: number[], thresholdDigit: number = 5) {
   entries.sort((a, b) => b.count - a.count);
   const mostAppearing = entries[0]?.digit ?? 0;
   const secondMost = entries[1]?.digit ?? mostAppearing;
-  const leastAppearing = (() => {
-    for (let i = entries.length - 1; i >= 0; i--) {
-      if (entries[i].count > 0) return entries[i].digit;
-    }
-    return 0;
-  })();
 
   let overCount = 0, underCount = 0;
   recent.forEach(d => { if (d > thresholdDigit) overCount++; else if (d < thresholdDigit) underCount++; });
@@ -126,23 +115,20 @@ function computeDigitStats(ticks: number[], thresholdDigit: number = 5) {
   recent.forEach(d => { if (d % 2 === 0) evenCount++; else oddCount++; });
 
   const lastDigit = ticks[ticks.length - 1] || 0;
-  const lastPrice = lastDigit; // Simplified for demo
 
   return {
     mostAppearing,
     secondMost,
-    leastAppearing,
     overRate: overCount / recent.length,
     underRate: underCount / recent.length,
     oddRate: oddCount / recent.length,
     evenRate: evenCount / recent.length,
     totalTicks: recent.length,
     lastDigit,
-    lastPrice
   };
 }
 
-// Generate signals from tick data with strength calculation
+// Generate signals from tick data
 function generateSignalsFromTicks(ticksMap: Map<string, number[]>, contractType: string): Signal[] {
   const signals: Signal[] = [];
   
@@ -151,7 +137,7 @@ function generateSignalsFromTicks(ticksMap: Map<string, number[]>, contractType:
     const stats = computeDigitStats(ticks, 5);
     if (!stats) continue;
     
-    const { mostAppearing, secondMost, overRate, underRate, oddRate, evenRate, lastDigit, lastPrice } = stats;
+    const { mostAppearing, secondMost, overRate, underRate, oddRate, evenRate, lastDigit } = stats;
     
     if (contractType === 'overunder') {
       // OVER signal
@@ -167,11 +153,11 @@ function generateSignalsFromTicks(ticksMap: Map<string, number[]>, contractType:
           name: "📈 OVER",
           strength,
           symbol: symbol,
-          detail: `Most digit ${mostAppearing} (5-9 zone) | Over rate ${(overRate * 100).toFixed(0)}% | Last: ${lastDigit}`,
-          extra: `Threshold 5 | Most:${mostAppearing} 2nd:${secondMost}`,
+          detail: `Most digit ${mostAppearing} (5-9 zone) | Over rate ${(overRate * 100).toFixed(0)}%`,
+          extra: `Most:${mostAppearing} 2nd:${secondMost}`,
           direction: 'OVER',
           timestamp: new Date(),
-          price: lastPrice,
+          price: lastDigit,
           digit: lastDigit
         });
       }
@@ -189,11 +175,11 @@ function generateSignalsFromTicks(ticksMap: Map<string, number[]>, contractType:
           name: "📉 UNDER",
           strength,
           symbol: symbol,
-          detail: `Most digit ${mostAppearing} (0-6 zone) | Under rate ${(underRate * 100).toFixed(0)}% | Last: ${lastDigit}`,
-          extra: `Threshold 5 | Most:${mostAppearing} 2nd:${secondMost}`,
+          detail: `Most digit ${mostAppearing} (0-6 zone) | Under rate ${(underRate * 100).toFixed(0)}%`,
+          extra: `Most:${mostAppearing} 2nd:${secondMost}`,
           direction: 'UNDER',
           timestamp: new Date(),
-          price: lastPrice,
+          price: lastDigit,
           digit: lastDigit
         });
       }
@@ -212,11 +198,11 @@ function generateSignalsFromTicks(ticksMap: Map<string, number[]>, contractType:
           name: "🎲 ODD",
           strength,
           symbol: symbol,
-          detail: `Most digit ${mostAppearing} (odd) | Odd winrate ${(oddRate * 100).toFixed(0)}% | Last: ${lastDigit}`,
+          detail: `Most digit ${mostAppearing} (odd) | Odd winrate ${(oddRate * 100).toFixed(0)}%`,
           extra: `Most digit ${mostAppearing} → Odd bias`,
           direction: 'ODD',
           timestamp: new Date(),
-          price: lastPrice,
+          price: lastDigit,
           digit: lastDigit
         });
       }
@@ -233,11 +219,11 @@ function generateSignalsFromTicks(ticksMap: Map<string, number[]>, contractType:
           name: "🎲 EVEN",
           strength,
           symbol: symbol,
-          detail: `Most digit ${mostAppearing} (even) | Even winrate ${(evenRate * 100).toFixed(0)}% | Last: ${lastDigit}`,
+          detail: `Most digit ${mostAppearing} (even) | Even winrate ${(evenRate * 100).toFixed(0)}%`,
           extra: `Most digit ${mostAppearing} → Even bias`,
           direction: 'EVEN',
           timestamp: new Date(),
-          price: lastPrice,
+          price: lastDigit,
           digit: lastDigit
         });
       }
@@ -255,7 +241,6 @@ async function executeTrade(
   balance: number,
   recordLossFn: (stake: number, symbol: string, duration: number) => void
 ): Promise<{ won: boolean; pnl: number; exitDigit: number }> {
-  // Determine contract type based on signal direction
   let contractTypeParam = '';
   let barrier = '';
   
@@ -352,7 +337,6 @@ export function AdaptiveMultiBot() {
           takeProfit: 10,
           stopLoss: 5,
           recoveryThreshold: 3,
-          isCopyTrading: false,
           minSignalStrength: 0.65,
           maxConcurrentTrades: 1,
           tradingInterval: 3000,
@@ -384,7 +368,6 @@ export function AdaptiveMultiBot() {
           takeProfit: 10,
           stopLoss: 5,
           recoveryThreshold: 8,
-          isCopyTrading: false,
           minSignalStrength: 0.65,
           maxConcurrentTrades: 1,
           tradingInterval: 3000,
@@ -416,7 +399,6 @@ export function AdaptiveMultiBot() {
           takeProfit: 10,
           stopLoss: 5,
           recoveryThreshold: 3,
-          isCopyTrading: false,
           minSignalStrength: 0.65,
           maxConcurrentTrades: 1,
           tradingInterval: 3000,
@@ -448,7 +430,6 @@ export function AdaptiveMultiBot() {
           takeProfit: 10,
           stopLoss: 5,
           recoveryThreshold: 3,
-          isCopyTrading: false,
           minSignalStrength: 0.65,
           maxConcurrentTrades: 1,
           tradingInterval: 3000,
@@ -467,28 +448,25 @@ export function AdaptiveMultiBot() {
         lastSignalStrength: 0,
       },
       {
-        id: `bot_smart_${Date.now()}`,
+        id: `bot_flex_${Date.now()}`,
         config: {
-          id: `bot_smart_${Date.now()}`,
-          name: "🧠 SMART FOLLOWER",
+          id: `bot_flex_${Date.now()}`,
+          name: "🧠 FLEX TRADER",
           enabled: true,
           signalType: 'ANY',
           symbol: null,
-          stake: 0.35,
-          martingaleMultiplier: 1.8,
-          martingaleMaxSteps: 2,
-          takeProfit: 8,
-          stopLoss: 4,
-          recoveryThreshold: 2,
-          isCopyTrading: true,
-          masterBotId: `bot_over_${Date.now()}`,
-          copyRatio: 0.7,
+          stake: 0.5,
+          martingaleMultiplier: 2,
+          martingaleMaxSteps: 3,
+          takeProfit: 10,
+          stopLoss: 5,
+          recoveryThreshold: 3,
           minSignalStrength: 0.7,
           maxConcurrentTrades: 1,
-          tradingInterval: 4000,
+          tradingInterval: 3000,
         },
         status: 'idle',
-        currentStake: 0.35,
+        currentStake: 0.5,
         martingaleStep: 0,
         consecutiveLosses: 0,
         totalPnL: 0,
@@ -533,7 +511,6 @@ export function AdaptiveMultiBot() {
           if (ticks.length > 2500) ticks.shift();
           ticksMapRef.current.set(symbol, [...ticks]);
           
-          // Generate signals on every tick
           const newSignals = generateSignalsFromTicks(ticksMapRef.current, contractType);
           setLiveSignals(newSignals);
           setLastSignalUpdate(new Date());
@@ -572,7 +549,7 @@ export function AdaptiveMultiBot() {
     }, 5000);
   }, [connectMarket]);
 
-  // Bot trading loop - dynamically adapts to signals
+  // Bot trading loop
   const startBotLoop = useCallback((bot: BotInstance) => {
     if (botLoopsRef.current.has(bot.id)) {
       clearInterval(botLoopsRef.current.get(bot.id));
@@ -584,59 +561,50 @@ export function AdaptiveMultiBot() {
         return;
       }
       
-      // Find matching signal for this bot
       let matchingSignals = liveSignals;
       
       if (currentBot.config.signalType !== 'ANY') {
         matchingSignals = liveSignals.filter(s => s.direction === currentBot.config.signalType);
       }
       
-      // Filter by minimum signal strength
       matchingSignals = matchingSignals.filter(s => s.strength >= currentBot.config.minSignalStrength);
       
       if (matchingSignals.length === 0) {
-        // No strong signal, bot waits
         setBots(prev => prev.map(b => 
           b.id === currentBot.id ? { ...b, lastSignalStrength: 0 } : b
         ));
         return;
       }
       
-      // Check concurrent trades limit
       if (currentBot.pendingTrades >= currentBot.config.maxConcurrentTrades) {
         return;
       }
       
-      // Select best signal (highest strength)
       const bestSignal = matchingSignals[0];
       
-      // Update bot's last signal strength
       setBots(prev => prev.map(b => 
         b.id === currentBot.id ? { ...b, lastSignalStrength: bestSignal.strength, activeSignal: bestSignal } : b
       ));
       
-      // Check if we should enter recovery mode
-      let isInRecovery = false;
+      // Recovery mode check
       if (currentBot.consecutiveLosses >= currentBot.config.recoveryThreshold) {
-        isInRecovery = true;
         if (currentBot.status !== 'recovery') {
           setBots(prev => prev.map(b => 
             b.id === currentBot.id ? { ...b, status: 'recovery' } : b
           ));
-          toast.warning(`${currentBot.config.name}: Entering recovery mode after ${currentBot.consecutiveLosses} losses`);
+          toast.warning(`${currentBot.config.name}: Recovery mode after ${currentBot.consecutiveLosses} losses`);
         }
       } else if (currentBot.status === 'recovery' && currentBot.consecutiveLosses === 0) {
         setBots(prev => prev.map(b => 
           b.id === currentBot.id ? { ...b, status: 'running' } : b
         ));
-        toast.success(`${currentBot.config.name}: Recovery complete! Back to normal mode`);
+        toast.success(`${currentBot.config.name}: Recovery complete!`);
       }
       
       // Execute trade
       const tradeId = `trade_${Date.now()}_${currentBot.id}_${tradeIdCounter++}`;
       const now = new Date();
       
-      // Add pending trade log
       setTradeLogs(prev => [{
         id: tradeId,
         botId: currentBot.id,
@@ -649,7 +617,6 @@ export function AdaptiveMultiBot() {
         result: 'Pending',
         pnl: 0,
         balance: balance,
-        isCopyTrade: currentBot.config.isCopyTrading,
         signalStrength: bestSignal.strength,
         exitDigit: 0,
       }, ...prev].slice(0, 200));
@@ -679,7 +646,6 @@ export function AdaptiveMultiBot() {
         const newWins = currentBot.wins + (result.won ? 1 : 0);
         const newLosses = currentBot.losses + (result.won ? 0 : 1);
         
-        // Update trade log with result
         setTradeLogs(prev => prev.map(log => 
           log.id === tradeId ? { 
             ...log, 
@@ -690,7 +656,6 @@ export function AdaptiveMultiBot() {
           } : log
         ));
         
-        // Update bot stats
         setBots(prev => prev.map(b => 
           b.id === currentBot.id ? {
             ...b,
@@ -709,7 +674,6 @@ export function AdaptiveMultiBot() {
         setGlobalPnL(prev => prev + result.pnl);
         setGlobalTrades(prev => prev + 1);
         
-        // Toast notification for trade result
         if (result.won) {
           toast.success(`${currentBot.config.name}: ✅ WIN! +$${result.pnl.toFixed(2)} on ${bestSignal.symbol}`);
         } else {
@@ -718,7 +682,7 @@ export function AdaptiveMultiBot() {
         
         // Check TP/SL
         if (newTotalPnL >= currentBot.config.takeProfit) {
-          toast.success(`${currentBot.config.name}: 🎯 Take Profit reached! +$${newTotalPnL.toFixed(2)}`);
+          toast.success(`${currentBot.config.name}: 🎯 Take Profit! +$${newTotalPnL.toFixed(2)}`);
           setBots(prev => prev.map(b => b.id === currentBot.id ? { ...b, status: 'idle' } : b));
           runningBotsRef.current.delete(currentBot.id);
           if (botLoopsRef.current.has(currentBot.id)) {
@@ -727,59 +691,12 @@ export function AdaptiveMultiBot() {
           }
         }
         if (newTotalPnL <= -currentBot.config.stopLoss) {
-          toast.error(`${currentBot.config.name}: 🛑 Stop Loss reached! $${newTotalPnL.toFixed(2)}`);
+          toast.error(`${currentBot.config.name}: 🛑 Stop Loss! $${newTotalPnL.toFixed(2)}`);
           setBots(prev => prev.map(b => b.id === currentBot.id ? { ...b, status: 'idle' } : b));
           runningBotsRef.current.delete(currentBot.id);
           if (botLoopsRef.current.has(currentBot.id)) {
             clearInterval(botLoopsRef.current.get(currentBot.id));
             botLoopsRef.current.delete(currentBot.id);
-          }
-        }
-        
-        // Copy trading: if this bot is a master, trigger followers
-        if (!currentBot.config.isCopyTrading) {
-          const followers = bots.filter(b => 
-            b.config.isCopyTrading && b.config.masterBotId === currentBot.id && b.status === 'running'
-          );
-          
-          for (const follower of followers) {
-            const copyStake = currentBot.currentStake * (follower.config.copyRatio || 0.5);
-            if (copyStake >= 0.35) {
-              // Schedule copy trade with slight delay
-              setTimeout(() => {
-                const updatedFollower = bots.find(b => b.id === follower.id);
-                if (updatedFollower && updatedFollower.status === 'running') {
-                  const copySignal = { ...bestSignal };
-                  const copyTradeId = `copy_${Date.now()}_${follower.id}`;
-                  setTradeLogs(prev => [{
-                    id: copyTradeId,
-                    botId: follower.id,
-                    botName: follower.config.name,
-                    time: new Date(),
-                    symbol: copySignal.symbol,
-                    signalType: copySignal.type,
-                    direction: copySignal.direction,
-                    stake: copyStake,
-                    result: result.won ? 'Win' : 'Loss',
-                    pnl: result.won ? result.pnl * (follower.config.copyRatio || 0.5) : -copyStake,
-                    balance: balance,
-                    isCopyTrade: true,
-                    signalStrength: copySignal.strength,
-                    exitDigit: result.exitDigit,
-                  }, ...prev].slice(0, 200));
-                  
-                  setBots(prev => prev.map(b => 
-                    b.id === follower.id ? {
-                      ...b,
-                      totalPnL: b.totalPnL + (result.won ? result.pnl * (follower.config.copyRatio || 0.5) : -copyStake),
-                      totalTrades: b.totalTrades + 1,
-                      wins: b.wins + (result.won ? 1 : 0),
-                      losses: b.losses + (result.won ? 0 : 1),
-                    } : b
-                  ));
-                }
-              }, 500);
-            }
           }
         }
         
@@ -795,20 +712,20 @@ export function AdaptiveMultiBot() {
     botLoopsRef.current.set(bot.id, interval);
   }, [bots, liveSignals, balance, recordLoss]);
   
-  // Start a specific bot
   const startBot = useCallback((botId: string) => {
     const bot = bots.find(b => b.id === botId);
     if (!bot || !bot.config.enabled) return;
     if (runningBotsRef.current.has(botId)) return;
     
     runningBotsRef.current.add(botId);
-    setBots(prev => prev.map(b => b.id === botId ? { ...b, status: 'running', consecutiveLosses: 0, martingaleStep: 0, currentStake: b.config.stake } : b));
+    setBots(prev => prev.map(b => 
+      b.id === botId ? { ...b, status: 'running', consecutiveLosses: 0, martingaleStep: 0, currentStake: b.config.stake } : b
+    ));
     
     startBotLoop(bot);
-    toast.success(`${bot.config.name} started - waiting for signals`);
+    toast.success(`${bot.config.name} started`);
   }, [bots, startBotLoop]);
   
-  // Stop a specific bot
   const stopBot = useCallback((botId: string) => {
     if (botLoopsRef.current.has(botId)) {
       clearInterval(botLoopsRef.current.get(botId));
@@ -819,7 +736,6 @@ export function AdaptiveMultiBot() {
     toast.info(`Bot stopped`);
   }, []);
   
-  // Start all bots
   const startAllBots = useCallback(() => {
     bots.forEach(bot => {
       if (bot.config.enabled && bot.status === 'idle') {
@@ -828,7 +744,6 @@ export function AdaptiveMultiBot() {
     });
   }, [bots, startBot]);
   
-  // Stop all bots
   const stopAllBots = useCallback(() => {
     bots.forEach(bot => {
       if (bot.status === 'running') {
@@ -837,7 +752,6 @@ export function AdaptiveMultiBot() {
     });
   }, [bots, stopBot]);
   
-  // Delete a bot
   const deleteBot = useCallback((botId: string) => {
     if (runningBotsRef.current.has(botId)) {
       stopBot(botId);
@@ -846,14 +760,19 @@ export function AdaptiveMultiBot() {
     toast.info(`Bot removed`);
   }, [stopBot]);
   
-  // Add new bot
   const addBot = useCallback((signalType: 'OVER' | 'UNDER' | 'ODD' | 'EVEN' | 'ANY' = 'ANY') => {
     const newBotId = `bot_${Date.now()}_${botIdCounter++}`;
+    const recoveryThreshold = signalType === 'UNDER' ? 8 : 3;
+    const botName = signalType === 'ANY' ? '🧠 FLEX TRADER' :
+                    signalType === 'OVER' ? '🟢 OVER BOT' :
+                    signalType === 'UNDER' ? '🔴 UNDER BOT' :
+                    signalType === 'ODD' ? '🟣 ODD BOT' : '🟡 EVEN BOT';
+    
     const newBot: BotInstance = {
       id: newBotId,
       config: {
         id: newBotId,
-        name: `🤖 ${signalType === 'ANY' ? 'Flex' : signalType} Bot ${bots.length + 1}`,
+        name: `${botName} ${bots.length + 1}`,
         enabled: true,
         signalType: signalType,
         symbol: null,
@@ -862,8 +781,7 @@ export function AdaptiveMultiBot() {
         martingaleMaxSteps: 3,
         takeProfit: 10,
         stopLoss: 5,
-        recoveryThreshold: signalType === 'UNDER' ? 8 : 3,
-        isCopyTrading: false,
+        recoveryThreshold: recoveryThreshold,
         minSignalStrength: 0.65,
         maxConcurrentTrades: 1,
         tradingInterval: 3000,
@@ -885,19 +803,16 @@ export function AdaptiveMultiBot() {
     toast.success(`New ${signalType === 'ANY' ? 'Flex' : signalType} bot created!`);
   }, [bots.length]);
   
-  // Update bot config
   const updateBotConfig = useCallback((botId: string, updates: Partial<BotConfig>) => {
     setBots(prev => prev.map(b => 
       b.id === botId ? { ...b, config: { ...b.config, ...updates } } : b
     ));
   }, []);
   
-  // Load markets on mount
   useEffect(() => {
     loadGroup(marketGroup);
   }, [marketGroup, loadGroup]);
   
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       wsConnectionsRef.current.forEach((ws) => ws.close());
@@ -907,8 +822,6 @@ export function AdaptiveMultiBot() {
   
   const globalWinRate = globalTrades > 0 ? ((bots.reduce((acc, b) => acc + b.wins, 0) / globalTrades) * 100).toFixed(1) : '0';
   const activeBotsCount = bots.filter(b => b.status === 'running').length;
-  
-  // Get top 5 strongest signals for display
   const topSignals = liveSignals.slice(0, 5);
   
   return (
@@ -917,10 +830,10 @@ export function AdaptiveMultiBot() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold bg-gradient-to-r from-orange-400 to-purple-400 bg-clip-text text-transparent">
-            ⚡ ADAPTIVE MULTI-BOT SIGNAL FORGE
+            ⚡ SIGNAL FORGE • AUTO TRADING BOTS
           </h2>
           <p className="text-xs text-muted-foreground mt-1">
-            {bots.length} Bots | {activeBotsCount} Active | {connectedMarkets} Markets | Real-time Adaptation
+            {bots.length} Bots | {activeBotsCount} Active | {connectedMarkets} Markets | Real-time Signal Trading
           </p>
         </div>
         <div className="flex gap-3">
@@ -1000,7 +913,7 @@ export function AdaptiveMultiBot() {
           <CardContent className="pt-3 pb-2">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-[10px] text-muted-foreground">Global P/L</p>
+                <p className="text-[10px] text-muted-foreground">Total P/L</p>
                 <p className={`text-xl font-bold ${globalPnL >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                   ${globalPnL.toFixed(2)}
                 </p>
@@ -1049,7 +962,7 @@ export function AdaptiveMultiBot() {
                 <p className="text-[10px] text-muted-foreground">Last Signal</p>
                 <p className="text-xs font-mono">{lastSignalUpdate.toLocaleTimeString()}</p>
               </div>
-              <Radio className="w-6 h-6 text-cyan-400 animate-pulse" />
+              <Signal className="w-6 h-6 text-cyan-400 animate-pulse" />
             </div>
           </CardContent>
         </Card>
@@ -1062,7 +975,7 @@ export function AdaptiveMultiBot() {
             <Zap className="w-4 h-4 text-yellow-500" /> LIVE SIGNALS
           </h3>
           <Badge variant="outline" className="text-[10px] animate-pulse">
-            {isLoading ? 'Loading...' : `${liveSignals.length} active signals`}
+            {isLoading ? 'Loading...' : `${liveSignals.length} active`}
           </Badge>
         </div>
         
@@ -1113,17 +1026,12 @@ export function AdaptiveMultiBot() {
         </div>
       </div>
 
-      {/* Bots Grid - Dynamically trading based on signals */}
+      {/* Bots Grid */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-md font-semibold flex items-center gap-2">
             <Bot className="w-4 h-4 text-primary" /> TRADING BOTS
           </h3>
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => addBot('ANY')} className="text-xs">
-              <Plus className="w-3 h-3 mr-1" /> Quick Bot
-            </Button>
-          </div>
         </div>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1147,11 +1055,6 @@ export function AdaptiveMultiBot() {
                       <div className="w-2 h-2 rounded-full bg-gray-500" />
                     )}
                     <CardTitle className="text-sm">{bot.config.name}</CardTitle>
-                    {bot.config.isCopyTrading && (
-                      <Badge variant="outline" className="text-[8px]">
-                        <Copy className="w-2 h-2 mr-1" /> Copy
-                      </Badge>
-                    )}
                   </div>
                   <div className="flex items-center gap-1">
                     <Switch 
@@ -1182,7 +1085,6 @@ export function AdaptiveMultiBot() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-2 pb-2">
-                {/* Stats */}
                 <div className="grid grid-cols-3 gap-1 text-center">
                   <div>
                     <p className="text-[8px] text-muted-foreground">P/L</p>
@@ -1202,7 +1104,6 @@ export function AdaptiveMultiBot() {
                   </div>
                 </div>
                 
-                {/* Current Signal Indicator */}
                 {bot.activeSignal && (
                   <div className="bg-muted/30 rounded p-1">
                     <div className="flex items-center justify-between text-[9px]">
@@ -1215,7 +1116,6 @@ export function AdaptiveMultiBot() {
                   </div>
                 )}
                 
-                {/* Consecutive Losses Bar */}
                 {bot.consecutiveLosses > 0 && (
                   <div className="space-y-0.5">
                     <div className="flex justify-between text-[8px]">
@@ -1227,12 +1127,10 @@ export function AdaptiveMultiBot() {
                     <Progress 
                       value={(bot.consecutiveLosses / bot.config.recoveryThreshold) * 100} 
                       className="h-1" 
-                      indicatorClassName={bot.consecutiveLosses >= bot.config.recoveryThreshold ? 'bg-orange-500' : 'bg-red-500'}
                     />
                   </div>
                 )}
                 
-                {/* Controls */}
                 <div className="flex gap-2 pt-1">
                   {bot.status !== 'running' ? (
                     <Button 
@@ -1370,13 +1268,6 @@ export function AdaptiveMultiBot() {
                             className="h-8 text-xs"
                           />
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Switch 
-                            checked={bot.config.isCopyTrading}
-                            onCheckedChange={(checked) => updateBotConfig(bot.id, { isCopyTrading: checked })}
-                          />
-                          <label className="text-xs">Enable as Master (for copy trading)</label>
-                        </div>
                       </div>
                     </DialogContent>
                   </Dialog>
@@ -1449,8 +1340,8 @@ export function AdaptiveMultiBot() {
         <div className="flex items-center gap-4">
           <span>⚡ {bots.length} Bots</span>
           <span>📊 {connectedMarkets} Markets</span>
-          <span>🔄 Adaptive Trading</span>
           <span>🎯 Signal Strength Filtering</span>
+          <span>🔄 Martingale Risk Management</span>
         </div>
         <div>
           Balance: <span className="font-mono font-bold">${balance.toFixed(2)}</span>
