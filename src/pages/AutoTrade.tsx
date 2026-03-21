@@ -176,15 +176,17 @@ function mapCandlesToPriceIndices(prices: number[], times: number[], tf: string)
   return indices;
 }
 
-// Enhanced support/resistance detection with multiple levels
-function detectSupportResistance(prices: number[], lookback: number = 100, sensitivity: number = 5): { supports: number[]; resistances: number[] } {
+// Enhanced support/resistance detection for strong levels
+function detectStrongSupportResistance(prices: number[], lookback: number = 200, sensitivity: number = 5): { support: number; resistance: number } {
   const recentPrices = prices.slice(-lookback);
-  if (recentPrices.length < 20) return { supports: [], resistances: [] };
+  if (recentPrices.length < 20) return { support: 0, resistance: 0 };
   
   const levels: number[] = [];
   const threshold = (Math.max(...recentPrices) - Math.min(...recentPrices)) * 0.005;
   
-  // Find pivot points
+  // Find pivot points with multiple touches
+  const pivotPoints: { price: number; touches: number }[] = [];
+  
   for (let i = sensitivity; i < recentPrices.length - sensitivity; i++) {
     let isPivotHigh = true;
     let isPivotLow = true;
@@ -198,35 +200,40 @@ function detectSupportResistance(prices: number[], lookback: number = 100, sensi
     if (isPivotLow) levels.push(recentPrices[i]);
   }
   
-  // Cluster nearby levels
-  const clustered: number[] = [];
-  levels.sort((a, b) => a - b);
-  
+  // Cluster nearby levels and count touches
+  const clustered: Map<number, number> = new Map();
   for (const level of levels) {
     let found = false;
-    for (let i = 0; i < clustered.length; i++) {
-      if (Math.abs(clustered[i] - level) < threshold) {
-        clustered[i] = (clustered[i] + level) / 2;
+    for (const [key, touches] of clustered.entries()) {
+      if (Math.abs(key - level) < threshold) {
+        clustered.set(key, touches + 1);
         found = true;
         break;
       }
     }
-    if (!found) clustered.push(level);
+    if (!found) clustered.set(level, 1);
   }
   
-  const supports: number[] = [];
-  const resistances: number[] = [];
   const currentPrice = recentPrices[recentPrices.length - 1];
+  let supports: { price: number; touches: number }[] = [];
+  let resistances: { price: number; touches: number }[] = [];
   
-  for (const level of clustered) {
-    if (level < currentPrice) supports.push(level);
-    else if (level > currentPrice) resistances.push(level);
+  for (const [price, touches] of clustered.entries()) {
+    if (price < currentPrice) {
+      supports.push({ price, touches });
+    } else if (price > currentPrice) {
+      resistances.push({ price, touches });
+    }
   }
   
-  supports.sort((a, b) => b - a);
-  resistances.sort((a, b) => a - b);
+  // Sort by touches (most significant first) and get strongest
+  supports.sort((a, b) => b.touches - a.touches);
+  resistances.sort((a, b) => b.touches - a.touches);
   
-  return { supports: supports.slice(0, 5), resistances: resistances.slice(0, 5) };
+  return {
+    support: supports.length > 0 ? supports[0].price : 0,
+    resistance: resistances.length > 0 ? resistances[0].price : 0
+  };
 }
 
 function calcSR(prices: number[]) {
@@ -253,6 +260,8 @@ interface TradeRecord {
   profit: number;
   status: 'won' | 'lost' | 'open';
   symbol: string;
+  winningDigit?: number;
+  resultDigit?: number;
 }
 
 // Tick storage for pattern/digit strategy
@@ -382,9 +391,8 @@ export default function TradingChart() {
   const last26 = useMemo(() => digits.slice(-26), [digits]);
   const { frequency, percentages, mostCommon, leastCommon } = useMemo(() => analyzeDigits(tfPrices), [tfPrices]);
 
-  // Enhanced support/resistance with multiple levels
-  const { supports, resistances } = useMemo(() => detectSupportResistance(tfPrices, 200, 5), [tfPrices]);
-  const { support, resistance } = useMemo(() => calcSR(tfPrices), [tfPrices]);
+  // Strong support/resistance detection
+  const { support, resistance } = useMemo(() => detectStrongSupportResistance(tfPrices, 200, 5), [tfPrices]);
 
   // Indicators
   const bb = useMemo(() => calculateBollingerBands(tfPrices, 20), [tfPrices]);
@@ -582,8 +590,8 @@ export default function TradingChart() {
       if (l !== null) allPrices.push(l);
     }
     // Add support/resistance levels to price range
-    supports.forEach(s => allPrices.push(s));
-    resistances.forEach(r => allPrices.push(r));
+    if (support > 0) allPrices.push(support);
+    if (resistance > 0) allPrices.push(resistance);
     
     const rawMin = Math.min(...allPrices);
     const rawMax = Math.max(...allPrices);
@@ -663,66 +671,43 @@ export default function TradingChart() {
     drawLine(emaSeries, '#2F81F7', 1.5);
     drawLine(smaSeries, '#E6B422', 1.5);
 
-    // Draw multiple support levels (green, dashed)
-    ctx.setLineDash([6, 4]);
-    supports.forEach((sup, idx) => {
-      const supY = toY(sup);
-      ctx.strokeStyle = `rgba(63, 185, 80, ${0.4 + idx * 0.1})`;
-      ctx.lineWidth = 1.5;
+    // Draw strong support level (green, thick)
+    if (support > 0) {
+      ctx.setLineDash([8, 4]);
+      ctx.strokeStyle = '#3FB950';
+      ctx.lineWidth = 2.5;
+      const supY = toY(support);
       ctx.beginPath(); 
       ctx.moveTo(0, supY); 
       ctx.lineTo(chartW, supY); 
       ctx.stroke();
       
       // Add label for support
-      ctx.font = '9px JetBrains Mono, monospace';
-      ctx.fillStyle = `rgba(63, 185, 80, 0.8)`;
+      ctx.font = 'bold 9px JetBrains Mono, monospace';
+      ctx.fillStyle = '#3FB950';
       ctx.fillRect(chartW, supY - 7, priceAxisW, 14);
       ctx.fillStyle = '#0D1117';
-      ctx.fillText(`S${idx + 1} ${sup.toFixed(4)}`, chartW + 2, supY + 3);
-    });
+      ctx.fillText(`STRONG S ${support.toFixed(4)}`, chartW + 2, supY + 3);
+    }
 
-    // Draw multiple resistance levels (red, dashed)
-    resistances.forEach((res, idx) => {
-      const resY = toY(res);
-      ctx.strokeStyle = `rgba(248, 81, 73, ${0.4 + idx * 0.1})`;
-      ctx.lineWidth = 1.5;
+    // Draw strong resistance level (red, thick)
+    if (resistance > 0) {
+      ctx.strokeStyle = '#F85149';
+      ctx.lineWidth = 2.5;
+      const resY = toY(resistance);
       ctx.beginPath(); 
       ctx.moveTo(0, resY); 
       ctx.lineTo(chartW, resY); 
       ctx.stroke();
       
       // Add label for resistance
-      ctx.font = '9px JetBrains Mono, monospace';
-      ctx.fillStyle = `rgba(248, 81, 73, 0.8)`;
+      ctx.font = 'bold 9px JetBrains Mono, monospace';
+      ctx.fillStyle = '#F85149';
       ctx.fillRect(chartW, resY - 7, priceAxisW, 14);
       ctx.fillStyle = '#0D1117';
-      ctx.fillText(`R${idx + 1} ${res.toFixed(4)}`, chartW + 2, resY + 3);
-    });
+      ctx.fillText(`STRONG R ${resistance.toFixed(4)}`, chartW + 2, resY + 3);
+    }
     ctx.setLineDash([]);
-
-    // Draw main support/resistance with thicker lines
-    ctx.strokeStyle = '#3FB950';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); 
-    ctx.moveTo(0, toY(support)); 
-    ctx.lineTo(chartW, toY(support)); 
-    ctx.stroke();
-    ctx.fillStyle = '#3FB950';
-    ctx.fillRect(chartW, toY(support) - 7, priceAxisW, 14);
-    ctx.fillStyle = '#0D1117';
-    ctx.fillText(`Main S ${support.toFixed(4)}`, chartW + 2, toY(support) + 3);
-    
-    ctx.strokeStyle = '#F85149';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); 
-    ctx.moveTo(0, toY(resistance)); 
-    ctx.lineTo(chartW, toY(resistance)); 
-    ctx.stroke();
-    ctx.fillStyle = '#F85149';
-    ctx.fillRect(chartW, toY(resistance) - 7, priceAxisW, 14);
-    ctx.fillStyle = '#0D1117';
-    ctx.fillText(`Main R ${resistance.toFixed(4)}`, chartW + 2, toY(resistance) + 3);
 
     for (let i = 0; i < visibleCandles.length; i++) {
       const c = visibleCandles[i];
@@ -761,8 +746,8 @@ export default function TradingChart() {
       { label: 'BB(20,2)', color: '#BC8CFF' },
       { label: 'SMA 20', color: '#E6B422' },
       { label: 'EMA 50', color: '#2F81F7' },
-      { label: 'Supports', color: '#3FB950' },
-      { label: 'Resistances', color: '#F85149' },
+      { label: 'Strong S', color: '#3FB950' },
+      { label: 'Strong R', color: '#F85149' },
     ];
     let lx = 8;
     legends.forEach(l => {
@@ -828,7 +813,7 @@ export default function TradingChart() {
     ctx.fillStyle = 'rgba(63, 185, 80, 0.04)';
     ctx.fillRect(0, rsiToY(30), chartW, rsiTop + rsiH - rsiToY(30));
 
-  }, [candles, bb, ema50, support, resistance, supports, resistances, currentPrice, candleEndIndices, emaSeries, smaSeries, bbSeries, rsiSeries, rsi, candleWidth, scrollOffset, showChart]);
+  }, [candles, bb, ema50, support, resistance, currentPrice, candleEndIndices, emaSeries, smaSeries, bbSeries, rsiSeries, rsi, candleWidth, scrollOffset, showChart]);
 
   const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
   const marketName = ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol;
@@ -847,9 +832,20 @@ export default function TradingChart() {
       const newTrade: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake: parseFloat(tradeStake), profit: 0, status: 'open', symbol };
       setTradeHistory(prev => [newTrade, ...prev].slice(0, 50));
       const result = await derivApi.waitForContractResult(contractId);
-      setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status } : t));
-      if (result.status === 'won') { toast.success(`✅ WON +$${result.profit.toFixed(2)}`); }
-      else { toast.error(`❌ LOST -$${Math.abs(result.profit).toFixed(2)}`); }
+      
+      // Get the winning/losing digit from the result
+      const resultDigit = getLastDigit(result.price || currentPrice);
+      const winningDigit = result.status === 'won' ? resultDigit : undefined;
+      
+      setTradeHistory(prev => prev.map(t => t.id === contractId ? { 
+        ...t, 
+        profit: result.profit, 
+        status: result.status,
+        winningDigit,
+        resultDigit 
+      } : t));
+      if (result.status === 'won') { toast.success(`✅ WON +$${result.profit.toFixed(2)} | Digit: ${resultDigit}`); }
+      else { toast.error(`❌ LOST -$${Math.abs(result.profit).toFixed(2)} | Digit: ${resultDigit}`); }
     } catch (err: any) { toast.error(`Trade failed: ${err.message}`); }
     finally { setIsTrading(false); }
   };
@@ -894,11 +890,22 @@ export default function TradingChart() {
 
       try {
         const { contractId } = await derivApi.buyContract(params);
-        const tr: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake, profit: 0, status: 'open', symbol };
-        setTradeHistory(prev => [tr, ...prev].slice(0, 100));
         const result = await derivApi.waitForContractResult(contractId);
+        const resultDigit = getLastDigit(result.price || currentPrice);
+        
+        const tr: TradeRecord = { 
+          id: contractId, 
+          time: Date.now(), 
+          type: ct, 
+          stake, 
+          profit: result.profit, 
+          status: result.status,
+          symbol,
+          winningDigit: result.status === 'won' ? resultDigit : undefined,
+          resultDigit
+        };
+        setTradeHistory(prev => [tr, ...prev].slice(0, 100));
         trades++; pnl += result.profit;
-        setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status } : t));
 
         if (result.status === 'won') {
           wins++; consLosses = 0; stake = baseStake;
@@ -914,7 +921,7 @@ export default function TradingChart() {
     }
     setBotRunning(false); botRunningRef.current = false;
     setBotStats(prev => ({ ...prev, trades, wins, losses, pnl }));
-  }, [isAuthorized, botConfig, symbol, strategyEnabled, checkStrategyCondition]);
+  }, [isAuthorized, botConfig, symbol, strategyEnabled, checkStrategyCondition, currentPrice]);
 
   const stopBot = useCallback(() => { botRunningRef.current = false; setBotRunning(false); toast.info('🛑 Bot stopped'); }, []);
   const togglePauseBot = useCallback(() => { botPausedRef.current = !botPausedRef.current; setBotPaused(botPausedRef.current); }, []);
@@ -1000,8 +1007,8 @@ export default function TradingChart() {
                   {[
                     { label: 'Price', value: currentPrice.toFixed(4), color: 'text-foreground' },
                     { label: 'Last Digit', value: String(lastDigit), color: 'text-primary' },
-                    { label: 'Main Support', value: support.toFixed(2), color: 'text-[#3FB950]' },
-                    { label: 'Main Resistance', value: resistance.toFixed(2), color: 'text-[#F85149]' },
+                    { label: 'Strong Support', value: support > 0 ? support.toFixed(2) : 'N/A', color: 'text-[#3FB950]' },
+                    { label: 'Strong Resistance', value: resistance > 0 ? resistance.toFixed(2) : 'N/A', color: 'text-[#F85149]' },
                     { label: 'BB Upper', value: bb.upper.toFixed(2), color: 'text-[#BC8CFF]' },
                     { label: 'BB Middle', value: bb.middle.toFixed(2), color: 'text-[#BC8CFF]' },
                     { label: 'BB Lower', value: bb.lower.toFixed(2), color: 'text-[#BC8CFF]' },
@@ -1012,39 +1019,6 @@ export default function TradingChart() {
                     </div>
                   ))}
                 </div>
-
-                {/* Support/Resistance Levels Panel */}
-                {(supports.length > 0 || resistances.length > 0) && (
-                  <div className="bg-card border border-border rounded-xl p-3">
-                    <h3 className="text-xs font-semibold text-foreground mb-2">📊 Key Support & Resistance Levels</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <div className="text-[10px] text-[#3FB950] font-semibold mb-1">Support Levels</div>
-                        <div className="space-y-1">
-                          {supports.map((s, idx) => (
-                            <div key={idx} className="flex justify-between items-center text-xs">
-                              <span className="text-muted-foreground">S{idx + 1}</span>
-                              <span className="font-mono text-[#3FB950] font-bold">{s.toFixed(4)}</span>
-                            </div>
-                          ))}
-                          {supports.length === 0 && <div className="text-xs text-muted-foreground">No supports detected</div>}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-[#F85149] font-semibold mb-1">Resistance Levels</div>
-                        <div className="space-y-1">
-                          {resistances.map((r, idx) => (
-                            <div key={idx} className="flex justify-between items-center text-xs">
-                              <span className="text-muted-foreground">R{idx + 1}</span>
-                              <span className="font-mono text-[#F85149] font-bold">{r.toFixed(4)}</span>
-                            </div>
-                          ))}
-                          {resistances.length === 0 && <div className="text-xs text-muted-foreground">No resistances detected</div>}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {/* Digit Analysis */}
                 <div className="bg-card border border-border rounded-xl p-3 space-y-3">
@@ -1446,7 +1420,7 @@ export default function TradingChart() {
                   </div>
                 </div>
 
-                {/* Bot Progress */}
+                {/* Trade Progress */}
                 <div className="bg-card border border-border rounded-xl p-3 space-y-2">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
@@ -1505,6 +1479,11 @@ export default function TradingChart() {
                             </span>
                             <span className="font-mono text-muted-foreground">{t.type}</span>
                             <span className="text-muted-foreground">${t.stake.toFixed(2)}</span>
+                            {t.resultDigit !== undefined && (
+                              <Badge variant="outline" className={`text-[8px] px-1 ${t.status === 'won' ? 'border-profit text-profit' : 'border-loss text-loss'}`}>
+                                {t.resultDigit}
+                              </Badge>
+                            )}
                           </div>
                           <span className={`font-mono font-bold ${t.profit >= 0 ? 'text-profit' : 'text-loss'}`}>
                             {t.status === 'open' ? '...' : `${t.profit >= 0 ? '+' : ''}$${t.profit.toFixed(2)}`}
