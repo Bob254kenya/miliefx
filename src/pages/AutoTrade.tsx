@@ -185,9 +185,6 @@ function detectStrongSupportResistance(prices: number[], lookback: number = 200,
   const levels: number[] = [];
   const threshold = (Math.max(...recentPrices) - Math.min(...recentPrices)) * 0.005;
   
-  // Find pivot points with multiple touches
-  const pivotPoints: { price: number; touches: number }[] = [];
-  
   for (let i = sensitivity; i < recentPrices.length - sensitivity; i++) {
     let isPivotHigh = true;
     let isPivotLow = true;
@@ -201,7 +198,6 @@ function detectStrongSupportResistance(prices: number[], lookback: number = 200,
     if (isPivotLow) levels.push(recentPrices[i]);
   }
   
-  // Cluster nearby levels and count touches
   const clustered: Map<number, number> = new Map();
   for (const level of levels) {
     let found = false;
@@ -227,7 +223,6 @@ function detectStrongSupportResistance(prices: number[], lookback: number = 200,
     }
   }
   
-  // Sort by touches (most significant first) and get strongest
   supports.sort((a, b) => b.touches - a.touches);
   resistances.sort((a, b) => b.touches - a.touches);
   
@@ -235,14 +230,6 @@ function detectStrongSupportResistance(prices: number[], lookback: number = 200,
     support: supports.length > 0 ? supports[0].price : 0,
     resistance: resistances.length > 0 ? resistances[0].price : 0
   };
-}
-
-function calcSR(prices: number[]) {
-  if (prices.length < 10) return { support: 0, resistance: 0 };
-  const sorted = [...prices].sort((a, b) => a - b);
-  const p5 = Math.floor(sorted.length * 0.05);
-  const p95 = Math.floor(sorted.length * 0.95);
-  return { support: sorted[p5], resistance: sorted[Math.min(p95, sorted.length - 1)] };
 }
 
 function calcMACDFull(prices: number[]) {
@@ -278,149 +265,6 @@ function addTick(symbol: string, digit: number) {
   if (tickHistoryRef[symbol].length > 200) tickHistoryRef[symbol].shift();
 }
 
-// Digit Containers Component
-const DigitContainers = ({ digits, showEvenOdd, showRiseFall, onToggleEvenOdd, onToggleRiseFall }: { 
-  digits: number[]; 
-  showEvenOdd: boolean; 
-  showRiseFall: boolean;
-  onToggleEvenOdd: () => void;
-  onToggleRiseFall: () => void;
-}) => {
-  // Separate digits into even/odd and rise/fall
-  const evenDigits = digits.filter(d => d % 2 === 0);
-  const oddDigits = digits.filter(d => d % 2 !== 0);
-  
-  const riseDigits = digits.filter(d => d >= 5);
-  const fallDigits = digits.filter(d => d < 5);
-
-  return (
-    <div className="space-y-3">
-      {/* Even/Odd Container */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between bg-muted/30 px-3 py-2 border-b border-border">
-          <h3 className="text-xs font-semibold text-foreground flex items-center gap-2">
-            <span className="text-[#3FB950]">Even</span>
-            <span className="text-muted-foreground">/</span>
-            <span className="text-[#D29922]">Odd</span>
-            <Badge variant="outline" className="text-[9px]">Total: {digits.length}</Badge>
-          </h3>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 w-6 p-0"
-            onClick={onToggleEvenOdd}
-          >
-            {showEvenOdd ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-          </Button>
-        </div>
-        <AnimatePresence>
-          {showEvenOdd && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="overflow-hidden"
-            >
-              <div className="p-3 space-y-2">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-[#3FB950] font-semibold">Even Digits ({evenDigits.length})</span>
-                    <span className="text-muted-foreground">{((evenDigits.length / digits.length) * 100).toFixed(1)}%</span>
-                  </div>
-                  <div className="flex gap-1 flex-wrap">
-                    {evenDigits.slice(-20).map((d, i) => (
-                      <div key={`even-${i}`} className="w-8 h-8 rounded-lg flex items-center justify-center font-mono font-bold text-sm bg-[#3FB950]/10 border border-[#3FB950]/30 text-[#3FB950]">
-                        {d}
-                      </div>
-                    ))}
-                    {evenDigits.length === 0 && <span className="text-[10px] text-muted-foreground">No even digits</span>}
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-[#D29922] font-semibold">Odd Digits ({oddDigits.length})</span>
-                    <span className="text-muted-foreground">{((oddDigits.length / digits.length) * 100).toFixed(1)}%</span>
-                  </div>
-                  <div className="flex gap-1 flex-wrap">
-                    {oddDigits.slice(-20).map((d, i) => (
-                      <div key={`odd-${i}`} className="w-8 h-8 rounded-lg flex items-center justify-center font-mono font-bold text-sm bg-[#D29922]/10 border border-[#D29922]/30 text-[#D29922]">
-                        {d}
-                      </div>
-                    ))}
-                    {oddDigits.length === 0 && <span className="text-[10px] text-muted-foreground">No odd digits</span>}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* Rise/Fall Container */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between bg-muted/30 px-3 py-2 border-b border-border">
-          <h3 className="text-xs font-semibold text-foreground flex items-center gap-2">
-            <span className="text-primary">Rise (≥5)</span>
-            <span className="text-muted-foreground">/</span>
-            <span className="text-[#D29922]">Fall (≤4)</span>
-          </h3>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 w-6 p-0"
-            onClick={onToggleRiseFall}
-          >
-            {showRiseFall ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-          </Button>
-        </div>
-        <AnimatePresence>
-          {showRiseFall && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="overflow-hidden"
-            >
-              <div className="p-3 space-y-2">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-primary font-semibold">Rise Digits ({riseDigits.length})</span>
-                    <span className="text-muted-foreground">{((riseDigits.length / digits.length) * 100).toFixed(1)}%</span>
-                  </div>
-                  <div className="flex gap-1 flex-wrap">
-                    {riseDigits.slice(-20).map((d, i) => (
-                      <div key={`rise-${i}`} className="w-8 h-8 rounded-lg flex items-center justify-center font-mono font-bold text-sm bg-primary/10 border border-primary/30 text-primary">
-                        {d}
-                      </div>
-                    ))}
-                    {riseDigits.length === 0 && <span className="text-[10px] text-muted-foreground">No rise digits</span>}
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-[#D29922] font-semibold">Fall Digits ({fallDigits.length})</span>
-                    <span className="text-muted-foreground">{((fallDigits.length / digits.length) * 100).toFixed(1)}%</span>
-                  </div>
-                  <div className="flex gap-1 flex-wrap">
-                    {fallDigits.slice(-20).map((d, i) => (
-                      <div key={`fall-${i}`} className="w-8 h-8 rounded-lg flex items-center justify-center font-mono font-bold text-sm bg-[#D29922]/10 border border-[#D29922]/30 text-[#D29922]">
-                        {d}
-                      </div>
-                    ))}
-                    {fallDigits.length === 0 && <span className="text-[10px] text-muted-foreground">No fall digits</span>}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </div>
-  );
-};
-
 export default function TradingChart() {
   const { isAuthorized, balance } = useAuth();
   const [showChart, setShowChart] = useState(true);
@@ -434,8 +278,8 @@ export default function TradingChart() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Digit containers visibility
-  const [showEvenOdd, setShowEvenOdd] = useState(true);
-  const [showRiseFall, setShowRiseFall] = useState(true);
+  const [showEvenOddLabels, setShowEvenOddLabels] = useState(true);
+  const [showRiseFallLabels, setShowRiseFallLabels] = useState(true);
 
   // Zoom & pan state
   const [candleWidth, setCandleWidth] = useState(7);
@@ -740,7 +584,6 @@ export default function TradingChart() {
       if (u !== null) allPrices.push(u);
       if (l !== null) allPrices.push(l);
     }
-    // Add support/resistance levels to price range
     if (support > 0) allPrices.push(support);
     if (resistance > 0) allPrices.push(resistance);
     
@@ -822,7 +665,6 @@ export default function TradingChart() {
     drawLine(emaSeries, '#2F81F7', 1.5);
     drawLine(smaSeries, '#E6B422', 1.5);
 
-    // Draw strong support level (green, thick)
     if (support > 0) {
       ctx.setLineDash([8, 4]);
       ctx.strokeStyle = '#3FB950';
@@ -833,7 +675,6 @@ export default function TradingChart() {
       ctx.lineTo(chartW, supY); 
       ctx.stroke();
       
-      // Add label for support
       ctx.font = 'bold 9px JetBrains Mono, monospace';
       ctx.fillStyle = '#3FB950';
       ctx.fillRect(chartW, supY - 7, priceAxisW, 14);
@@ -841,7 +682,6 @@ export default function TradingChart() {
       ctx.fillText(`S ${support.toFixed(4)}`, chartW + 2, supY + 3);
     }
 
-    // Draw strong resistance level (red, thick)
     if (resistance > 0) {
       ctx.strokeStyle = '#F85149';
       ctx.lineWidth = 2.5;
@@ -851,7 +691,6 @@ export default function TradingChart() {
       ctx.lineTo(chartW, resY); 
       ctx.stroke();
       
-      // Add label for resistance
       ctx.font = 'bold 9px JetBrains Mono, monospace';
       ctx.fillStyle = '#F85149';
       ctx.fillRect(chartW, resY - 7, priceAxisW, 14);
@@ -981,7 +820,6 @@ export default function TradingChart() {
       toast.info(`⏳ Placing ${ct} trade... $${tradeStake}`);
       const { contractId } = await derivApi.buyContract(params);
       
-      // Copy trade to followers if enabled
       if (copyTradingEnabled && copyTradingService.enabled) {
         copyTradingService.copyTrade({
           ...params,
@@ -994,7 +832,6 @@ export default function TradingChart() {
       setTradeHistory(prev => [newTrade, ...prev].slice(0, 50));
       const result = await derivApi.waitForContractResult(contractId);
       
-      // Get the winning/losing digit from the result
       const resultDigit = getLastDigit(result.price || currentPrice);
       const winningDigit = result.status === 'won' ? resultDigit : undefined;
       
@@ -1033,7 +870,6 @@ export default function TradingChart() {
         break;
       }
 
-      // Strategy check - wait for condition if enabled
       if (strategyEnabled) {
         let conditionMet = false;
         while (botRunningRef.current && !conditionMet) {
@@ -1052,7 +888,6 @@ export default function TradingChart() {
       try {
         const { contractId } = await derivApi.buyContract(params);
         
-        // Copy trade to followers if enabled
         if (copyTradingEnabled && copyTradingService.enabled) {
           copyTradingService.copyTrade({
             ...params,
@@ -1274,21 +1109,45 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* Last 26 Digits with Even/Odd and Rise/Fall Containers */}
+          {/* Last 26 Digits with toggle buttons for E/O and R/F labels */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-3">
-            <h3 className="text-xs font-semibold text-foreground">Last 26 Digits</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-foreground">Last 26 Digits</h3>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-[10px] gap-1"
+                  onClick={() => setShowEvenOddLabels(!showEvenOddLabels)}
+                >
+                  {showEvenOddLabels ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                  {showEvenOddLabels ? "Hide E/O" : "Show E/O"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-[10px] gap-1"
+                  onClick={() => setShowRiseFallLabels(!showRiseFallLabels)}
+                >
+                  {showRiseFallLabels ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                  {showRiseFallLabels ? "Hide R/F" : "Show R/F"}
+                </Button>
+              </div>
+            </div>
             <div className="flex gap-1 flex-wrap justify-center">
               {last26.map((d, i) => {
                 const isLast = i === last26.length - 1;
                 const isEven = d % 2 === 0;
                 const isOver = d >= 5;
+                const eoLabel = isEven ? 'E' : 'O';
+                const rfLabel = isOver ? 'R' : 'F';
                 return (
                   <motion.div
                     key={i}
                     initial={isLast ? { scale: 0.8 } : {}}
                     animate={isLast ? { scale: [1, 1.1, 1] } : {}}
                     transition={isLast ? { duration: 1, repeat: Infinity } : {}}
-                    className={`w-9 h-11 rounded-lg flex flex-col items-center justify-center font-mono font-bold text-sm border-2 transition-all ${
+                    className={`w-10 h-12 rounded-lg flex flex-col items-center justify-center font-mono font-bold text-sm border-2 transition-all ${
                       isLast ? 'ring-2 ring-primary' : ''
                     } ${isEven
                       ? 'border-[#3FB950] text-[#3FB950] bg-[#3FB950]/10'
@@ -1296,21 +1155,34 @@ export default function TradingChart() {
                     }`}
                   >
                     <span className="text-base">{d}</span>
-                    <span className="text-[8px] opacity-70">{isOver ? '↑' : '↓'}{isEven ? 'E' : 'O'}</span>
+                    <div className="flex gap-0.5 text-[8px] opacity-80">
+                      {showEvenOddLabels && <span>{eoLabel}</span>}
+                      {showEvenOddLabels && showRiseFallLabels && <span>·</span>}
+                      {showRiseFallLabels && <span>{rfLabel}</span>}
+                    </div>
                   </motion.div>
                 );
               })}
             </div>
+            <div className="flex justify-center gap-4 text-[9px] text-muted-foreground pt-1">
+              <div className="flex items-center gap-1">
+                <div className="w-2 h-2 rounded-full bg-[#3FB950]"></div>
+                <span>Even (E)</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-2 h-2 rounded-full bg-[#D29922]"></div>
+                <span>Odd (O)</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-2 h-2 rounded-full bg-primary"></div>
+                <span>Rise (R) ≥5</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="w-2 h-2 rounded-full bg-[#F85149]"></div>
+                <span>Fall (F) ≤4</span>
+              </div>
+            </div>
           </div>
-
-          {/* Even/Odd and Rise/Fall Containers */}
-          <DigitContainers 
-            digits={digits.slice(-50)}
-            showEvenOdd={showEvenOdd}
-            showRiseFall={showRiseFall}
-            onToggleEvenOdd={() => setShowEvenOdd(!showEvenOdd)}
-            onToggleRiseFall={() => setShowRiseFall(!showRiseFall)}
-          />
 
           {/* Strategic Recommendations - Always Visible */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
