@@ -184,9 +184,6 @@ function detectStrongSupportResistance(prices: number[], lookback: number = 200,
   const levels: number[] = [];
   const threshold = (Math.max(...recentPrices) - Math.min(...recentPrices)) * 0.005;
   
-  // Find pivot points with multiple touches
-  const pivotPoints: { price: number; touches: number }[] = [];
-  
   for (let i = sensitivity; i < recentPrices.length - sensitivity; i++) {
     let isPivotHigh = true;
     let isPivotLow = true;
@@ -200,7 +197,6 @@ function detectStrongSupportResistance(prices: number[], lookback: number = 200,
     if (isPivotLow) levels.push(recentPrices[i]);
   }
   
-  // Cluster nearby levels and count touches
   const clustered: Map<number, number> = new Map();
   for (const level of levels) {
     let found = false;
@@ -226,7 +222,6 @@ function detectStrongSupportResistance(prices: number[], lookback: number = 200,
     }
   }
   
-  // Sort by touches (most significant first) and get strongest
   supports.sort((a, b) => b.touches - a.touches);
   resistances.sort((a, b) => b.touches - a.touches);
   
@@ -234,14 +229,6 @@ function detectStrongSupportResistance(prices: number[], lookback: number = 200,
     support: supports.length > 0 ? supports[0].price : 0,
     resistance: resistances.length > 0 ? resistances[0].price : 0
   };
-}
-
-function calcSR(prices: number[]) {
-  if (prices.length < 10) return { support: 0, resistance: 0 };
-  const sorted = [...prices].sort((a, b) => a - b);
-  const p5 = Math.floor(sorted.length * 0.05);
-  const p95 = Math.floor(sorted.length * 0.95);
-  return { support: sorted[p5], resistance: sorted[Math.min(p95, sorted.length - 1)] };
 }
 
 function calcMACDFull(prices: number[]) {
@@ -279,7 +266,7 @@ function addTick(symbol: string, digit: number) {
 
 export default function TradingChart() {
   const { isAuthorized } = useAuth();
-  const [showChart, setShowChart] = useState(true);
+  const [showChart, setShowChart] = useState(false); // Changed to false (hidden by default)
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
   const [timeframe, setTimeframe] = useState('1m');
@@ -287,6 +274,9 @@ export default function TradingChart() {
   const [times, setTimes] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const subscribedRef = useRef(false);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+  const isMountedRef = useRef(true);
+  const currentSymbolRef = useRef(symbol);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Zoom & pan state
@@ -338,49 +328,108 @@ export default function TradingChart() {
   });
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
   const [turboMode, setTurboMode] = useState(false);
+  
+  // Connection status (silent, not displayed)
+  const connectionAttemptRef = useRef(0);
 
-  /* ── Load history + subscribe ── */
-  useEffect(() => {
-    if (!showChart) return;
+  // Auto-reconnect function with exponential backoff
+  const setupWebSocketConnection = useCallback(async (retryCount = 0) => {
+    if (!isMountedRef.current) return;
     
-    let active = true;
-    subscribedRef.current = false;
-
-    const load = async () => {
-      if (!derivApi.isConnected) { setIsLoading(false); return; }
-      setIsLoading(true);
-      try {
-        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, 5000);
-        if (!active) return;
-        setPrices(hist.history.prices || []);
-        setTimes(hist.history.times || []);
-        setScrollOffset(0);
-        setIsLoading(false);
-
-        if (!subscribedRef.current) {
-          subscribedRef.current = true;
-          await derivApi.subscribeTicks(symbol as MarketSymbol, (data: any) => {
-            if (!active || !data.tick) return;
-            const quote = data.tick.quote;
-            const digit = getLastDigit(quote);
-            addTick(symbol, digit);
-            setPrices(prev => [...prev, quote].slice(-5000));
-            setTimes(prev => [...prev, data.tick.epoch].slice(-5000));
-          });
+    try {
+      if (!derivApi.isConnected) {
+        await derivApi.connect();
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      if (!isMountedRef.current) return;
+      
+      const hist = await derivApi.getTickHistory(symbol as MarketSymbol, 5000);
+      if (!isMountedRef.current) return;
+      
+      setPrices(hist.history.prices || []);
+      setTimes(hist.history.times || []);
+      setScrollOffset(0);
+      setIsLoading(false);
+      
+      if (subscribedRef.current) {
+        try {
+          await derivApi.unsubscribeTicks(currentSymbolRef.current as MarketSymbol);
+        } catch (e) {
+          // Silent fail
         }
-      } catch (err) {
-        console.error(err);
-        setIsLoading(false);
+      }
+      
+      subscribedRef.current = true;
+      await derivApi.subscribeTicks(symbol as MarketSymbol, (data: any) => {
+        if (!isMountedRef.current || !data?.tick) return;
+        const quote = data.tick.quote;
+        const digit = getLastDigit(quote);
+        addTick(symbol, digit);
+        setPrices(prev => [...prev, quote].slice(-5000));
+        setTimes(prev => [...prev, data.tick.epoch].slice(-5000));
+      });
+      
+      connectionAttemptRef.current = 0;
+      
+    } catch (err) {
+      console.debug('Connection issue, retrying...');
+      
+      const delay = Math.min(30000, Math.pow(2, Math.min(retryCount, 8)) * 1000);
+      
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      
+      reconnectTimeoutRef.current = setTimeout(() => {
+        if (isMountedRef.current) {
+          setupWebSocketConnection(retryCount + 1);
+        }
+      }, delay);
+    }
+  }, [symbol]);
+
+  // Monitor connection and reconnect if needed
+  useEffect(() => {
+    isMountedRef.current = true;
+    currentSymbolRef.current = symbol;
+    
+    let heartbeatInterval: NodeJS.Timeout;
+    
+    const initConnection = async () => {
+      await setupWebSocketConnection(0);
+      
+      heartbeatInterval = setInterval(() => {
+        if (isMountedRef.current && !derivApi.isConnected) {
+          setupWebSocketConnection(connectionAttemptRef.current);
+        }
+      }, 10000);
+    };
+    
+    initConnection();
+    
+    return () => {
+      isMountedRef.current = false;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+      }
+      if (subscribedRef.current) {
+        derivApi.unsubscribeTicks(currentSymbolRef.current as MarketSymbol).catch(() => {});
       }
     };
-    load();
-    return () => {
-      active = false;
-      derivApi.unsubscribeTicks(symbol as MarketSymbol).catch(() => {});
-    };
-  }, [symbol, showChart]);
+  }, [setupWebSocketConnection]);
 
-  /* ── Derived data ── */
+  // Update current symbol ref when symbol changes
+  useEffect(() => {
+    currentSymbolRef.current = symbol;
+    setupWebSocketConnection(0);
+  }, [symbol, setupWebSocketConnection]);
+
+  /* ── Derived data (always calculated regardless of chart visibility) ── */
   const tfTicks = TF_TICKS[timeframe] || 60;
   const tfPrices = useMemo(() => prices.slice(-tfTicks), [prices, tfTicks]);
   const tfTimes = useMemo(() => times.slice(-tfTicks), [times, tfTicks]);
@@ -478,80 +527,19 @@ export default function TradingChart() {
     }
   }, [strategyEnabled, strategyMode, checkPatternMatch, checkDigitCondition]);
 
-  /* ── Canvas Chart ── */
+  /* ── Canvas Chart (only runs when chart is visible) ── */
   const candleEndIndices = useMemo(() => mapCandlesToPriceIndices(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
   const emaSeries = useMemo(() => calcEMASeries(tfPrices, 50), [tfPrices]);
   const smaSeries = useMemo(() => calcSMASeries(tfPrices, 20), [tfPrices]);
   const bbSeries = useMemo(() => calcBBSeries(tfPrices, 20, 2), [tfPrices]);
   const rsiSeries = useMemo(() => calcRSISeries(tfPrices, 14), [tfPrices]);
 
+  // Chart drawing effect - only runs when showChart is true
   useEffect(() => {
+    if (!showChart) return; // Skip chart rendering when hidden
+    
     const canvas = canvasRef.current;
-    if (!canvas || !showChart) return;
-
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      if (e.ctrlKey || e.metaKey) {
-        setCandleWidth(prev => Math.max(2, Math.min(20, prev - Math.sign(e.deltaY))));
-      } else {
-        const delta = Math.sign(e.deltaY) * Math.max(3, Math.floor(candles.length * 0.03));
-        setScrollOffset(prev => Math.max(0, Math.min(candles.length - 10, prev + delta)));
-      }
-    };
-
-    const onMouseDown = (e: MouseEvent) => {
-      const canvasRect = canvas.getBoundingClientRect();
-      const pAxisX = canvasRect.width - 70;
-      const localX = e.clientX - canvasRect.left;
-      if (localX >= pAxisX) {
-        isPriceAxisDragging.current = true;
-        priceAxisStartY.current = e.clientY;
-        priceAxisStartWidth.current = candleWidth;
-        canvas.style.cursor = 'ns-resize';
-      } else {
-        isDragging.current = true;
-        dragStartX.current = e.clientX;
-        dragStartOffset.current = scrollOffset;
-        canvas.style.cursor = 'grabbing';
-      }
-    };
-
-    const onMouseMove = (e: MouseEvent) => {
-      if (isPriceAxisDragging.current) {
-        const dy = priceAxisStartY.current - e.clientY;
-        const newWidth = Math.max(2, Math.min(24, priceAxisStartWidth.current + Math.round(dy / 8)));
-        setCandleWidth(newWidth);
-        return;
-      }
-      if (!isDragging.current) return;
-      const dx = dragStartX.current - e.clientX;
-      const candlesPerPx = 1 / (candleWidth + 1);
-      const delta = Math.round(dx * candlesPerPx);
-      setScrollOffset(Math.max(0, Math.min(candles.length - 10, dragStartOffset.current + delta)));
-    };
-
-    const onMouseUp = () => {
-      isDragging.current = false;
-      isPriceAxisDragging.current = false;
-      canvas.style.cursor = 'crosshair';
-    };
-
-    canvas.addEventListener('wheel', onWheel, { passive: false });
-    canvas.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-
-    return () => {
-      canvas.removeEventListener('wheel', onWheel);
-      canvas.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
-  }, [candles.length, scrollOffset, candleWidth, showChart]);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || candles.length < 2 || !showChart) return;
+    if (!canvas || candles.length < 2) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -589,7 +577,6 @@ export default function TradingChart() {
       if (u !== null) allPrices.push(u);
       if (l !== null) allPrices.push(l);
     }
-    // Add support/resistance levels to price range
     if (support > 0) allPrices.push(support);
     if (resistance > 0) allPrices.push(resistance);
     
@@ -671,7 +658,6 @@ export default function TradingChart() {
     drawLine(emaSeries, '#2F81F7', 1.5);
     drawLine(smaSeries, '#E6B422', 1.5);
 
-    // Draw strong support level (green, thick)
     if (support > 0) {
       ctx.setLineDash([8, 4]);
       ctx.strokeStyle = '#3FB950';
@@ -682,7 +668,6 @@ export default function TradingChart() {
       ctx.lineTo(chartW, supY); 
       ctx.stroke();
       
-      // Add label for support
       ctx.font = 'bold 9px JetBrains Mono, monospace';
       ctx.fillStyle = '#3FB950';
       ctx.fillRect(chartW, supY - 7, priceAxisW, 14);
@@ -690,7 +675,6 @@ export default function TradingChart() {
       ctx.fillText(`S ${support.toFixed(4)}`, chartW + 2, supY + 3);
     }
 
-    // Draw strong resistance level (red, thick)
     if (resistance > 0) {
       ctx.strokeStyle = '#F85149';
       ctx.lineWidth = 2.5;
@@ -700,7 +684,6 @@ export default function TradingChart() {
       ctx.lineTo(chartW, resY); 
       ctx.stroke();
       
-      // Add label for resistance
       ctx.font = 'bold 9px JetBrains Mono, monospace';
       ctx.fillStyle = '#F85149';
       ctx.fillRect(chartW, resY - 7, priceAxisW, 14);
@@ -815,6 +798,73 @@ export default function TradingChart() {
 
   }, [candles, bb, ema50, support, resistance, currentPrice, candleEndIndices, emaSeries, smaSeries, bbSeries, rsiSeries, rsi, candleWidth, scrollOffset, showChart]);
 
+  // Mouse event handlers for chart (only attach when chart is visible)
+  useEffect(() => {
+    if (!showChart) return;
+    
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        setCandleWidth(prev => Math.max(2, Math.min(20, prev - Math.sign(e.deltaY))));
+      } else {
+        const delta = Math.sign(e.deltaY) * Math.max(3, Math.floor(candles.length * 0.03));
+        setScrollOffset(prev => Math.max(0, Math.min(candles.length - 10, prev + delta)));
+      }
+    };
+
+    const onMouseDown = (e: MouseEvent) => {
+      const canvasRect = canvas.getBoundingClientRect();
+      const pAxisX = canvasRect.width - 70;
+      const localX = e.clientX - canvasRect.left;
+      if (localX >= pAxisX) {
+        isPriceAxisDragging.current = true;
+        priceAxisStartY.current = e.clientY;
+        priceAxisStartWidth.current = candleWidth;
+        canvas.style.cursor = 'ns-resize';
+      } else {
+        isDragging.current = true;
+        dragStartX.current = e.clientX;
+        dragStartOffset.current = scrollOffset;
+        canvas.style.cursor = 'grabbing';
+      }
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (isPriceAxisDragging.current) {
+        const dy = priceAxisStartY.current - e.clientY;
+        const newWidth = Math.max(2, Math.min(24, priceAxisStartWidth.current + Math.round(dy / 8)));
+        setCandleWidth(newWidth);
+        return;
+      }
+      if (!isDragging.current) return;
+      const dx = dragStartX.current - e.clientX;
+      const candlesPerPx = 1 / (candleWidth + 1);
+      const delta = Math.round(dx * candlesPerPx);
+      setScrollOffset(Math.max(0, Math.min(candles.length - 10, dragStartOffset.current + delta)));
+    };
+
+    const onMouseUp = () => {
+      isDragging.current = false;
+      isPriceAxisDragging.current = false;
+      canvas.style.cursor = 'crosshair';
+    };
+
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    canvas.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      canvas.removeEventListener('wheel', onWheel);
+      canvas.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [candles.length, scrollOffset, candleWidth, showChart]);
+
   const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
   const marketName = ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol;
 
@@ -833,7 +883,6 @@ export default function TradingChart() {
       setTradeHistory(prev => [newTrade, ...prev].slice(0, 50));
       const result = await derivApi.waitForContractResult(contractId);
       
-      // Get the winning/losing digit from the result
       const resultDigit = getLastDigit(result.price || currentPrice);
       const winningDigit = result.status === 'won' ? resultDigit : undefined;
       
@@ -872,7 +921,6 @@ export default function TradingChart() {
         break;
       }
 
-      // Strategy check - wait for condition if enabled
       if (strategyEnabled) {
         let conditionMet = false;
         while (botRunningRef.current && !conditionMet) {
@@ -1179,7 +1227,7 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* Last 26 Digits */}
+          {/* Last 26 Digits - Always Visible and Always Updating */}
           <div className="bg-card border border-border rounded-xl p-3">
             <h3 className="text-xs font-semibold text-foreground mb-2">Last 26 Digits</h3>
             <div className="flex gap-1 flex-wrap justify-center">
