@@ -1121,10 +1121,10 @@ export default function TradingChart() {
                       <div className={`h-full rounded-full ${isHot ? 'bg-loss' : isWarm ? 'bg-warning' : 'bg-primary'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
                     </div>
                     {isBestMatch && (
-                      <Badge className="absolute -top-1 -right-1 text-[7px] px-1 bg-profit text-profit-foreground">Match</Badge>
+                      <Badge className="absolute -top-1 -right-1 text-[7px] px-1 bg-profit text-profit-foreground">Match Digit</Badge>
                     )}
                     {isBestDiffer && (
-                      <Badge className="absolute -top-1 -left-1 text-[7px] px-1 bg-loss text-loss-foreground">Avoid</Badge>
+                      <Badge className="absolute -top-1 -left-1 text-[7px] px-1 bg-loss text-loss-foreground">Differ</Badge>
                     )}
                   </button>
                 );
@@ -1386,26 +1386,25 @@ export default function TradingChart() {
                   ) : (
                     <div className="grid grid-cols-3 gap-1">
                      <div>
-                        <label className="text-[8px] text-muted-foreground">Ticks</label>
+                        <label className="text-[8px] text-muted-foreground">If last ticks are</label>
                         <Input type="number" min="1" max="50" value={digitWindow}
                           onChange={e => setDigitWindow(e.target.value)} disabled={botRunning}
                           className="h-7 text-[10px]" />
                       </div>
-                      <div>
-                        <label className="text-[8px] text-muted-foreground">Digit</label>
-                        <Input type="number" min="0" max="9" value={digitCompare}
-                          onChange={e => setDigitCompare(e.target.value)} disabled={botRunning}
-                          className="h-7 text-[10px]" />
-                      </div>
-                      
                        <div>
-                        <label className="text-[8px] text-muted-foreground">Condition If </label>
+                        <label className="text-[8px] text-muted-foreground">Condition </label>
                         <Select value={digitCondition} onValueChange={setDigitCondition} disabled={botRunning}>
                           <SelectTrigger className="h-7 text-[10px]"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                           </SelectContent>
                         </Select>
+                      </div>
+                      <div>
+                        <label className="text-[8px] text-muted-foreground">Digit</label>
+                        <Input type="number" min="0" max="9" value={digitCompare}
+                          onChange={e => setDigitCompare(e.target.value)} disabled={botRunning}
+                          className="h-7 text-[10px]" />
                       </div>
                     </div>
                   )}
