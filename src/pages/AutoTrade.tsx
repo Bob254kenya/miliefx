@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
-import { getLastDigit, analyzeDigits, calculateRSI, calculateMACD, calculateBollingerBands } from '@/services/analysis';
+import { analyzeDigits, calculateRSI, calculateMACD, calculateBollingerBands } from '@/services/analysis';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -62,6 +62,91 @@ const CONTRACT_TYPES = [
   { value: 'DIGITEVEN', label: 'Digits Even' }, { value: 'DIGITODD', label: 'Digits Odd' },
   { value: 'DIGITOVER', label: 'Digits Over' }, { value: 'DIGITUNDER', label: 'Digits Under' },
 ];
+
+/* ── UNIVERSAL LAST DIGIT EXTRACTOR ── */
+function getLastDigit(quote: number): number {
+  // Mathematical extraction - ALWAYS returns single digit 0-9
+  // Works for all volatility indices regardless of decimal places
+  const normalized = Math.abs(quote);
+  
+  // Remove decimal point by multiplying to get integer
+  // Handle different decimal precisions (2, 3, 4, or more digits)
+  const str = normalized.toString();
+  const decimalIndex = str.indexOf('.');
+  
+  let lastDigit: number;
+  
+  if (decimalIndex === -1) {
+    // No decimal point, get last digit of integer
+    lastDigit = Math.floor(normalized) % 10;
+  } else {
+    // Has decimal, get last digit after decimal
+    const decimalPart = str.split('.')[1];
+    const lastChar = decimalPart.slice(-1);
+    lastDigit = parseInt(lastChar, 10);
+  }
+  
+  // Final safety: ensure 0-9 range
+  return Math.abs(lastDigit) % 10;
+}
+
+/* ── DIGIT HISTORY MANAGER ── */
+class DigitHistoryManager {
+  private digits: number[] = [];
+  private maxSize: number = 1000;
+  private symbol: string;
+
+  constructor(symbol: string, maxSize: number = 1000) {
+    this.symbol = symbol;
+    this.maxSize = maxSize;
+  }
+
+  addDigit(digit: number): void {
+    const normalizedDigit = Math.abs(digit) % 10;
+    this.digits.push(normalizedDigit);
+    
+    if (this.digits.length > this.maxSize) {
+      this.digits.shift();
+    }
+  }
+
+  getDigits(): number[] {
+    return [...this.digits];
+  }
+
+  getLastDigits(count: number): number[] {
+    return this.digits.slice(-count);
+  }
+
+  getFrequency(): Map<number, number> {
+    const freq = new Map<number, number>();
+    for (let i = 0; i <= 9; i++) freq.set(i, 0);
+    
+    for (const digit of this.digits) {
+      freq.set(digit, (freq.get(digit) || 0) + 1);
+    }
+    
+    return freq;
+  }
+
+  clear(): void {
+    this.digits = [];
+  }
+
+  size(): number {
+    return this.digits.length;
+  }
+}
+
+// Store digit managers for each symbol
+const digitManagers: Map<string, DigitHistoryManager> = new Map();
+
+function getDigitManager(symbol: string): DigitHistoryManager {
+  if (!digitManagers.has(symbol)) {
+    digitManagers.set(symbol, new DigitHistoryManager(symbol, 1000));
+  }
+  return digitManagers.get(symbol)!;
+}
 
 /* ── Candle builder ── */
 interface Candle { open: number; high: number; low: number; close: number; time: number; }
@@ -176,7 +261,6 @@ function mapCandlesToPriceIndices(prices: number[], times: number[], tf: string)
   return indices;
 }
 
-// Enhanced support/resistance detection for strong levels
 function detectStrongSupportResistance(prices: number[], lookback: number = 200, sensitivity: number = 5): { support: number; resistance: number } {
   const recentPrices = prices.slice(-lookback);
   if (recentPrices.length < 20) return { support: 0, resistance: 0 };
@@ -251,21 +335,6 @@ interface TradeRecord {
   resultDigit?: number;
 }
 
-// Tick storage for pattern/digit strategy - FIXED: ensures single digits only
-const tickHistoryRef: { [symbol: string]: number[] } = {};
-
-function getTickHistory(symbol: string): number[] {
-  return tickHistoryRef[symbol] || [];
-}
-
-function addTick(symbol: string, digit: number) {
-  if (!tickHistoryRef[symbol]) tickHistoryRef[symbol] = [];
-  // Ensure we only store single digits (0-9)
-  const singleDigit = digit % 10;
-  tickHistoryRef[symbol].push(singleDigit);
-  if (tickHistoryRef[symbol].length > 200) tickHistoryRef[symbol].shift();
-}
-
 export default function TradingChart() {
   const { isAuthorized } = useAuth();
   const [showChart, setShowChart] = useState(false);
@@ -274,12 +343,15 @@ export default function TradingChart() {
   const [timeframe, setTimeframe] = useState('1m');
   const [prices, setPrices] = useState<number[]>([]);
   const [times, setTimes] = useState<number[]>([]);
+  const [currentDigit, setCurrentDigit] = useState<number>(0); // SINGLE digit state
+  const [digitHistory, setDigitHistory] = useState<number[]>([]); // Array of digits
   const [isLoading, setIsLoading] = useState(true);
   const subscribedRef = useRef(false);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
   const isMountedRef = useRef(true);
   const currentSymbolRef = useRef(symbol);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const digitHistoryRef = useRef<number[]>([]); // Ref for real-time updates without re-renders
 
   // Zoom & pan state
   const [candleWidth, setCandleWidth] = useState(7);
@@ -333,51 +405,111 @@ export default function TradingChart() {
   
   const connectionAttemptRef = useRef(0);
 
-  // Auto-reconnect function with exponential backoff
+  // Clean tick handler - prevents duplication
+  const handleTick = useCallback((data: any) => {
+    if (!isMountedRef.current || !data?.tick) return;
+    
+    const quote = data.tick.quote;
+    const digit = getLastDigit(quote);
+    
+    // Debug logging
+    console.log(`[Tick] Symbol: ${currentSymbolRef.current}`);
+    console.log(`[Tick] Quote: ${quote}`);
+    console.log(`[Tick] Last Digit: ${digit}`);
+    
+    // Update digit manager
+    const manager = getDigitManager(currentSymbolRef.current);
+    manager.addDigit(digit);
+    
+    // Update state - REPLACE, NOT APPEND
+    setCurrentDigit(digit);
+    
+    // Update digit history for UI
+    const newHistory = manager.getLastDigits(26);
+    setDigitHistory(newHistory);
+    
+    // Update prices for chart
+    setPrices(prev => {
+      const newPrices = [...prev, quote];
+      return newPrices.slice(-5000);
+    });
+    
+    setTimes(prev => {
+      const newTimes = [...prev, data.tick.epoch];
+      return newTimes.slice(-5000);
+    });
+    
+  }, []);
+
+  // Auto-reconnect function with proper cleanup
   const setupWebSocketConnection = useCallback(async (retryCount = 0) => {
     if (!isMountedRef.current) return;
     
     try {
+      // Unsubscribe from previous symbol first
+      if (subscribedRef.current && currentSymbolRef.current) {
+        try {
+          await derivApi.unsubscribeTicks(currentSymbolRef.current as MarketSymbol);
+          console.log(`[WS] Unsubscribed from ${currentSymbolRef.current}`);
+        } catch (e) {
+          console.debug(`[WS] Unsubscribe error:`, e);
+        }
+        subscribedRef.current = false;
+      }
+      
+      // Ensure connection is established
       if (!derivApi.isConnected) {
         await derivApi.connect();
+        console.log(`[WS] Connected to Deriv`);
       }
       
       await new Promise(resolve => setTimeout(resolve, 500));
       
       if (!isMountedRef.current) return;
       
+      // Fetch tick history
       const hist = await derivApi.getTickHistory(symbol as MarketSymbol, 5000);
       if (!isMountedRef.current) return;
       
-      setPrices(hist.history.prices || []);
-      setTimes(hist.history.times || []);
-      setScrollOffset(0);
-      setIsLoading(false);
+      const historicalPrices = hist.history.prices || [];
+      const historicalTimes = hist.history.times || [];
       
-      if (subscribedRef.current) {
-        try {
-          await derivApi.unsubscribeTicks(currentSymbolRef.current as MarketSymbol);
-        } catch (e) {
-          // Silent fail
-        }
+      setPrices(historicalPrices);
+      setTimes(historicalTimes);
+      setScrollOffset(0);
+      
+      // Initialize digit history from historical data
+      const manager = getDigitManager(symbol);
+      manager.clear(); // Clear existing
+      
+      // Process historical ticks
+      for (const price of historicalPrices) {
+        const digit = getLastDigit(price);
+        manager.addDigit(digit);
       }
       
+      const lastDigits = manager.getLastDigits(26);
+      const lastDigitValue = lastDigits.length > 0 ? lastDigits[lastDigits.length - 1] : 0;
+      
+      setDigitHistory(lastDigits);
+      setCurrentDigit(lastDigitValue);
+      
+      setIsLoading(false);
+      
+      // Subscribe to new symbol
+      console.log(`[WS] Subscribing to ${symbol}`);
+      await derivApi.subscribeTicks(symbol as MarketSymbol, handleTick);
       subscribedRef.current = true;
-      await derivApi.subscribeTicks(symbol as MarketSymbol, (data: any) => {
-        if (!isMountedRef.current || !data?.tick) return;
-        const quote = data.tick.quote;
-        const digit = getLastDigit(quote);
-        addTick(symbol, digit);
-        setPrices(prev => [...prev, quote].slice(-5000));
-        setTimes(prev => [...prev, data.tick.epoch].slice(-5000));
-      });
+      currentSymbolRef.current = symbol;
       
       connectionAttemptRef.current = 0;
+      console.log(`[WS] Successfully connected to ${symbol}`);
       
     } catch (err) {
-      console.debug('Connection issue, retrying...');
+      console.error(`[WS] Connection error:`, err);
       
       const delay = Math.min(30000, Math.pow(2, Math.min(retryCount, 8)) * 1000);
+      console.log(`[WS] Reconnecting in ${delay}ms (attempt ${retryCount + 1})`);
       
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
@@ -389,12 +521,11 @@ export default function TradingChart() {
         }
       }, delay);
     }
-  }, [symbol]);
+  }, [symbol, handleTick]);
 
   // Monitor connection and reconnect if needed
   useEffect(() => {
     isMountedRef.current = true;
-    currentSymbolRef.current = symbol;
     
     let heartbeatInterval: NodeJS.Timeout;
     
@@ -403,6 +534,7 @@ export default function TradingChart() {
       
       heartbeatInterval = setInterval(() => {
         if (isMountedRef.current && !derivApi.isConnected) {
+          console.log(`[WS] Connection lost, reconnecting...`);
           setupWebSocketConnection(connectionAttemptRef.current);
         }
       }, 10000);
@@ -420,26 +552,64 @@ export default function TradingChart() {
       }
       if (subscribedRef.current) {
         derivApi.unsubscribeTicks(currentSymbolRef.current as MarketSymbol).catch(() => {});
+        console.log(`[WS] Cleaned up subscription for ${currentSymbolRef.current}`);
       }
     };
   }, [setupWebSocketConnection]);
 
-  // Update current symbol ref when symbol changes
+  // Update when symbol changes
   useEffect(() => {
-    currentSymbolRef.current = symbol;
-    setupWebSocketConnection(0);
+    if (symbol !== currentSymbolRef.current) {
+      setupWebSocketConnection(0);
+    }
   }, [symbol, setupWebSocketConnection]);
 
-  /* ── Derived data (always calculated regardless of chart visibility) ── */
+  /* ── Derived data ── */
   const tfTicks = TF_TICKS[timeframe] || 60;
   const tfPrices = useMemo(() => prices.slice(-tfTicks), [prices, tfTicks]);
   const tfTimes = useMemo(() => times.slice(-tfTicks), [times, tfTicks]);
   const candles = useMemo(() => buildCandles(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
   const currentPrice = prices[prices.length - 1] || 0;
-  const lastDigit = getLastDigit(currentPrice) % 10; // Ensure single digit
-  const digits = useMemo(() => tfPrices.map(p => getLastDigit(p) % 10), [tfPrices]); // Ensure single digits
-  const last26 = useMemo(() => digits.slice(-26), [digits]); // Now guaranteed to be single digits
-  const { frequency, percentages, mostCommon, leastCommon } = useMemo(() => analyzeDigits(tfPrices), [tfPrices]);
+
+  // Digit analysis from digit history (not from prices)
+  const digitFrequency = useMemo(() => {
+    const manager = getDigitManager(symbol);
+    const freq = manager.getFrequency();
+    const total = manager.size();
+    
+    const percentages: number[] = Array(10).fill(0);
+    const counts: number[] = Array(10).fill(0);
+    
+    for (let i = 0; i <= 9; i++) {
+      counts[i] = freq.get(i) || 0;
+      percentages[i] = total > 0 ? (counts[i] / total * 100) : 0;
+    }
+    
+    let mostCommon = 0;
+    let leastCommon = 0;
+    let maxFreq = 0;
+    let minFreq = Infinity;
+    
+    for (let i = 0; i <= 9; i++) {
+      if (counts[i] > maxFreq) {
+        maxFreq = counts[i];
+        mostCommon = i;
+      }
+      if (counts[i] < minFreq) {
+        minFreq = counts[i];
+        leastCommon = i;
+      }
+    }
+    
+    return { frequency: counts, percentages, mostCommon, leastCommon, total };
+  }, [symbol, digitHistory]); // Re-run when digitHistory updates
+
+  // Extract individual values for easier access
+  const frequency = digitFrequency.frequency;
+  const percentages = digitFrequency.percentages;
+  const mostCommon = digitFrequency.mostCommon;
+  const leastCommon = digitFrequency.leastCommon;
+  const totalDigits = digitFrequency.total;
 
   // Strong support/resistance detection
   const { support, resistance } = useMemo(() => detectStrongSupportResistance(tfPrices, 200, 5), [tfPrices]);
@@ -450,14 +620,15 @@ export default function TradingChart() {
   const rsi = useMemo(() => calculateRSI(tfPrices, 14), [tfPrices]);
   const macd = useMemo(() => calcMACDFull(tfPrices), [tfPrices]);
 
-  // Digit stats - using single digits
-  const evenCount = useMemo(() => digits.filter(d => d % 2 === 0).length, [digits]);
-  const oddCount = digits.length - evenCount;
-  const evenPct = digits.length > 0 ? (evenCount / digits.length * 100) : 50;
+  // Digit stats from digit history
+  const digitsArray = digitHistory;
+  const evenCount = useMemo(() => digitsArray.filter(d => d % 2 === 0).length, [digitsArray]);
+  const oddCount = digitsArray.length - evenCount;
+  const evenPct = digitsArray.length > 0 ? (evenCount / digitsArray.length * 100) : 50;
   const oddPct = 100 - evenPct;
-  const overCount = useMemo(() => digits.filter(d => d > 4).length, [digits]);
-  const underCount = digits.length - overCount;
-  const overPct = digits.length > 0 ? (overCount / digits.length * 100) : 50;
+  const overCount = useMemo(() => digitsArray.filter(d => d > 4).length, [digitsArray]);
+  const underCount = digitsArray.length - overCount;
+  const overPct = digitsArray.length > 0 ? (overCount / digitsArray.length * 100) : 50;
   const underPct = 100 - overPct;
 
   // BB position
@@ -485,12 +656,13 @@ export default function TradingChart() {
     return { digit: mostCommon, confidence: Math.min(90, Math.round(bestPct * 3)) };
   }, [percentages, mostCommon]);
 
-  // Strategy Helpers
+  // Strategy Helpers - using digit manager
   const cleanPattern = patternInput.toUpperCase().replace(/[^EO]/g, '');
   const patternValid = cleanPattern.length >= 2;
 
   const checkPatternMatch = useCallback((): boolean => {
-    const ticks = getTickHistory(symbol);
+    const manager = getDigitManager(symbol);
+    const ticks = manager.getDigits();
     if (ticks.length < cleanPattern.length) return false;
     const recent = ticks.slice(-cleanPattern.length);
     for (let i = 0; i < cleanPattern.length; i++) {
@@ -502,7 +674,8 @@ export default function TradingChart() {
   }, [symbol, cleanPattern]);
 
   const checkDigitCondition = useCallback((): boolean => {
-    const ticks = getTickHistory(symbol);
+    const manager = getDigitManager(symbol);
+    const ticks = manager.getDigits();
     const win = parseInt(digitWindow) || 3;
     const comp = parseInt(digitCompare);
     if (ticks.length < win) return false;
@@ -867,7 +1040,6 @@ export default function TradingChart() {
   }, [candles.length, scrollOffset, candleWidth, showChart]);
 
   const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
-  const marketName = ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol;
 
   // Trade execution
   const handleBuy = async (side: 'buy' | 'sell') => {
@@ -884,14 +1056,13 @@ export default function TradingChart() {
       setTradeHistory(prev => [newTrade, ...prev].slice(0, 50));
       const result = await derivApi.waitForContractResult(contractId);
       
-      const resultDigit = getLastDigit(result.price || currentPrice) % 10; // Ensure single digit
-      const winningDigit = result.status === 'won' ? resultDigit : undefined;
+      const resultDigit = getLastDigit(result.price || currentPrice);
       
       setTradeHistory(prev => prev.map(t => t.id === contractId ? { 
         ...t, 
         profit: result.profit, 
         status: result.status,
-        winningDigit,
+        winningDigit: result.status === 'won' ? resultDigit : undefined,
         resultDigit 
       } : t));
       if (result.status === 'won') { toast.success(`✅ WON +$${result.profit.toFixed(2)} | Digit: ${resultDigit}`); }
@@ -940,7 +1111,7 @@ export default function TradingChart() {
       try {
         const { contractId } = await derivApi.buyContract(params);
         const result = await derivApi.waitForContractResult(contractId);
-        const resultDigit = getLastDigit(result.price || currentPrice) % 10; // Ensure single digit
+        const resultDigit = getLastDigit(result.price || currentPrice);
         
         const tr: TradeRecord = { 
           id: contractId, 
@@ -976,10 +1147,10 @@ export default function TradingChart() {
   const togglePauseBot = useCallback(() => { botPausedRef.current = !botPausedRef.current; setBotPaused(botPausedRef.current); }, []);
 
   const totalTrades = tradeHistory.filter(t => t.status !== 'open').length;
-  const wins = tradeHistory.filter(t => t.status === 'won').length;
-  const losses = tradeHistory.filter(t => t.status === 'lost').length;
+  const winsCount = tradeHistory.filter(t => t.status === 'won').length;
+  const lossesCount = tradeHistory.filter(t => t.status === 'lost').length;
   const totalProfit = tradeHistory.reduce((s, t) => s + t.profit, 0);
-  const winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
+  const winRate = totalTrades > 0 ? (winsCount / totalTrades * 100) : 0;
 
   return (
     <div className="space-y-4 max-w-[1920px] mx-auto">
@@ -989,7 +1160,7 @@ export default function TradingChart() {
           <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-primary" /> Trading Chart
           </h1>
-          <p className="text-xs text-muted-foreground"> Ramzfx Advanced Trading Platform with AI Signals</p>
+          <p className="text-xs text-muted-foreground"> Advanced Trading Platform with AI Signals</p>
         </div>
         <Button
           onClick={() => setShowChart(!showChart)}
@@ -1058,7 +1229,7 @@ export default function TradingChart() {
           <div className="grid grid-cols-3 md:grid-cols-7 gap-2">
             {[
               { label: 'Price', value: currentPrice.toFixed(4), color: 'text-foreground' },
-              { label: 'Last Digit', value: String(lastDigit), color: 'text-primary' },
+              { label: 'Last Digit', value: String(currentDigit), color: 'text-primary' },
               { label: 'Strong Support', value: support > 0 ? support.toFixed(2) : 'N/A', color: 'text-[#3FB950]' },
               { label: 'Strong Resistance', value: resistance > 0 ? resistance.toFixed(2) : 'N/A', color: 'text-[#F85149]' },
               { label: 'BB Upper', value: bb.upper.toFixed(2), color: 'text-[#BC8CFF]' },
@@ -1074,7 +1245,7 @@ export default function TradingChart() {
 
           {/* Digit Analysis - Always Visible */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-3">
-            <h3 className="text-xs font-semibold text-foreground">Digit Analysis</h3>
+            <h3 className="text-xs font-semibold text-foreground">Digit Analysis (Last {totalDigits} digits)</h3>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
@@ -1228,12 +1399,12 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* Last 26 Digits - Always Visible and Always Updating with Single Digits */}
+          {/* Last 26 Digits - Always Visible with Single Digits */}
           <div className="bg-card border border-border rounded-xl p-3">
             <h3 className="text-xs font-semibold text-foreground mb-2">Last 26 Digits</h3>
             <div className="flex gap-1 flex-wrap justify-center">
-              {last26.map((d, i) => {
-                const isLast = i === last26.length - 1;
+              {digitHistory.map((d, i) => {
+                const isLast = i === digitHistory.length - 1;
                 const isEven = d % 2 === 0;
                 return (
                   <motion.div
@@ -1254,7 +1425,7 @@ export default function TradingChart() {
               })}
             </div>
             <div className="text-center text-[8px] text-muted-foreground mt-2">
-              Each box shows a single digit (0-9) | {last26.length} digits displayed
+              Each box shows a single digit (0-9) | {digitHistory.length} digits displayed
             </div>
           </div>
 
@@ -1495,11 +1666,11 @@ export default function TradingChart() {
               </div>
               <div className="bg-profit/10 rounded-lg p-1.5 text-center">
                 <div className="text-[8px] text-profit">Wins</div>
-                <div className="font-mono text-sm font-bold text-profit">{wins}</div>
+                <div className="font-mono text-sm font-bold text-profit">{winsCount}</div>
               </div>
               <div className="bg-loss/10 rounded-lg p-1.5 text-center">
                 <div className="text-[8px] text-loss">Losses</div>
-                <div className="font-mono text-sm font-bold text-loss">{losses}</div>
+                <div className="font-mono text-sm font-bold text-loss">{lossesCount}</div>
               </div>
               <div className={`${totalProfit >= 0 ? 'bg-profit/10' : 'bg-loss/10'} rounded-lg p-1.5 text-center`}>
                 <div className="text-[8px] text-muted-foreground">P/L</div>
