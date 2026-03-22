@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { getLastDigit, analyzeDigits, calculateRSI, calculateMACD, calculateBollingerBands } from '@/services/analysis';
+import { copyTradingService } from '@/services/copy-trading-service';
+import { useLossRequirement } from '@/hooks/useLossRequirement';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,8 +16,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   TrendingUp, TrendingDown, Activity, BarChart3, ArrowUp, ArrowDown, Minus,
-  Target, ShieldAlert, Gauge, Volume2, VolumeX, Clock, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff,
-  Globe, Radar, TrendingUp as TrendingUpIcon, AlertCircle, Star, StarOff, Settings,
+  Target, ShieldAlert, Gauge, Volume2, VolumeX, Clock, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, Scan, RefreshCw, Anchor,
 } from 'lucide-react';
 
 /* ── Markets ── */
@@ -50,43 +51,190 @@ const ALL_MARKETS = [
   { symbol: 'RBRK200', name: 'Range Break 200', group: 'range' },
 ];
 
-// Market performance interface
-interface MarketPerformance {
-  symbol: string;
-  name: string;
-  tickHistory: number[];
-  patternMatchScore: number;
-  digitDistribution: Map<number, number>;
-  volatility: number;
-  recentWins: number;
-  recentLosses: number;
-  winRate: number;
-  lastTradeTime: number;
-  isActive: boolean;
-  lastTicks: number[];
-  totalTrades: number;
-  avgProfit: number;
-  avgLoss: number;
-  totalPnL: number;
-  consecutiveLosses: number;
-  bestStreak: number;
-  worstStreak: number;
-  currentStreak: number;
+const GROUPS = [
+  { value: 'all', label: 'All' },
+  { value: 'vol1s', label: 'Vol 1s' },
+  { value: 'vol', label: 'Vol' },
+  { value: 'jump', label: 'Jump' },
+  { value: 'bear', label: 'Bear' },
+  { value: 'bull', label: 'Bull' },
+  { value: 'step', label: 'Step' },
+  { value: 'range', label: 'Range' },
+];
+
+const TIMEFRAMES = ['1m','3m','5m','15m','30m','1h','4h','12h','1d'];
+const TF_TICKS: Record<string,number> = {
+  '1m':1000,'3m':2000,'5m':3000,'15m':4000,'30m':4500,'1h':5000,'4h':5000,'12h':5000,'1d':5000,
+};
+
+const CONTRACT_TYPES = [
+  { value: 'CALL', label: 'Rise' },
+  { value: 'PUT', label: 'Fall' },
+  { value: 'DIGITMATCH', label: 'Digits Match' },
+  { value: 'DIGITDIFF', label: 'Digits Differs' },
+  { value: 'DIGITEVEN', label: 'Digits Even' },
+  { value: 'DIGITODD', label: 'Digits Odd' },
+  { value: 'DIGITOVER', label: 'Digits Over' },
+  { value: 'DIGITUNDER', label: 'Digits Under' },
+];
+
+/* ── SCANNER MARKETS ── */
+const SCANNER_MARKETS: { symbol: string; name: string }[] = [
+  { symbol: 'R_10', name: 'Vol 10' }, { symbol: 'R_25', name: 'Vol 25' },
+  { symbol: 'R_50', name: 'Vol 50' }, { symbol: 'R_75', name: 'Vol 75' },
+  { symbol: 'R_100', name: 'Vol 100' },
+  { symbol: '1HZ10V', name: 'V10 1s' }, { symbol: '1HZ25V', name: 'V25 1s' },
+  { symbol: '1HZ50V', name: 'V50 1s' }, { symbol: '1HZ75V', name: 'V75 1s' },
+  { symbol: '1HZ100V', name: 'V100 1s' },
+  { symbol: 'JD10', name: 'Jump 10' }, { symbol: 'JD25', name: 'Jump 25' },
+  { symbol: 'RDBEAR', name: 'Bear' }, { symbol: 'RDBULL', name: 'Bull' },
+];
+
+const needsBarrier = (ct: string) => ['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct);
+
+/* ── Candle builder ── */
+interface Candle {
+  open: number; high: number; low: number; close: number; time: number;
 }
 
-interface MarketStats {
-  symbol: string;
-  totalTrades: number;
-  wins: number;
-  losses: number;
-  winRate: number;
-  avgProfit: number;
-  avgLoss: number;
-  totalPnL: number;
-  lastTradeResult: 'win' | 'loss' | null;
-  consecutiveLosses: number;
-  bestStreak: number;
-  worstStreak: number;
+function buildCandles(prices: number[], times: number[], tf: string): Candle[] {
+  if (prices.length === 0) return [];
+  const seconds: Record<string,number> = {
+    '1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'12h':43200,'1d':86400,
+  };
+  const interval = seconds[tf] || 60;
+  const candles: Candle[] = [];
+  let current: Candle | null = null;
+
+  for (let i = 0; i < prices.length; i++) {
+    const p = prices[i];
+    const t = times[i] || Date.now()/1000 + i;
+    const bucket = Math.floor(t / interval) * interval;
+
+    if (!current || current.time !== bucket) {
+      if (current) candles.push(current);
+      current = { open: p, high: p, low: p, close: p, time: bucket };
+    } else {
+      current.high = Math.max(current.high, p);
+      current.low = Math.min(current.low, p);
+      current.close = p;
+    }
+  }
+  if (current) candles.push(current);
+  return candles;
+}
+
+/* ── EMA helper ── */
+function calcEMA(prices: number[], period: number): number {
+  if (prices.length < period) return prices[prices.length - 1] || 0;
+  const k = 2 / (period + 1);
+  let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < prices.length; i++) {
+    ema = prices[i] * k + ema * (1 - k);
+  }
+  return ema;
+}
+
+/* ── Per-candle indicator series ── */
+function calcEMASeries(prices: number[], period: number): (number | null)[] {
+  const result: (number | null)[] = [];
+  if (prices.length < period) return prices.map(() => null);
+  const k = 2 / (period + 1);
+  let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = 0; i < period; i++) result.push(null);
+  result[period - 1] = ema;
+  for (let i = period; i < prices.length; i++) {
+    ema = prices[i] * k + ema * (1 - k);
+    result.push(ema);
+  }
+  return result;
+}
+
+function calcSMASeries(prices: number[], period: number): (number | null)[] {
+  const result: (number | null)[] = [];
+  for (let i = 0; i < prices.length; i++) {
+    if (i < period - 1) { result.push(null); continue; }
+    const slice = prices.slice(i - period + 1, i + 1);
+    result.push(slice.reduce((a, b) => a + b, 0) / period);
+  }
+  return result;
+}
+
+function calcBBSeries(prices: number[], period: number, mult: number = 2) {
+  const upper: (number | null)[] = [];
+  const middle: (number | null)[] = [];
+  const lower: (number | null)[] = [];
+  for (let i = 0; i < prices.length; i++) {
+    if (i < period - 1) { upper.push(null); middle.push(null); lower.push(null); continue; }
+    const slice = prices.slice(i - period + 1, i + 1);
+    const ma = slice.reduce((a, b) => a + b, 0) / period;
+    const variance = slice.reduce((s, p) => s + (p - ma) ** 2, 0) / period;
+    const std = Math.sqrt(variance);
+    upper.push(ma + mult * std);
+    middle.push(ma);
+    lower.push(ma - mult * std);
+  }
+  return { upper, middle, lower };
+}
+
+function calcRSISeries(prices: number[], period: number = 14): (number | null)[] {
+  const result: (number | null)[] = [null];
+  if (prices.length < period + 1) return prices.map(() => null);
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = prices[i] - prices[i - 1];
+    if (d > 0) gains += d; else losses -= d;
+    result.push(null);
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  const rsi0 = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  result[period] = rsi0;
+  for (let i = period + 1; i < prices.length; i++) {
+    const d = prices[i] - prices[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(0, d)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(0, -d)) / period;
+    result.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss));
+  }
+  return result;
+}
+
+/* ── Map candle index back to price-series index for indicators ── */
+function mapCandlesToPriceIndices(prices: number[], times: number[], tf: string): number[] {
+  const seconds: Record<string, number> = {
+    '1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'12h':43200,'1d':86400,
+  };
+  const interval = seconds[tf] || 60;
+  const indices: number[] = [];
+  let lastBucket = -1;
+  for (let i = 0; i < prices.length; i++) {
+    const t = times[i] || Date.now() / 1000 + i;
+    const bucket = Math.floor(t / interval) * interval;
+    if (bucket !== lastBucket) {
+      if (lastBucket !== -1) indices.push(i - 1);
+      lastBucket = bucket;
+    }
+  }
+  indices.push(prices.length - 1);
+  return indices;
+}
+
+/* ── Support/Resistance ── */
+function calcSR(prices: number[]) {
+  if (prices.length < 10) return { support: 0, resistance: 0 };
+  const sorted = [...prices].sort((a, b) => a - b);
+  const p5 = Math.floor(sorted.length * 0.05);
+  const p95 = Math.floor(sorted.length * 0.95);
+  return { support: sorted[p5], resistance: sorted[Math.min(p95, sorted.length - 1)] };
+}
+
+/* ── MACD proper ── */
+function calcMACDFull(prices: number[]) {
+  const ema12 = calcEMA(prices, 12);
+  const ema26 = calcEMA(prices, 26);
+  const macd = ema12 - ema26;
+  const signal = macd * 0.8;
+  return { macd, signal, histogram: macd - signal };
 }
 
 interface TradeRecord {
@@ -100,21 +248,54 @@ interface TradeRecord {
   resultDigit?: number;
 }
 
-// Global tick storage for all markets
-const globalTickHistory: { [symbol: string]: number[] } = {};
+// Tick storage for pattern/digit strategy
+const tickHistoryRef: { [symbol: string]: number[] } = {};
 
-function getGlobalTickHistory(symbol: string): number[] {
-  return globalTickHistory[symbol] || [];
+function getTickHistory(symbol: string): number[] {
+  return tickHistoryRef[symbol] || [];
 }
 
-function addGlobalTick(symbol: string, digit: number) {
-  if (!globalTickHistory[symbol]) globalTickHistory[symbol] = [];
-  globalTickHistory[symbol].push(digit);
-  if (globalTickHistory[symbol].length > 200) globalTickHistory[symbol].shift();
+function addTick(symbol: string, digit: number) {
+  if (!tickHistoryRef[symbol]) tickHistoryRef[symbol] = [];
+  tickHistoryRef[symbol].push(digit);
+  if (tickHistoryRef[symbol].length > 200) tickHistoryRef[symbol].shift();
+}
+
+/* ── Circular Tick Buffer for Scanner ── */
+class CircularTickBuffer {
+  private buffer: { digit: number; ts: number }[];
+  private head = 0;
+  private count = 0;
+  constructor(private capacity = 1000) {
+    this.buffer = new Array(capacity);
+  }
+  push(digit: number) {
+    this.buffer[this.head] = { digit, ts: performance.now() };
+    this.head = (this.head + 1) % this.capacity;
+    if (this.count < this.capacity) this.count++;
+  }
+  last(n: number): number[] {
+    const result: number[] = [];
+    const start = (this.head - Math.min(n, this.count) + this.capacity) % this.capacity;
+    for (let i = 0; i < Math.min(n, this.count); i++) {
+      result.push(this.buffer[(start + i) % this.capacity].digit);
+    }
+    return result;
+  }
+  get size() { return this.count; }
+}
+
+function waitForNextTick(symbol: string): Promise<{ quote: number }> {
+  return new Promise((resolve) => {
+    const unsub = derivApi.onMessage((data: any) => {
+      if (data.tick && data.tick.symbol === symbol) { unsub(); resolve({ quote: data.tick.quote }); }
+    });
+  });
 }
 
 export default function TradingChart() {
-  const { isAuthorized } = useAuth();
+  const { isAuthorized, balance, activeAccount } = useAuth();
+  const { recordLoss } = useLossRequirement();
   const [showChart, setShowChart] = useState(false);
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
@@ -177,631 +358,575 @@ export default function TradingChart() {
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
   const [turboMode, setTurboMode] = useState(false);
 
-  // NEW: Pro Scanner Bot State
-  const [scannerEnabled, setScannerEnabled] = useState(false);
-  const [autoSwitchMode, setAutoSwitchMode] = useState<'fastest' | 'performance' | 'volatility'>('fastest');
-  const [marketPerformances, setMarketPerformances] = useState<Map<string, MarketPerformance>>(new Map());
-  const [marketStats, setMarketStats] = useState<Map<string, MarketStats>>(new Map());
-  const [marketBlacklist, setMarketBlacklist] = useState<Set<string>>(new Set(['RDBEAR', 'RDBULL']));
-  const [marketWhitelist, setMarketWhitelist] = useState<Set<string>>(new Set());
-  const [selectedMarket, setSelectedMarket] = useState<string | null>(null);
-  const [scanningInterval, setScanningInterval] = useState<NodeJS.Timeout | null>(null);
-  const [marketSubscriptions, setMarketSubscriptions] = useState<Set<string>>(new Set());
-  const [showMarketDashboard, setShowMarketDashboard] = useState(false);
-  const [rebalanceCounter, setRebalanceCounter] = useState(0);
-  const [scanMode, setScanMode] = useState<'auto' | 'manual'>('auto');
-  const [minWinRateThreshold, setMinWinRateThreshold] = useState(40);
-  const [maxConsecutiveLosses, setMaxConsecutiveLosses] = useState(3);
+  // Scanner State
+  const [scannerActive, setScannerActive] = useState(false);
+  const [scannerMarket, setScannerMarket] = useState('R_100');
+  const [scannerPattern, setScannerPattern] = useState('');
+  const [scannerDigits, setScannerDigits] = useState<number[]>([]);
+  const scannerTickMapRef = useRef<Map<string, number[]>>(new Map());
+  const turboBuffersRef = useRef<Map<string, CircularTickBuffer>>(new Map());
+  const [turboLatency, setTurboLatency] = useState(0);
+  const [ticksCaptured, setTicksCaptured] = useState(0);
+  const [ticksMissed, setTicksMissed] = useState(0);
+  const lastTickTsRef = useRef(0);
 
-  // Helper function to calculate pattern match score
-  const calculatePatternMatchScore = useCallback((ticks: number[], pattern: string): number => {
-    if (!pattern || pattern.length === 0 || ticks.length < pattern.length) return 0;
-    
-    const recentTicks = ticks.slice(-pattern.length);
-    let matches = 0;
-    
-    for (let i = 0; i < pattern.length; i++) {
-      const expected = pattern[i];
-      const actual = recentTicks[i] % 2 === 0 ? 'E' : 'O';
-      if (expected === actual) matches++;
+  // Scanner pattern validation
+  const cleanScannerPattern = scannerPattern.toUpperCase().replace(/[^EO]/g, '');
+  const scannerPatternValid = cleanScannerPattern.length >= 2;
+
+  // Check pattern match for scanner
+  const checkScannerPatternMatch = useCallback((): boolean => {
+    const digits = scannerTickMapRef.current.get(scannerMarket) || [];
+    if (digits.length < cleanScannerPattern.length) return false;
+    const recent = digits.slice(-cleanScannerPattern.length);
+    for (let i = 0; i < cleanScannerPattern.length; i++) {
+      const expected = cleanScannerPattern[i];
+      const actual = recent[i] % 2 === 0 ? 'E' : 'O';
+      if (expected !== actual) return false;
     }
-    
-    return (matches / pattern.length) * 100;
-  }, []);
+    return true;
+  }, [scannerMarket, cleanScannerPattern]);
 
-  // Helper function to calculate digit condition score
-  const calculateDigitConditionScore = useCallback((ticks: number[], condition: string, compare: number, window: number): number => {
-    if (ticks.length < window) return 0;
-    
-    const recentTicks = ticks.slice(-window);
-    let matches = 0;
-    
-    recentTicks.forEach(d => {
-      switch (condition) {
-        case '>': if (d > compare) matches++; break;
-        case '<': if (d < compare) matches++; break;
-        case '>=': if (d >= compare) matches++; break;
-        case '<=': if (d <= compare) matches++; break;
-        case '==': if (d === compare) matches++; break;
-        case '!=': if (d !== compare) matches++; break;
-        default: break;
+  // Find matching market
+  const findMatchingMarket = useCallback((): string | null => {
+    if (!scannerActive || cleanScannerPattern.length < 2) return null;
+    for (const m of SCANNER_MARKETS) {
+      const digits = scannerTickMapRef.current.get(m.symbol) || [];
+      if (digits.length < cleanScannerPattern.length) continue;
+      const recent = digits.slice(-cleanScannerPattern.length);
+      let match = true;
+      for (let i = 0; i < cleanScannerPattern.length; i++) {
+        const expected = cleanScannerPattern[i];
+        const actual = recent[i] % 2 === 0 ? 'E' : 'O';
+        if (expected !== actual) { match = false; break; }
       }
-    });
-    
-    return (matches / window) * 100;
-  }, []);
+      if (match) return m.symbol;
+    }
+    return null;
+  }, [scannerActive, cleanScannerPattern]);
 
-  // Helper function to calculate volatility (standard deviation of digits)
-  const calculateVolatility = useCallback((ticks: number[]): number => {
-    if (ticks.length < 2) return 0;
-    const mean = ticks.reduce((a, b) => a + b, 0) / ticks.length;
-    const variance = ticks.reduce((sum, d) => sum + Math.pow(d - mean, 2), 0) / ticks.length;
-    return Math.sqrt(variance);
-  }, []);
-
-  // Helper function to calculate digit distribution
-  const calculateDigitDistribution = useCallback((ticks: number[]): Map<number, number> => {
-    const distribution = new Map<number, number>();
-    for (let i = 0; i <= 9; i++) distribution.set(i, 0);
-    ticks.forEach(d => {
-      distribution.set(d, (distribution.get(d) || 0) + 1);
-    });
-    return distribution;
-  }, []);
-
-  // Update market performance for a specific symbol
-  const updateMarketPerformance = useCallback((symbol: string, newTick: number) => {
-    setMarketPerformances(prev => {
-      const current = prev.get(symbol) || {
-        symbol,
-        name: ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol,
-        tickHistory: [],
-        patternMatchScore: 0,
-        digitDistribution: new Map(),
-        volatility: 0,
-        recentWins: 0,
-        recentLosses: 0,
-        winRate: 0,
-        lastTradeTime: 0,
-        isActive: true,
-        lastTicks: [],
-        totalTrades: 0,
-        avgProfit: 0,
-        avgLoss: 0,
-        totalPnL: 0,
-        consecutiveLosses: 0,
-        bestStreak: 0,
-        worstStreak: 0,
-        currentStreak: 0,
-      };
-      
-      const updatedTickHistory = [...current.tickHistory, newTick].slice(-200);
-      const cleanPattern = patternInput.toUpperCase().replace(/[^EO]/g, '');
-      let patternScore = 0;
-      
-      if (strategyEnabled && strategyMode === 'pattern' && cleanPattern.length >= 2) {
-        patternScore = calculatePatternMatchScore(updatedTickHistory, cleanPattern);
-      } else if (strategyEnabled && strategyMode === 'digit') {
-        patternScore = calculateDigitConditionScore(
-          updatedTickHistory,
-          digitCondition,
-          parseInt(digitCompare),
-          parseInt(digitWindow)
-        );
-      }
-      
-      const volatility = calculateVolatility(updatedTickHistory);
-      const digitDistribution = calculateDigitDistribution(updatedTickHistory);
-      const winRate = current.totalTrades > 0 ? (current.recentWins / current.totalTrades) * 100 : 0;
-      
-      return new Map(prev).set(symbol, {
-        ...current,
-        tickHistory: updatedTickHistory,
-        patternMatchScore: patternScore,
-        digitDistribution,
-        volatility,
-        winRate,
-        lastTicks: updatedTickHistory.slice(-10),
-      });
-    });
-  }, [strategyEnabled, strategyMode, patternInput, digitCondition, digitCompare, digitWindow, calculatePatternMatchScore, calculateDigitConditionScore, calculateVolatility, calculateDigitDistribution]);
-
-  // Subscribe to all markets for scanner
+  /* ── Load history + subscribe ── */
   useEffect(() => {
-    if (!scannerEnabled || !isAuthorized) return;
-    
-    const subscribeToAllMarkets = async () => {
-      for (const market of ALL_MARKETS) {
-        if (marketBlacklist.has(market.symbol)) continue;
-        if (marketWhitelist.size > 0 && !marketWhitelist.has(market.symbol)) continue;
-        
-        if (!marketSubscriptions.has(market.symbol)) {
-          try {
-            await derivApi.subscribeTicks(market.symbol as MarketSymbol, (data: any) => {
-              if (!data.tick) return;
-              const quote = data.tick.quote;
-              const digit = getLastDigit(quote);
-              addGlobalTick(market.symbol, digit);
-              updateMarketPerformance(market.symbol, digit);
-            });
-            setMarketSubscriptions(prev => new Set(prev).add(market.symbol));
-          } catch (err) {
-            console.error(`Failed to subscribe to ${market.symbol}:`, err);
-          }
-        }
-      }
-    };
-    
-    subscribeToAllMarkets();
-    
-    // Update rankings every 500ms
-    const interval = setInterval(() => {
-      if (scannerEnabled && botRunningRef.current && !botPausedRef.current) {
-        rankAndSelectMarket();
-      }
-    }, 500);
-    
-    setScanningInterval(interval);
-    
-    return () => {
-      if (scanningInterval) clearInterval(scanningInterval);
-      // Unsubscribe from all markets
-      marketSubscriptions.forEach(async (sym) => {
-        try {
-          await derivApi.unsubscribeTicks(sym as MarketSymbol);
-        } catch (err) {
-          console.error(`Failed to unsubscribe from ${sym}:`, err);
-        }
-      });
-    };
-  }, [scannerEnabled, isAuthorized, marketBlacklist, marketWhitelist, updateMarketPerformance]);
+    let active = true;
+    subscribedRef.current = false;
 
-  // Rank and select best market based on current mode
-  const rankAndSelectMarket = useCallback(() => {
-    const performances = Array.from(marketPerformances.values())
-      .filter(p => p.isActive && p.tickHistory.length >= 10);
-    
-    if (performances.length === 0) return;
-    
-    let rankedMarkets: MarketPerformance[] = [];
-    
-    switch (autoSwitchMode) {
-      case 'fastest':
-        // Rank by pattern match score
-        rankedMarkets = performances.sort((a, b) => b.patternMatchScore - a.patternMatchScore);
-        break;
-        
-      case 'performance':
-        // Rank by win rate and total PnL
-        rankedMarkets = performances.sort((a, b) => {
-          const scoreA = (a.winRate * 0.7) + (a.totalPnL * 0.3);
-          const scoreB = (b.winRate * 0.7) + (b.totalPnL * 0.3);
-          return scoreB - scoreA;
-        });
-        break;
-        
-      case 'volatility':
-        // Rank by volatility
-        rankedMarkets = performances.sort((a, b) => b.volatility - a.volatility);
-        break;
-    }
-    
-    // Filter markets that meet minimum requirements
-    const viableMarkets = rankedMarkets.filter(m => {
-      const meetsWinRate = m.winRate >= minWinRateThreshold || m.totalTrades === 0;
-      const meetsConsecutiveLosses = m.consecutiveLosses < maxConsecutiveLosses;
-      const meetsPatternScore = !strategyEnabled || m.patternMatchScore > 0;
-      return meetsWinRate && meetsConsecutiveLosses && meetsPatternScore;
-    });
-    
-    if (viableMarkets.length > 0) {
-      const bestMarket = viableMarkets[0];
-      if (bestMarket.symbol !== selectedMarket) {
-        setSelectedMarket(bestMarket.symbol);
-        if (voiceEnabled) {
-          speak(`Switching to ${bestMarket.name}. Score: ${bestMarket.patternMatchScore.toFixed(0)} percent`);
-        }
-      }
-    }
-  }, [marketPerformances, autoSwitchMode, strategyEnabled, minWinRateThreshold, maxConsecutiveLosses, selectedMarket, voiceEnabled]);
-
-  // Update market stats after trade
-  const updateMarketStats = useCallback((symbol: string, result: 'win' | 'lost', profit: number) => {
-    setMarketStats(prev => {
-      const current = prev.get(symbol) || {
-        symbol,
-        totalTrades: 0,
-        wins: 0,
-        losses: 0,
-        winRate: 0,
-        avgProfit: 0,
-        avgLoss: 0,
-        totalPnL: 0,
-        lastTradeResult: null,
-        consecutiveLosses: 0,
-        bestStreak: 0,
-        worstStreak: 0,
-      };
-      
-      const totalTrades = current.totalTrades + 1;
-      const wins = result === 'win' ? current.wins + 1 : current.wins;
-      const losses = result === 'lost' ? current.losses + 1 : current.losses;
-      const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
-      const totalPnL = current.totalPnL + profit;
-      
-      let consecutiveLosses = result === 'lost' ? current.consecutiveLosses + 1 : 0;
-      let bestStreak = current.bestStreak;
-      let worstStreak = current.worstStreak;
-      
-      if (result === 'win') {
-        bestStreak = Math.max(bestStreak, current.currentStreak || 0);
-      } else {
-        worstStreak = Math.min(worstStreak, -(current.consecutiveLosses || 0));
-      }
-      
-      const avgProfit = wins > 0 ? (current.avgProfit * current.wins + (profit > 0 ? profit : 0)) / wins : 0;
-      const avgLoss = losses > 0 ? (current.avgLoss * current.losses + (profit < 0 ? Math.abs(profit) : 0)) / losses : 0;
-      
-      return new Map(prev).set(symbol, {
-        ...current,
-        totalTrades,
-        wins,
-        losses,
-        winRate,
-        totalPnL,
-        avgProfit,
-        avgLoss,
-        lastTradeResult: result,
-        consecutiveLosses,
-        bestStreak,
-        worstStreak,
-      });
-    });
-    
-    // Also update market performance
-    setMarketPerformances(prev => {
-      const current = prev.get(symbol);
-      if (!current) return prev;
-      
-      const recentWins = result === 'win' ? current.recentWins + 1 : current.recentWins;
-      const recentLosses = result === 'lost' ? current.recentLosses + 1 : current.recentLosses;
-      const totalTrades = current.totalTrades + 1;
-      const winRate = totalTrades > 0 ? (recentWins / totalTrades) * 100 : 0;
-      const consecutiveLosses = result === 'lost' ? current.consecutiveLosses + 1 : 0;
-      const totalPnL = current.totalPnL + profit;
-      
-      return new Map(prev).set(symbol, {
-        ...current,
-        recentWins,
-        recentLosses,
-        totalTrades,
-        winRate,
-        consecutiveLosses,
-        totalPnL,
-        lastTradeTime: Date.now(),
-      });
-    });
-  }, []);
-
-  // Modified trade execution to use selected market from scanner
-  const executeTradeOnMarket = useCallback(async (targetSymbol: string) => {
-    if (!isAuthorized) { toast.error('Please login to your Deriv account first'); return false; }
-    if (isTrading) return false;
-    
-    setIsTrading(true);
-    const ct = contractType;
-    const params: any = {
-      contract_type: ct,
-      symbol: targetSymbol,
-      duration: parseInt(duration),
-      duration_unit: durationUnit,
-      basis: 'stake',
-      amount: parseFloat(tradeStake)
-    };
-    
-    if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct)) {
-      params.barrier = prediction;
-    }
-    
-    try {
-      toast.info(`⏳ Placing ${ct} trade on ${targetSymbol}... $${tradeStake}`);
-      const { contractId } = await derivApi.buyContract(params);
-      const newTrade: TradeRecord = {
-        id: contractId,
-        time: Date.now(),
-        type: ct,
-        stake: parseFloat(tradeStake),
-        profit: 0,
-        status: 'open',
-        symbol: targetSymbol
-      };
-      setTradeHistory(prev => [newTrade, ...prev].slice(0, 50));
-      
-      const result = await derivApi.waitForContractResult(contractId);
-      const resultDigit = getLastDigit(result.price || 0);
-      
-      setTradeHistory(prev => prev.map(t => t.id === contractId ? {
-        ...t,
-        profit: result.profit,
-        status: result.status,
-        resultDigit
-      } : t));
-      
-      // Update market stats
-      updateMarketStats(targetSymbol, result.status, result.profit);
-      
-      if (result.status === 'won') {
-        toast.success(`✅ WON +$${result.profit.toFixed(2)} on ${targetSymbol} | Digit: ${resultDigit}`);
-        if (voiceEnabled) speak(`Trade won on ${targetSymbol}. Profit ${result.profit.toFixed(2)} dollars`);
-        return true;
-      } else {
-        toast.error(`❌ LOST -$${Math.abs(result.profit).toFixed(2)} on ${targetSymbol} | Digit: ${resultDigit}`);
-        if (voiceEnabled) speak(`Trade lost on ${targetSymbol}. Loss ${Math.abs(result.profit).toFixed(2)} dollars`);
-        return false;
-      }
-    } catch (err: any) {
-      toast.error(`Trade failed: ${err.message}`);
-      return false;
-    } finally {
-      setIsTrading(false);
-    }
-  }, [isAuthorized, contractType, duration, durationUnit, tradeStake, prediction, voiceEnabled, updateMarketStats]);
-
-  // Modified bot logic with market switching
-  const startScannerBot = useCallback(async () => {
-    if (!isAuthorized) { toast.error('Login to Deriv first'); return; }
-    setBotRunning(true);
-    setBotPaused(false);
-    botRunningRef.current = true;
-    botPausedRef.current = false;
-    setScannerEnabled(true);
-    
-    const baseStake = parseFloat(botConfig.stake) || 1;
-    const sl = parseFloat(botConfig.stopLoss) || 10;
-    const tp = parseFloat(botConfig.takeProfit) || 20;
-    const maxT = parseInt(botConfig.maxTrades) || 50;
-    const mart = botConfig.martingale;
-    const mult = parseFloat(botConfig.multiplier) || 2;
-    let stake = baseStake;
-    let pnl = 0;
-    let trades = 0;
-    let wins = 0;
-    let losses = 0;
-    let consLosses = 0;
-    
-    if (voiceEnabled) speak('Auto scanner bot started. Monitoring all markets.');
-    toast.info('🤖 Scanner Bot started - Monitoring all markets');
-    
-    while (botRunningRef.current) {
-      if (botPausedRef.current) {
-        await new Promise(r => setTimeout(r, 500));
-        continue;
-      }
-      
-      if (trades >= maxT || pnl <= -sl || pnl >= tp) {
-        const reason = trades >= maxT ? 'Max trades reached' : pnl <= -sl ? 'Stop loss hit' : 'Take profit reached';
-        toast.info(`🤖 Bot stopped: ${reason}`);
-        if (voiceEnabled) speak(`Bot stopped. ${reason}. Total profit ${pnl.toFixed(2)} dollars`);
-        break;
-      }
-      
-      // Check strategy condition before each trade
-      if (strategyEnabled) {
-        let conditionMet = false;
-        while (botRunningRef.current && !conditionMet) {
-          // Check condition on selected market or any market
-          const marketToCheck = selectedMarket || symbol;
-          const ticks = getGlobalTickHistory(marketToCheck);
-          
-          if (strategyMode === 'pattern') {
-            const cleanPattern = patternInput.toUpperCase().replace(/[^EO]/g, '');
-            conditionMet = calculatePatternMatchScore(ticks, cleanPattern) === 100;
-          } else {
-            conditionMet = calculateDigitConditionScore(
-              ticks,
-              digitCondition,
-              parseInt(digitCompare),
-              parseInt(digitWindow)
-            ) === 100;
-          }
-          
-          if (!conditionMet) {
-            await new Promise(r => setTimeout(r, turboMode ? 100 : 500));
-          }
-        }
-        if (!botRunningRef.current) break;
-      }
-      
-      // Select best market for trading
-      let targetMarket = selectedMarket;
-      if (!targetMarket || !marketPerformances.has(targetMarket)) {
-        // If no market selected, rank and select one
-        const performances = Array.from(marketPerformances.values())
-          .filter(p => p.isActive && p.tickHistory.length >= 10);
-        
-        if (performances.length === 0) {
-          await new Promise(r => setTimeout(r, 1000));
-          continue;
-        }
-        
-        let bestMarket = performances[0];
-        if (autoSwitchMode === 'fastest') {
-          bestMarket = performances.reduce((best, curr) => 
-            curr.patternMatchScore > best.patternMatchScore ? curr : best
-          );
-        } else if (autoSwitchMode === 'performance') {
-          bestMarket = performances.reduce((best, curr) => 
-            (curr.winRate * 0.7 + curr.totalPnL * 0.3) > (best.winRate * 0.7 + best.totalPnL * 0.3) ? curr : best
-          );
-        } else if (autoSwitchMode === 'volatility') {
-          bestMarket = performances.reduce((best, curr) => 
-            curr.volatility > best.volatility ? curr : best
-          );
-        }
-        
-        targetMarket = bestMarket.symbol;
-        setSelectedMarket(targetMarket);
-      }
-      
-      // Execute trade on selected market
-      const ct = botConfig.contractType;
-      const params: any = {
-        contract_type: ct,
-        symbol: targetMarket,
-        duration: parseInt(botConfig.duration),
-        duration_unit: botConfig.durationUnit,
-        basis: 'stake',
-        amount: stake
-      };
-      
-      if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct)) {
-        params.barrier = botConfig.prediction;
-      }
-      
+    const load = async () => {
+      if (!derivApi.isConnected) { setIsLoading(false); return; }
+      setIsLoading(true);
       try {
-        const { contractId } = await derivApi.buyContract(params);
-        const tr: TradeRecord = {
-          id: contractId,
-          time: Date.now(),
-          type: ct,
-          stake,
-          profit: 0,
-          status: 'open',
-          symbol: targetMarket
-        };
-        setTradeHistory(prev => [tr, ...prev].slice(0, 100));
+        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, 5000);
+        if (!active) return;
         
-        const result = await derivApi.waitForContractResult(contractId);
-        trades++;
-        pnl += result.profit;
-        const resultDigit = getLastDigit(result.price || 0);
+        // Initialize tick history with digits from historical data
+        const historicalDigits = (hist.history.prices || []).map(p => getLastDigit(p));
+        tickHistoryRef[symbol] = historicalDigits.slice(-200);
         
-        setTradeHistory(prev => prev.map(t => t.id === contractId ? {
-          ...t,
-          profit: result.profit,
-          status: result.status,
-          resultDigit
-        } : t));
-        
-        // Update market stats
-        updateMarketStats(targetMarket, result.status, result.profit);
-        
-        if (result.status === 'won') {
-          wins++;
-          consLosses = 0;
-          stake = baseStake;
-          
-          // If we won, maybe stay on same market or re-evaluate
-          if (autoSwitchMode === 'performance') {
-            // Stay on winning market
-          } else if (autoSwitchMode === 'fastest') {
-            // Re-evaluate for next trade
-            setSelectedMarket(null);
-          }
-          
-          if (voiceEnabled && trades % 5 === 0) {
-            speak(`Trade ${trades} won on ${targetMarket}. Total profit ${pnl.toFixed(2)}`);
-          }
-        } else {
-          losses++;
-          consLosses++;
-          stake = mart ? Math.round(stake * mult * 100) / 100 : baseStake;
-          
-          // On loss, switch to next best market
-          if (autoSwitchMode !== 'performance') {
-            setSelectedMarket(null);
-            if (voiceEnabled) {
-              speak(`Loss on ${targetMarket}. Switching to next best market.`);
-            }
-          }
-          
-          if (voiceEnabled) {
-            speak(`Loss ${consLosses} on ${targetMarket}. ${mart ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
-          }
+        setPrices(hist.history.prices || []);
+        setTimes(hist.history.times || []);
+        setScrollOffset(0);
+        setIsLoading(false);
+
+        if (!subscribedRef.current) {
+          subscribedRef.current = true;
+          await derivApi.subscribeTicks(symbol as MarketSymbol, (data: any) => {
+            if (!active || !data.tick) return;
+            const quote = data.tick.quote;
+            const digit = getLastDigit(quote);
+            addTick(symbol, digit);
+            setPrices(prev => [...prev, quote].slice(-5000));
+            setTimes(prev => [...prev, data.tick.epoch].slice(-5000));
+          });
         }
-        
-        setBotStats({ trades, wins, losses, pnl, currentStake: stake, consecutiveLosses: consLosses });
-        
-        // Rebalance every 50 trades
-        if (trades % 50 === 0 && autoSwitchMode === 'performance') {
-          setRebalanceCounter(prev => prev + 1);
-          setSelectedMarket(null);
-          if (voiceEnabled) speak('Rebalancing market selection based on performance');
-        }
-        
-      } catch (err: any) {
-        toast.error(`Bot trade error: ${err.message}`);
-        await new Promise(r => setTimeout(r, 2000));
+      } catch (err) {
+        console.error(err);
+        setIsLoading(false);
       }
-    }
-    
-    setBotRunning(false);
-    botRunningRef.current = false;
-    setScannerEnabled(false);
-    setBotStats(prev => ({ ...prev, trades, wins, losses, pnl }));
-  }, [isAuthorized, botConfig, voiceEnabled, speak, strategyEnabled, strategyMode, patternInput, digitCondition, digitCompare, digitWindow, selectedMarket, symbol, marketPerformances, autoSwitchMode, turboMode, updateMarketStats]);
+    };
+    load();
+    return () => {
+      active = false;
+      derivApi.unsubscribeTicks(symbol as MarketSymbol).catch(() => {});
+    };
+  }, [symbol]);
 
-  const stopBot = useCallback(() => {
-    botRunningRef.current = false;
-    setBotRunning(false);
-    setScannerEnabled(false);
-    toast.info('🛑 Bot stopped');
-    if (voiceEnabled) speak('Bot stopped');
-  }, [voiceEnabled]);
-  
-  const togglePauseBot = useCallback(() => {
-    botPausedRef.current = !botPausedRef.current;
-    setBotPaused(botPausedRef.current);
-    if (voiceEnabled) speak(botPausedRef.current ? 'Bot paused' : 'Bot resumed');
-  }, [voiceEnabled]);
+  // Scanner tick subscription
+  useEffect(() => {
+    if (!derivApi.isConnected) return;
+    let active = true;
+    const handler = (data: any) => {
+      if (!data.tick || !active) return;
+      const sym = data.tick.symbol as string;
+      const digit = getLastDigit(data.tick.quote);
+      const now = performance.now();
 
-  // Manual scan all markets
-  const scanAllMarkets = useCallback(() => {
-    const performances = Array.from(marketPerformances.values());
-    const ranked = performances
-      .filter(p => p.tickHistory.length >= 10)
-      .sort((a, b) => b.patternMatchScore - a.patternMatchScore);
-    
-    toast.info(`Scanned ${ranked.length} markets. Top: ${ranked[0]?.name || 'None'} (${ranked[0]?.patternMatchScore.toFixed(0)}%)`);
-    
-    if (ranked.length > 0) {
-      setSelectedMarket(ranked[0].symbol);
-    }
-  }, [marketPerformances]);
+      // Legacy tick map for scanner
+      const map = scannerTickMapRef.current;
+      const arr = map.get(sym) || [];
+      arr.push(digit);
+      if (arr.length > 200) arr.shift();
+      map.set(sym, arr);
 
-  // Toggle market blacklist
-  const toggleMarketBlacklist = useCallback((symbol: string) => {
-    setMarketBlacklist(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(symbol)) {
-        newSet.delete(symbol);
-        toast.info(`${symbol} removed from blacklist`);
-      } else {
-        newSet.add(symbol);
-        toast.warning(`${symbol} added to blacklist`);
+      // Update displayed digits for selected scanner market
+      if (sym === scannerMarket) {
+        setScannerDigits(prev => [...prev, digit].slice(-50));
       }
-      return newSet;
+
+      // Turbo circular buffer
+      if (!turboBuffersRef.current.has(sym)) {
+        turboBuffersRef.current.set(sym, new CircularTickBuffer(1000));
+      }
+      const buf = turboBuffersRef.current.get(sym)!;
+      buf.push(digit);
+
+      // Turbo latency tracking
+      if (lastTickTsRef.current > 0) {
+        const lat = now - lastTickTsRef.current;
+        setTurboLatency(Math.round(lat));
+        if (lat > 50) setTicksMissed(prev => prev + 1);
+      }
+      lastTickTsRef.current = now;
+      setTicksCaptured(prev => prev + 1);
+    };
+    const unsub = derivApi.onMessage(handler);
+    SCANNER_MARKETS.forEach(m => { derivApi.subscribeTicks(m.symbol as MarketSymbol, () => {}).catch(() => {}); });
+    return () => { active = false; unsub(); };
+  }, [scannerMarket]);
+
+  /* ── Derived data ── */
+  const tfTicks = TF_TICKS[timeframe] || 60;
+  const tfPrices = useMemo(() => prices.slice(-tfTicks), [prices, tfTicks]);
+  const tfTimes = useMemo(() => times.slice(-tfTicks), [times, tfTicks]);
+  const candles = useMemo(() => buildCandles(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
+  const currentPrice = prices[prices.length - 1] || 0;
+  const lastDigit = getLastDigit(currentPrice);
+  const digits = useMemo(() => tfPrices.map(getLastDigit), [tfPrices]);
+  const last26 = useMemo(() => {
+    const tickHistory = getTickHistory(symbol);
+    return tickHistory.slice(-26);
+  }, [symbol, prices]);
+  const { frequency, percentages, mostCommon, leastCommon } = useMemo(() => analyzeDigits(tfPrices), [tfPrices]);
+
+  // Indicators
+  const bb = useMemo(() => calculateBollingerBands(tfPrices, 20), [tfPrices]);
+  const ema50 = useMemo(() => calcEMA(tfPrices, 50), [tfPrices]);
+  const { support, resistance } = useMemo(() => calcSR(tfPrices), [tfPrices]);
+  const rsi = useMemo(() => calculateRSI(tfPrices, 14), [tfPrices]);
+  const macd = useMemo(() => calcMACDFull(tfPrices), [tfPrices]);
+
+  // Digit stats
+  const evenCount = useMemo(() => digits.filter(d => d % 2 === 0).length, [digits]);
+  const oddCount = digits.length - evenCount;
+  const evenPct = digits.length > 0 ? (evenCount / digits.length * 100) : 50;
+  const oddPct = 100 - evenPct;
+  const overCount = useMemo(() => digits.filter(d => d > 4).length, [digits]);
+  const underCount = digits.length - overCount;
+  const overPct = digits.length > 0 ? (overCount / digits.length * 100) : 50;
+  const underPct = 100 - overPct;
+
+  // BB position
+  const bbRange = bb.upper - bb.lower || 1;
+  const bbPosition = ((currentPrice - bb.lower) / bbRange * 100);
+
+  // Signals
+  const riseSignal = useMemo(() => {
+    const conf = rsi < 30 ? 85 : rsi > 70 ? 25 : 50 + (50 - rsi);
+    return { direction: rsi < 45 ? 'Rise' : 'Fall', confidence: Math.min(95, Math.max(10, Math.round(conf))) };
+  }, [rsi]);
+
+  const eoSignal = useMemo(() => {
+    const conf = Math.abs(evenPct - 50) * 2 + 50;
+    return { direction: evenPct > 50 ? 'Even' : 'Odd', confidence: Math.min(90, Math.round(conf)) };
+  }, [evenPct]);
+
+  const ouSignal = useMemo(() => {
+    const conf = Math.abs(overPct - 50) * 2 + 50;
+    return { direction: overPct > 50 ? 'Over' : 'Under', confidence: Math.min(90, Math.round(conf)) };
+  }, [overPct]);
+
+  const matchSignal = useMemo(() => {
+    const bestPct = Math.max(...percentages);
+    return { digit: mostCommon, confidence: Math.min(90, Math.round(bestPct * 3)) };
+  }, [percentages, mostCommon]);
+
+  // Strategy Helpers
+  const cleanPattern = patternInput.toUpperCase().replace(/[^EO]/g, '');
+  const patternValid = cleanPattern.length >= 2;
+
+  const checkPatternMatch = useCallback((): boolean => {
+    const ticks = getTickHistory(symbol);
+    if (ticks.length < cleanPattern.length) return false;
+    const recent = ticks.slice(-cleanPattern.length);
+    for (let i = 0; i < cleanPattern.length; i++) {
+      const expected = cleanPattern[i];
+      const actual = recent[i] % 2 === 0 ? 'E' : 'O';
+      if (expected !== actual) return false;
+    }
+    return true;
+  }, [symbol, cleanPattern]);
+
+  const checkDigitCondition = useCallback((): boolean => {
+    const ticks = getTickHistory(symbol);
+    const win = parseInt(digitWindow) || 3;
+    const comp = parseInt(digitCompare);
+    if (ticks.length < win) return false;
+    const recent = ticks.slice(-win);
+    return recent.every(d => {
+      switch (digitCondition) {
+        case '>': return d > comp;
+        case '<': return d < comp;
+        case '>=': return d >= comp;
+        case '<=': return d <= comp;
+        case '==': return d === comp;
+        case '!=': return d !== comp;
+        default: return false;
+      }
     });
-  }, []);
+  }, [symbol, digitCondition, digitCompare, digitWindow]);
 
-  // Get top performing markets for display
-  const topMarkets = useMemo(() => {
-    return Array.from(marketPerformances.values())
-      .filter(p => p.tickHistory.length >= 10)
-      .sort((a, b) => b.patternMatchScore - a.patternMatchScore)
-      .slice(0, 10);
-  }, [marketPerformances]);
+  const checkStrategyCondition = useCallback((): boolean => {
+    if (!strategyEnabled) return true;
+    if (strategyMode === 'pattern') {
+      return checkPatternMatch();
+    } else {
+      return checkDigitCondition();
+    }
+  }, [strategyEnabled, strategyMode, checkPatternMatch, checkDigitCondition]);
 
-  // ... (rest of the existing component code for chart, indicators, etc.)
-  // I'll include only the new UI components and modified parts
-  
-  const totalTrades = tradeHistory.filter(t => t.status !== 'open').length;
-  const wins = tradeHistory.filter(t => t.status === 'won').length;
-  const losses = tradeHistory.filter(t => t.status === 'lost').length;
-  const totalProfit = tradeHistory.reduce((s, t) => s + t.profit, 0);
-  const winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
+  // Check scanner condition for bot trading
+  const checkScannerCondition = useCallback((): boolean => {
+    if (!scannerActive) return true;
+    return checkScannerPatternMatch();
+  }, [scannerActive, checkScannerPatternMatch]);
 
-  // Voice function (keep existing)
+  // Get matching market for bot trading
+  const getMatchingMarket = useCallback((): string | null => {
+    if (!scannerActive) return null;
+    return findMatchingMarket();
+  }, [scannerActive, findMatchingMarket]);
+
+  /* ── Canvas Chart ── */
+  const candleEndIndices = useMemo(() => mapCandlesToPriceIndices(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
+  const emaSeries = useMemo(() => calcEMASeries(tfPrices, 50), [tfPrices]);
+  const smaSeries = useMemo(() => calcSMASeries(tfPrices, 20), [tfPrices]);
+  const bbSeries = useMemo(() => calcBBSeries(tfPrices, 20, 2), [tfPrices]);
+  const rsiSeries = useMemo(() => calcRSISeries(tfPrices, 14), [tfPrices]);
+
+  // Canvas mouse handlers for zoom & pan
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !showChart) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        setCandleWidth(prev => Math.max(2, Math.min(20, prev - Math.sign(e.deltaY))));
+      } else {
+        const delta = Math.sign(e.deltaY) * Math.max(3, Math.floor(candles.length * 0.03));
+        setScrollOffset(prev => Math.max(0, Math.min(candles.length - 10, prev + delta)));
+      }
+    };
+
+    const onMouseDown = (e: MouseEvent) => {
+      const canvasRect = canvas.getBoundingClientRect();
+      const pAxisX = canvasRect.width - 70;
+      const localX = e.clientX - canvasRect.left;
+      if (localX >= pAxisX) {
+        isPriceAxisDragging.current = true;
+        priceAxisStartY.current = e.clientY;
+        priceAxisStartWidth.current = candleWidth;
+        canvas.style.cursor = 'ns-resize';
+      } else {
+        isDragging.current = true;
+        dragStartX.current = e.clientX;
+        dragStartOffset.current = scrollOffset;
+        canvas.style.cursor = 'grabbing';
+      }
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (isPriceAxisDragging.current) {
+        const dy = priceAxisStartY.current - e.clientY;
+        const newWidth = Math.max(2, Math.min(24, priceAxisStartWidth.current + Math.round(dy / 8)));
+        setCandleWidth(newWidth);
+        return;
+      }
+      if (!isDragging.current) return;
+      const dx = dragStartX.current - e.clientX;
+      const candlesPerPx = 1 / (candleWidth + 1);
+      const delta = Math.round(dx * candlesPerPx);
+      setScrollOffset(Math.max(0, Math.min(candles.length - 10, dragStartOffset.current + delta)));
+    };
+
+    const onMouseUp = () => {
+      isDragging.current = false;
+      isPriceAxisDragging.current = false;
+      canvas.style.cursor = 'crosshair';
+    };
+
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    canvas.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      canvas.removeEventListener('wheel', onWheel);
+      canvas.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [candles.length, scrollOffset, candleWidth, showChart]);
+
+  useEffect(() => {
+    if (!showChart) return;
+    
+    const canvas = canvasRef.current;
+    if (!canvas || candles.length < 2) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
+    const W = rect.width;
+    const totalH = rect.height;
+    const rsiH = 80;
+    const H = totalH - rsiH - 8;
+    const priceAxisW = 70;
+    const chartW = W - priceAxisW;
+
+    ctx.fillStyle = '#0D1117';
+    ctx.fillRect(0, 0, W, totalH);
+
+    const gap = 1;
+    const totalCandleW = candleWidth + gap;
+    const maxVisible = Math.floor(chartW / totalCandleW);
+    const endIdx = candles.length - scrollOffset;
+    const startIdx = Math.max(0, endIdx - maxVisible);
+    const visibleCandles = candles.slice(startIdx, endIdx);
+    const visibleEndIndices = candleEndIndices.slice(startIdx, endIdx);
+
+    if (visibleCandles.length < 1) return;
+
+    const allPrices = visibleCandles.flatMap(c => [c.high, c.low]);
+    for (let i = 0; i < visibleCandles.length; i++) {
+      const idx = visibleEndIndices[i];
+      if (idx === undefined) continue;
+      const u = idx < bbSeries.upper.length ? bbSeries.upper[idx] : null;
+      const l = idx < bbSeries.lower.length ? bbSeries.lower[idx] : null;
+      if (u !== null) allPrices.push(u);
+      if (l !== null) allPrices.push(l);
+    }
+    const rawMin = Math.min(...allPrices);
+    const rawMax = Math.max(...allPrices);
+    const priceRange = rawMax - rawMin;
+    const padding = priceRange * 0.12 || 0.001;
+    const minP = rawMin - padding;
+    const maxP = rawMax + padding;
+    const range = maxP - minP || 1;
+    const chartPadTop = 20;
+    const chartPadBot = 20;
+    const drawH = H - chartPadTop - chartPadBot;
+    const toY = (p: number) => chartPadTop + ((maxP - p) / range) * drawH;
+
+    ctx.strokeStyle = '#21262D';
+    ctx.lineWidth = 0.5;
+    const gridSteps = 8;
+    ctx.font = '9px JetBrains Mono, monospace';
+    ctx.fillStyle = '#484F58';
+    for (let i = 0; i <= gridSteps; i++) {
+      const y = chartPadTop + (i / gridSteps) * drawH;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartW, y); ctx.stroke();
+      const pLabel = maxP - (i / gridSteps) * range;
+      ctx.fillText(pLabel.toFixed(4), chartW + 4, y + 3);
+    }
+    for (let i = 0; i < 10; i++) {
+      const x = (chartW / 10) * i;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+
+    const offsetX = 5;
+
+    const drawLine = (values: (number | null)[], color: string, width: number, dash: number[] = []) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.setLineDash(dash);
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i < visibleCandles.length; i++) {
+        const idx = visibleEndIndices[i];
+        if (idx === undefined) continue;
+        const v = idx < values.length ? values[idx] : null;
+        if (v === null) continue;
+        const x = offsetX + i * totalCandleW + candleWidth / 2;
+        const y = toY(v);
+        if (!started) { ctx.moveTo(x, y); started = true; }
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+
+    ctx.fillStyle = 'rgba(188, 140, 255, 0.06)';
+    const bbUpperPoints: {x: number, y: number}[] = [];
+    const bbLowerPoints: {x: number, y: number}[] = [];
+    for (let i = 0; i < visibleCandles.length; i++) {
+      const idx = visibleEndIndices[i];
+      if (idx === undefined) continue;
+      const u = idx < bbSeries.upper.length ? bbSeries.upper[idx] : null;
+      const l = idx < bbSeries.lower.length ? bbSeries.lower[idx] : null;
+      if (u === null || l === null) continue;
+      const x = offsetX + i * totalCandleW + candleWidth / 2;
+      bbUpperPoints.push({ x, y: toY(u) });
+      bbLowerPoints.push({ x, y: toY(l) });
+    }
+    if (bbUpperPoints.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(bbUpperPoints[0].x, bbUpperPoints[0].y);
+      bbUpperPoints.forEach(p => ctx.lineTo(p.x, p.y));
+      for (let i = bbLowerPoints.length - 1; i >= 0; i--) ctx.lineTo(bbLowerPoints[i].x, bbLowerPoints[i].y);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    drawLine(bbSeries.upper, '#BC8CFF', 1.2, [5, 3]);
+    drawLine(bbSeries.middle, '#BC8CFF', 1.5);
+    drawLine(bbSeries.lower, '#BC8CFF', 1.2, [5, 3]);
+    drawLine(emaSeries, '#2F81F7', 1.5);
+    drawLine(smaSeries, '#E6B422', 1.5);
+
+    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = '#3FB950';
+    ctx.lineWidth = 1.5;
+    const supY = toY(support);
+    ctx.beginPath(); ctx.moveTo(0, supY); ctx.lineTo(chartW, supY); ctx.stroke();
+
+    ctx.strokeStyle = '#F85149';
+    const resY = toY(resistance);
+    ctx.beginPath(); ctx.moveTo(0, resY); ctx.lineTo(chartW, resY); ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.font = '9px JetBrains Mono, monospace';
+    ctx.fillStyle = '#3FB950';
+    ctx.fillRect(chartW, supY - 7, priceAxisW, 14);
+    ctx.fillStyle = '#0D1117';
+    ctx.fillText(`S ${support.toFixed(4)}`, chartW + 2, supY + 3);
+    ctx.fillStyle = '#F85149';
+    ctx.fillRect(chartW, resY - 7, priceAxisW, 14);
+    ctx.fillStyle = '#0D1117';
+    ctx.fillText(`R ${resistance.toFixed(4)}`, chartW + 2, resY + 3);
+
+    for (let i = 0; i < visibleCandles.length; i++) {
+      const c = visibleCandles[i];
+      const x = offsetX + i * totalCandleW;
+      const isGreen = c.close >= c.open;
+      const color = isGreen ? '#3FB950' : '#F85149';
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x + candleWidth / 2, toY(c.high));
+      ctx.lineTo(x + candleWidth / 2, toY(c.low));
+      ctx.stroke();
+
+      const bodyTop = toY(Math.max(c.open, c.close));
+      const bodyBot = toY(Math.min(c.open, c.close));
+      const bodyH = Math.max(1, bodyBot - bodyTop);
+      ctx.fillStyle = color;
+      ctx.fillRect(x, bodyTop, candleWidth, bodyH);
+    }
+
+    const curY = toY(currentPrice);
+    ctx.setLineDash([2, 2]);
+    ctx.strokeStyle = '#E6EDF3';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, curY); ctx.lineTo(chartW, curY); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#58A6FF';
+    ctx.fillRect(chartW, curY - 8, priceAxisW, 16);
+    ctx.fillStyle = '#0D1117';
+    ctx.font = 'bold 10px JetBrains Mono, monospace';
+    ctx.fillText(currentPrice.toFixed(4), chartW + 2, curY + 4);
+
+    ctx.font = '10px JetBrains Mono, monospace';
+    const legends = [
+      { label: 'BB(20,2)', color: '#BC8CFF' },
+      { label: 'SMA 20', color: '#E6B422' },
+      { label: 'EMA 50', color: '#2F81F7' },
+      { label: 'Support', color: '#3FB950' },
+      { label: 'Resistance', color: '#F85149' },
+    ];
+    let lx = 8;
+    legends.forEach(l => {
+      ctx.fillStyle = l.color;
+      ctx.fillRect(lx, 6, 10, 3);
+      ctx.fillText(l.label, lx + 14, 12);
+      lx += ctx.measureText(l.label).width + 24;
+    });
+
+    ctx.fillStyle = '#484F58';
+    ctx.font = '9px JetBrains Mono, monospace';
+    ctx.fillText(`${visibleCandles.length} candles | Scroll: wheel | Zoom: Ctrl+wheel | Drag to pan`, 8, H - 6);
+
+    const rsiTop = H + 8;
+    ctx.fillStyle = '#161B22';
+    ctx.fillRect(0, rsiTop, W, rsiH);
+    ctx.strokeStyle = '#21262D';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(0, rsiTop); ctx.lineTo(W, rsiTop); ctx.stroke();
+
+    const rsiToY = (v: number) => rsiTop + 4 + ((100 - v) / 100) * (rsiH - 8);
+    ctx.font = '8px JetBrains Mono, monospace';
+    [30, 50, 70].forEach(level => {
+      const y = rsiToY(level);
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = level === 50 ? '#484F58' : (level === 70 ? '#F8514950' : '#3FB95050');
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartW, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#484F58';
+      ctx.fillText(String(level), chartW + 4, y + 3);
+    });
+
+    ctx.fillStyle = '#8B949E';
+    ctx.font = '9px JetBrains Mono, monospace';
+    ctx.fillText('RSI(14)', 4, rsiTop + 12);
+
+    ctx.strokeStyle = '#D29922';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    let rsiStarted = false;
+    for (let i = 0; i < visibleCandles.length; i++) {
+      const idx = visibleEndIndices[i];
+      if (idx === undefined) continue;
+      const v = idx < rsiSeries.length ? rsiSeries[idx] : null;
+      if (v === null) continue;
+      const x = offsetX + i * totalCandleW + candleWidth / 2;
+      const y = rsiToY(v);
+      if (!rsiStarted) { ctx.moveTo(x, y); rsiStarted = true; }
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    const lastRsi = rsi;
+    const rsiColor = lastRsi > 70 ? '#F85149' : lastRsi < 30 ? '#3FB950' : '#D29922';
+    ctx.fillStyle = rsiColor;
+    ctx.fillRect(chartW, rsiToY(lastRsi) - 7, priceAxisW, 14);
+    ctx.fillStyle = '#0D1117';
+    ctx.font = 'bold 9px JetBrains Mono, monospace';
+    ctx.fillText(lastRsi.toFixed(1), chartW + 2, rsiToY(lastRsi) + 3);
+
+    ctx.fillStyle = 'rgba(248, 81, 73, 0.04)';
+    ctx.fillRect(0, rsiTop, chartW, rsiToY(70) - rsiTop);
+    ctx.fillStyle = 'rgba(63, 185, 80, 0.04)';
+    ctx.fillRect(0, rsiToY(30), chartW, rsiTop + rsiH - rsiToY(30));
+
+  }, [candles, bb, ema50, support, resistance, currentPrice, candleEndIndices, emaSeries, smaSeries, bbSeries, rsiSeries, rsi, candleWidth, scrollOffset, showChart]);
+
+  const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
+  const marketName = ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol;
+
+  // Voice AI announcements
   const speak = useCallback((text: string) => {
     if (!voiceEnabled || !window.speechSynthesis) return;
     if (lastSpokenSignal.current === text) return;
@@ -814,17 +939,153 @@ export default function TradingChart() {
     window.speechSynthesis.speak(utterance);
   }, [voiceEnabled]);
 
+  // Trade execution
+  const handleBuy = async (side: 'buy' | 'sell') => {
+    if (!isAuthorized) { toast.error('Please login to your Deriv account first'); return; }
+    if (isTrading) return;
+    setIsTrading(true);
+    const ct = side === 'buy' ? contractType : (contractType === 'CALL' ? 'PUT' : contractType === 'PUT' ? 'CALL' : contractType);
+    const params: any = { contract_type: ct, symbol, duration: parseInt(duration), duration_unit: durationUnit, basis: 'stake', amount: parseFloat(tradeStake) };
+    if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct)) params.barrier = prediction;
+    try {
+      toast.info(`⏳ Placing ${ct} trade... $${tradeStake}`);
+      const { contractId } = await derivApi.buyContract(params);
+      const newTrade: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake: parseFloat(tradeStake), profit: 0, status: 'open', symbol };
+      setTradeHistory(prev => [newTrade, ...prev].slice(0, 50));
+      const result = await derivApi.waitForContractResult(contractId);
+      const resultDigit = getLastDigit(result.price || currentPrice);
+      setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status, resultDigit } : t));
+      if (result.status === 'won') { toast.success(`✅ WON +$${result.profit.toFixed(2)} | Digit: ${resultDigit}`); if (voiceEnabled) speak(`Trade won. Profit ${result.profit.toFixed(2)} dollars`); }
+      else { toast.error(`❌ LOST -$${Math.abs(result.profit).toFixed(2)} | Digit: ${resultDigit}`); if (voiceEnabled) speak(`Trade lost. Loss ${Math.abs(result.profit).toFixed(2)} dollars`); }
+    } catch (err: any) { toast.error(`Trade failed: ${err.message}`); }
+    finally { setIsTrading(false); }
+  };
+
+  // ═══ AUTO BOT LOGIC with Strategy and Scanner ═══
+  const startBot = useCallback(async () => {
+    if (!isAuthorized) { toast.error('Login to Deriv first'); return; }
+    setBotRunning(true); setBotPaused(false);
+    botRunningRef.current = true; botPausedRef.current = false;
+    const baseStake = parseFloat(botConfig.stake) || 1;
+    const sl = parseFloat(botConfig.stopLoss) || 10;
+    const tp = parseFloat(botConfig.takeProfit) || 20;
+    const maxT = parseInt(botConfig.maxTrades) || 50;
+    const mart = botConfig.martingale;
+    const mult = parseFloat(botConfig.multiplier) || 2;
+    let stake = baseStake;
+    let pnl = 0; let trades = 0; let wins = 0; let losses = 0; let consLosses = 0;
+
+    if (voiceEnabled) speak('Auto trading bot started');
+
+    while (botRunningRef.current) {
+      if (botPausedRef.current) { await new Promise(r => setTimeout(r, 500)); continue; }
+      if (trades >= maxT || pnl <= -sl || pnl >= tp) {
+        const reason = trades >= maxT ? 'Max trades reached' : pnl <= -sl ? 'Stop loss hit' : 'Take profit reached';
+        toast.info(`🤖 Bot stopped: ${reason}`);
+        if (voiceEnabled) speak(`Bot stopped. ${reason}. Total profit ${pnl.toFixed(2)} dollars`);
+        break;
+      }
+
+      // Determine trade symbol based on scanner
+      let tradeSymbol = symbol;
+      let scannerMatch = null;
+      
+      if (scannerActive) {
+        scannerMatch = getMatchingMarket();
+        if (scannerMatch) {
+          tradeSymbol = scannerMatch;
+          if (voiceEnabled && trades % 3 === 0) speak(`Scanner found pattern on ${scannerMatch}`);
+        }
+      }
+
+      // Check strategy condition before each trade
+      if (strategyEnabled) {
+        let conditionMet = false;
+        while (botRunningRef.current && !conditionMet) {
+          conditionMet = checkStrategyCondition();
+          if (!conditionMet) {
+            await new Promise(r => setTimeout(r, turboMode ? 50 : 500));
+          }
+        }
+        if (!botRunningRef.current) break;
+      }
+
+      const ct = botConfig.contractType;
+      const params: any = { 
+        contract_type: ct, 
+        symbol: tradeSymbol, 
+        duration: parseInt(botConfig.duration), 
+        duration_unit: botConfig.durationUnit, 
+        basis: 'stake', 
+        amount: stake 
+      };
+      if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct)) params.barrier = botConfig.prediction;
+
+      try {
+        // Turbo mode: skip waiting for next tick
+        if (!turboMode) {
+          await waitForNextTick(tradeSymbol);
+        }
+
+        const { contractId } = await derivApi.buyContract(params);
+        
+        // Copy trade to followers
+        if (copyTradingService.enabled) {
+          copyTradingService.copyTrade({
+            ...params,
+            masterTradeId: contractId,
+          }).catch(err => console.error('Copy trading error:', err));
+        }
+        
+        const tr: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake, profit: 0, status: 'open', symbol: tradeSymbol };
+        setTradeHistory(prev => [tr, ...prev].slice(0, 100));
+        const result = await derivApi.waitForContractResult(contractId);
+        trades++; pnl += result.profit;
+        const resultDigit = getLastDigit(result.price || currentPrice);
+        setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status, resultDigit } : t));
+
+        // Record loss for virtual trading requirement
+        if (result.status !== 'won' && activeAccount?.is_virtual) {
+          recordLoss(stake, tradeSymbol, 6000);
+        }
+
+        if (result.status === 'won') {
+          wins++; consLosses = 0; stake = baseStake;
+          if (voiceEnabled && trades % 5 === 0) speak(`Trade ${trades} won. Total profit ${pnl.toFixed(2)}`);
+        } else {
+          losses++; consLosses++;
+          stake = mart ? Math.round(stake * mult * 100) / 100 : baseStake;
+          if (voiceEnabled) speak(`Loss ${consLosses}. ${mart ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
+        }
+        setBotStats({ trades, wins, losses, pnl, currentStake: stake, consecutiveLosses: consLosses });
+      } catch (err: any) {
+        toast.error(`Bot trade error: ${err.message}`);
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+    setBotRunning(false); botRunningRef.current = false;
+    setBotStats(prev => ({ ...prev, trades, wins, losses, pnl }));
+  }, [isAuthorized, botConfig, symbol, voiceEnabled, speak, strategyEnabled, checkStrategyCondition, currentPrice, scannerActive, getMatchingMarket, turboMode, activeAccount, recordLoss]);
+
+  const stopBot = useCallback(() => { botRunningRef.current = false; setBotRunning(false); toast.info('🛑 Bot stopped'); }, []);
+  const togglePauseBot = useCallback(() => { botPausedRef.current = !botPausedRef.current; setBotPaused(botPausedRef.current); }, []);
+
+  // Bot stats
+  const totalTrades = tradeHistory.filter(t => t.status !== 'open').length;
+  const wins = tradeHistory.filter(t => t.status === 'won').length;
+  const losses = tradeHistory.filter(t => t.status === 'lost').length;
+  const totalProfit = tradeHistory.reduce((s, t) => s + t.profit, 0);
+  const winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
+
   return (
     <div className="space-y-4 max-w-[1920px] mx-auto">
-      {/* Header - same as before */}
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-primary" /> Trading Chart
+            <BarChart3 className="w-5 h-5 text-primary" /> RamzFX Speed Bot
           </h1>
-          <p className="text-xs text-muted-foreground">
-            {ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol} • {timeframe} • {prices.length} ticks
-          </p>
+          <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {tfPrices.length} ticks</p>
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -837,12 +1098,12 @@ export default function TradingChart() {
             {showChart ? "Hide Chart" : "Show Chart"}
           </Button>
           <Badge className="font-mono text-sm" variant="outline">
-            {prices[prices.length - 1]?.toFixed(4) || '0.0000'}
+            {currentPrice.toFixed(4)}
           </Badge>
         </div>
       </div>
 
-      {/* Market Selector - same as before */}
+      {/* Market Selector */}
       <div className="bg-card border border-border rounded-xl p-3">
         <div className="flex flex-wrap gap-1 mb-2">
           {GROUPS.map(g => (
@@ -864,7 +1125,7 @@ export default function TradingChart() {
         </div>
       </div>
 
-      {/* Timeframe - same as before */}
+      {/* Timeframe */}
       <div className="flex flex-wrap gap-1">
         {TIMEFRAMES.map(tf => (
           <Button key={tf} size="sm" variant={timeframe === tf ? 'default' : 'outline'}
@@ -875,11 +1136,10 @@ export default function TradingChart() {
         ))}
       </div>
 
-      {/* Main Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        {/* LEFT SIDE - Chart and Analysis (same as before, keep existing code) */}
+        {/* ═══ LEFT: Chart + Info ═══ */}
         <div className="xl:col-span-8 space-y-3">
-          {/* Chart canvas - keep existing */}
+          {/* Candlestick Chart - Hideable */}
           <AnimatePresence mode="wait">
             {showChart && (
               <motion.div
@@ -896,13 +1156,117 @@ export default function TradingChart() {
             )}
           </AnimatePresence>
 
-          {/* Price Info Panel - keep existing */}
-          {/* ... keep existing price info panel ... */}
+          {/* Price Info Panel */}
+          <div className="grid grid-cols-3 md:grid-cols-7 gap-2">
+            {[
+              { label: 'Price', value: currentPrice.toFixed(4), color: 'text-foreground' },
+              { label: 'Last Digit', value: String(lastDigit), color: 'text-primary' },
+              { label: 'Support', value: support.toFixed(2), color: 'text-[#3FB950]' },
+              { label: 'Resistance', value: resistance.toFixed(2), color: 'text-[#F85149]' },
+              { label: 'BB Upper', value: bb.upper.toFixed(2), color: 'text-[#BC8CFF]' },
+              { label: 'BB Middle', value: bb.middle.toFixed(2), color: 'text-[#BC8CFF]' },
+              { label: 'BB Lower', value: bb.lower.toFixed(2), color: 'text-[#BC8CFF]' },
+            ].map(item => (
+              <div key={item.label} className="bg-card border border-border rounded-lg p-2 text-center">
+                <div className="text-[9px] text-muted-foreground">{item.label}</div>
+                <div className={`font-mono text-xs font-bold ${item.color}`}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Digit Analysis */}
+          <div className="bg-card border border-border rounded-xl p-3 space-y-3">
+            <h3 className="text-xs font-semibold text-foreground">Digit Analysis</h3>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
+                <div className="text-[9px] text-[#D29922]">Odd</div>
+                <div className="font-mono text-sm font-bold text-[#D29922]">{oddPct.toFixed(1)}%</div>
+                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#D29922] rounded-full" style={{ width: `${oddPct}%` }} /></div>
+              </div>
+              <div className="bg-[#3FB950]/10 border border-[#3FB950]/30 rounded-lg p-2">
+                <div className="text-[9px] text-[#3FB950]">Even</div>
+                <div className="font-mono text-sm font-bold text-[#3FB950]">{evenPct.toFixed(1)}%</div>
+                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#3FB950] rounded-full" style={{ width: `${evenPct}%` }} /></div>
+              </div>
+              <div className="bg-primary/10 border border-primary/30 rounded-lg p-2">
+                <div className="text-[9px] text-primary">Over 4 (5-9)</div>
+                <div className="font-mono text-sm font-bold text-primary">{overPct.toFixed(1)}%</div>
+                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-primary rounded-full" style={{ width: `${overPct}%` }} /></div>
+              </div>
+              <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
+                <div className="text-[9px] text-[#D29922]">Under 5 (0-4)</div>
+                <div className="font-mono text-sm font-bold text-[#D29922]">{underPct.toFixed(1)}%</div>
+                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#D29922] rounded-full" style={{ width: `${underPct}%` }} /></div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-5 md:grid-cols-10 gap-1.5">
+              {Array.from({ length: 10 }, (_, d) => {
+                const pct = percentages[d] || 0;
+                const count = frequency[d] || 0;
+                const isHot = pct > 12;
+                const isWarm = pct > 9;
+                const isBestMatch = d === mostCommon;
+                const isBestDiffer = d === leastCommon;
+                return (
+                  <button key={d}
+                    onClick={() => { setSelectedDigit(d); setPrediction(String(d)); }}
+                    className={`relative rounded-lg p-2 text-center transition-all border cursor-pointer hover:ring-2 hover:ring-primary ${
+                      selectedDigit === d ? 'ring-2 ring-primary' : ''
+                    } ${isHot ? 'bg-loss/10 border-loss/40 text-loss' :
+                      isWarm ? 'bg-warning/10 border-warning/40 text-warning' :
+                      'bg-card border-border text-primary'}`}
+                  >
+                    <div className="font-mono text-lg font-bold">{d}</div>
+                    <div className="text-[8px]">{count} ({pct.toFixed(1)}%)</div>
+                    <div className="h-1 bg-muted rounded-full mt-1">
+                      <div className={`h-full rounded-full ${isHot ? 'bg-loss' : isWarm ? 'bg-warning' : 'bg-primary'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
+                    </div>
+                    {isBestMatch && (
+                      <Badge className="absolute -top-1 -right-1 text-[7px] px-1 bg-profit text-profit-foreground">Match Digit</Badge>
+                    )}
+                    {isBestDiffer && (
+                      <Badge className="absolute -top-1 -left-1 text-[7px] px-1 bg-loss text-loss-foreground">Differ</Badge>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Strategic Recommendations */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="bg-card border border-profit/30 rounded-lg p-2">
+              <div className="text-[9px] text-muted-foreground">Best Match</div>
+              <div className="font-mono text-lg font-bold text-profit">{mostCommon}</div>
+              <div className="text-[8px] text-muted-foreground">{percentages[mostCommon]?.toFixed(1)}% frequency</div>
+            </div>
+            <div className="bg-card border border-loss/30 rounded-lg p-2">
+              <div className="text-[9px] text-muted-foreground">Best Differ</div>
+              <div className="font-mono text-lg font-bold text-loss">{leastCommon}</div>
+              <div className="text-[8px] text-muted-foreground">{percentages[leastCommon]?.toFixed(1)}% frequency</div>
+            </div>
+            <div className="bg-card border border-[#D29922]/30 rounded-lg p-2">
+              <div className="text-[9px] text-muted-foreground">Even/Odd</div>
+              <div className={`font-mono text-lg font-bold ${evenPct > 50 ? 'text-[#3FB950]' : 'text-[#D29922]'}`}>
+                {evenPct > 50 ? 'EVEN' : 'ODD'}
+              </div>
+              <div className="text-[8px] text-muted-foreground">{Math.max(evenPct, oddPct).toFixed(1)}%</div>
+            </div>
+            <div className="bg-card border border-primary/30 rounded-lg p-2">
+              <div className="text-[9px] text-muted-foreground">Over/Under</div>
+              <div className={`font-mono text-lg font-bold ${overPct > 50 ? 'text-primary' : 'text-[#D29922]'}`}>
+                {overPct > 50 ? 'OVER' : 'UNDER'}
+              </div>
+              <div className="text-[8px] text-muted-foreground">{Math.max(overPct, underPct).toFixed(1)}%</div>
+            </div>
+          </div>
         </div>
 
-        {/* RIGHT SIDE - Enhanced Scanner Bot Panel */}
+        {/* ═══ RIGHT: Signals + Trade + Tech ═══ */}
         <div className="xl:col-span-4 space-y-3">
-          {/* Voice AI Toggle - keep existing */}
+          {/* Voice AI Toggle */}
           <div className="bg-card border border-primary/30 rounded-xl p-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
@@ -928,15 +1292,110 @@ export default function TradingChart() {
               </Button>
             </div>
             {voiceEnabled && (
-              <p className="text-[9px] text-muted-foreground mt-1">🔊 AI will announce market switches and trade results</p>
+              <p className="text-[9px] text-muted-foreground mt-1">🔊 AI will announce trade results</p>
             )}
           </div>
 
-          {/* ═══ PRO SCANNER BOT PANEL ═══ */}
+          {/* Trading Signals */}
+          <div className="grid grid-cols-2 gap-2">
+            {/* Rise/Fall */}
+            <div className="bg-card border border-border rounded-xl p-3">
+              <div className="flex items-center gap-1 mb-1">
+                {riseSignal.direction === 'Rise' ? <TrendingUp className="w-3.5 h-3.5 text-profit" /> : <TrendingDown className="w-3.5 h-3.5 text-loss" />}
+                <span className="text-[10px] font-semibold">Rise/Fall</span>
+              </div>
+              <div className={`font-mono text-sm font-bold ${riseSignal.direction === 'Rise' ? 'text-profit' : 'text-loss'}`}>
+                {riseSignal.direction}
+              </div>
+              <div className="text-[8px] text-muted-foreground mb-1">RSI: {rsi.toFixed(1)}</div>
+              <div className="h-1.5 bg-muted rounded-full">
+                <div className={`h-full rounded-full ${riseSignal.direction === 'Rise' ? 'bg-profit' : 'bg-loss'}`}
+                  style={{ width: `${riseSignal.confidence}%` }} />
+              </div>
+              <div className="text-[8px] text-right text-muted-foreground mt-0.5">{riseSignal.confidence}%</div>
+            </div>
+
+            {/* Even/Odd */}
+            <div className="bg-card border border-border rounded-xl p-3">
+              <div className="flex items-center gap-1 mb-1">
+                <Activity className="w-3.5 h-3.5 text-primary" />
+                <span className="text-[10px] font-semibold">Even/Odd</span>
+              </div>
+              <div className={`font-mono text-sm font-bold ${eoSignal.direction === 'Even' ? 'text-[#3FB950]' : 'text-[#D29922]'}`}>
+                {eoSignal.direction}
+              </div>
+              <div className="text-[8px] text-muted-foreground mb-1">{evenPct.toFixed(1)}% even</div>
+              <div className="h-1.5 bg-muted rounded-full">
+                <div className={`h-full rounded-full ${eoSignal.direction === 'Even' ? 'bg-[#3FB950]' : 'bg-[#D29922]'}`}
+                  style={{ width: `${eoSignal.confidence}%` }} />
+              </div>
+              <div className="text-[8px] text-right text-muted-foreground mt-0.5">{eoSignal.confidence}%</div>
+            </div>
+
+            {/* Over/Under */}
+            <div className="bg-card border border-border rounded-xl p-3">
+              <div className="flex items-center gap-1 mb-1">
+                <ArrowUp className="w-3.5 h-3.5 text-primary" />
+                <span className="text-[10px] font-semibold">Over/Under</span>
+              </div>
+              <div className={`font-mono text-sm font-bold ${ouSignal.direction === 'Over' ? 'text-primary' : 'text-[#D29922]'}`}>
+                {ouSignal.direction}
+              </div>
+              <div className="text-[8px] text-muted-foreground mb-1">{overPct.toFixed(1)}% over</div>
+              <div className="h-1.5 bg-muted rounded-full">
+                <div className={`h-full rounded-full ${ouSignal.direction === 'Over' ? 'bg-primary' : 'bg-[#D29922]'}`}
+                  style={{ width: `${ouSignal.confidence}%` }} />
+              </div>
+              <div className="text-[8px] text-right text-muted-foreground mt-0.5">{ouSignal.confidence}%</div>
+            </div>
+
+            {/* Match */}
+            <div className="bg-card border border-border rounded-xl p-3">
+              <div className="flex items-center gap-1 mb-1">
+                <Target className="w-3.5 h-3.5 text-profit" />
+                <span className="text-[10px] font-semibold">Best Match</span>
+              </div>
+              <div className="font-mono text-sm font-bold text-profit">Digit {matchSignal.digit}</div>
+              <div className="text-[8px] text-muted-foreground mb-1">{percentages[mostCommon]?.toFixed(1)}% freq</div>
+              <div className="h-1.5 bg-muted rounded-full">
+                <div className="h-full bg-profit rounded-full" style={{ width: `${matchSignal.confidence}%` }} />
+              </div>
+              <div className="text-[8px] text-right text-muted-foreground mt-0.5">{matchSignal.confidence}%</div>
+            </div>
+          </div>
+
+          {/* Last 26 Digits */}
+          <div className="bg-card border border-border rounded-xl p-3">
+            <h3 className="text-xs font-semibold text-foreground mb-2">Last 26 Digits</h3>
+            <div className="flex gap-1 flex-wrap justify-center">
+              {last26.map((d, i) => {
+                const isLast = i === last26.length - 1;
+                const isEven = d % 2 === 0;
+                return (
+                  <motion.div
+                    key={i}
+                    initial={isLast ? { scale: 0.8 } : {}}
+                    animate={isLast ? { scale: [1, 1.1, 1] } : {}}
+                    transition={isLast ? { duration: 1, repeat: Infinity } : {}}
+                    className={`w-7 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-xs border-2 transition-all ${
+                      isLast ? 'w-9 h-11 text-sm ring-2 ring-primary' : ''
+                    } ${isEven
+                      ? 'border-[#3FB950] text-[#3FB950] bg-[#3FB950]/10'
+                      : 'border-[#D29922] text-[#D29922] bg-[#D29922]/10'
+                    }`}
+                  >
+                    {d}
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ═══ AUTO BOT PANEL with Scanner & Strategy ═══ */}
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                <Radar className="w-3.5 h-3.5 text-primary" /> Ramzfx Pro Scanner Bot
+                <Zap className="w-3.5 h-3.5 text-primary" /> RamzFX Speed Bot
               </h3>
               <div className="flex items-center gap-2">
                 <Button
@@ -951,71 +1410,136 @@ export default function TradingChart() {
                 </Button>
                 {botRunning && (
                   <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ repeat: Infinity, duration: 1.5 }}>
-                    <Badge className="text-[8px] bg-profit text-profit-foreground">SCANNING</Badge>
+                    <Badge className="text-[8px] bg-profit text-profit-foreground">RUNNING</Badge>
                   </motion.div>
                 )}
               </div>
             </div>
 
-            {/* Scanner Mode Selection */}
-            <div className="space-y-1">
-              <label className="text-[9px] text-muted-foreground">Scanner Mode</label>
-              <Select value={autoSwitchMode} onValueChange={(v: any) => setAutoSwitchMode(v)} disabled={botRunning}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="fastest">
-                    <div className="flex items-center gap-2">
-                      <Zap className="w-3 h-3" />
-                      <span>Fastest Pattern</span>
+            {/* Scanner Section */}
+            <div className="border border-primary/30 rounded-lg p-2">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1">
+                  <Scan className="w-3.5 h-3.5 text-primary" />
+                  <span className="text-[10px] font-semibold text-primary">Market Scanner</span>
+                </div>
+                <Switch checked={scannerActive} onCheckedChange={setScannerActive} disabled={botRunning} />
+              </div>
+              
+              {scannerActive && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[8px] text-muted-foreground">Scan Pattern (E=Even, O=Odd)</span>
+                    <Badge variant={scannerPatternValid ? 'default' : 'secondary'} className="text-[8px] h-4 px-1">
+                      {scannerPatternValid ? 'Valid' : 'Need 2+ chars'}
+                    </Badge>
+                  </div>
+                  <Textarea
+                    placeholder="e.g., EEEOE or OOEEO"
+                    value={scannerPattern}
+                    onChange={e => setScannerPattern(e.target.value.toUpperCase().replace(/[^EO]/g, ''))}
+                    disabled={botRunning}
+                    className="h-12 text-[10px] font-mono min-h-0"
+                  />
+                  
+                  {/* Scanner Digits Display */}
+                  <div className="bg-muted/30 rounded-lg p-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[8px] text-muted-foreground">Scanner Digits ({scannerMarket})</span>
+                      <Select value={scannerMarket} onValueChange={setScannerMarket} disabled={botRunning}>
+                        <SelectTrigger className="h-5 text-[8px] w-24"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {SCANNER_MARKETS.map(m => (
+                            <SelectItem key={m.symbol} value={m.symbol} className="text-[10px]">{m.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
-                  </SelectItem>
-                  <SelectItem value="performance">
-                    <div className="flex items-center gap-2">
-                      <Trophy className="w-3 h-3" />
-                      <span>Best Performance</span>
+                    <div className="flex gap-0.5 flex-wrap justify-center">
+                      {scannerDigits.slice(-12).map((d, i) => {
+                        const isEven = d % 2 === 0;
+                        return (
+                          <div key={i} className={`w-6 h-7 rounded text-center text-[10px] font-mono font-bold flex items-center justify-center ${
+                            isEven ? 'bg-[#3FB950]/20 text-[#3FB950]' : 'bg-[#D29922]/20 text-[#D29922]'
+                          }`}>
+                            {d}
+                          </div>
+                        );
+                      })}
                     </div>
-                  </SelectItem>
-                  <SelectItem value="volatility">
-                    <div className="flex items-center gap-2">
-                      <TrendingUpIcon className="w-3 h-3" />
-                      <span>Highest Volatility</span>
-                    </div>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+                    {cleanScannerPattern.length >= 2 && (
+                      <div className={`mt-2 text-[9px] text-center font-mono ${checkScannerPatternMatch() ? 'text-profit' : 'text-muted-foreground'}`}>
+                        {checkScannerPatternMatch() ? '✅ Pattern matched on current market' : '⏳ Waiting for pattern...'}
+                      </div>
+                    )}
+                    {findMatchingMarket() && cleanScannerPattern.length >= 2 && (
+                      <div className="mt-1 text-[9px] text-center text-primary font-semibold">
+                        🎯 Pattern found on: {findMatchingMarket()}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Scan Settings */}
+            <Select value={botConfig.contractType} onValueChange={v => setBotConfig(p => ({ ...p, contractType: v }))} disabled={botRunning}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
+            </Select>
+
+            {['DIGITMATCH','DIGITDIFF','DIGITOVER','DIGITUNDER'].includes(botConfig.contractType) && (
+              <div>
+                <label className="text-[9px] text-muted-foreground">Prediction (0-9)</label>
+                <div className="grid grid-cols-5 gap-1">
+                  {Array.from({ length: 10 }, (_, i) => (
+                    <button key={i} disabled={botRunning} onClick={() => setBotConfig(p => ({ ...p, prediction: String(i) }))}
+                      className={`h-6 rounded text-[10px] font-mono font-bold transition-all ${
+                        botConfig.prediction === String(i) ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground hover:bg-secondary'
+                      }`}>{i}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[8px] text-muted-foreground">Min Win Rate %</label>
-                <Input
-                  type="number"
-                  min="0"
-                  max="100"
-                  value={minWinRateThreshold}
-                  onChange={e => setMinWinRateThreshold(parseInt(e.target.value))}
-                  disabled={botRunning}
-                  className="h-7 text-xs"
-                />
+                <label className="text-[9px] text-muted-foreground">Stake ($)</label>
+                <Input type="number" min="0.35" step="0.01" value={botConfig.stake}
+                  onChange={e => setBotConfig(p => ({ ...p, stake: e.target.value }))} disabled={botRunning} className="h-7 text-xs" />
               </div>
               <div>
-                <label className="text-[8px] text-muted-foreground">Max Consecutive Losses</label>
-                <Input
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={maxConsecutiveLosses}
-                  onChange={e => setMaxConsecutiveLosses(parseInt(e.target.value))}
-                  disabled={botRunning}
-                  className="h-7 text-xs"
-                />
+                <label className="text-[9px] text-muted-foreground">Duration</label>
+                <div className="flex gap-1">
+                  <Input type="number" min="1" value={botConfig.duration}
+                    onChange={e => setBotConfig(p => ({ ...p, duration: e.target.value }))} disabled={botRunning} className="h-7 text-xs flex-1" />
+                  <Select value={botConfig.durationUnit} onValueChange={v => setBotConfig(p => ({ ...p, durationUnit: v }))} disabled={botRunning}>
+                    <SelectTrigger className="h-7 text-xs w-16"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="t">T</SelectItem>
+                      <SelectItem value="s">S</SelectItem>
+                      <SelectItem value="m">M</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
 
-            {/* Strategy Section (same as before) */}
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] text-foreground">Martingale</label>
+              <div className="flex items-center gap-2">
+                {botConfig.martingale && (
+                  <Input type="number" min="1.1" step="0.1" value={botConfig.multiplier}
+                    onChange={e => setBotConfig(p => ({ ...p, multiplier: e.target.value }))} disabled={botRunning}
+                    className="h-6 text-[10px] w-14" />
+                )}
+                <button onClick={() => setBotConfig(p => ({ ...p, martingale: !p.martingale }))} disabled={botRunning}
+                  className={`w-9 h-5 rounded-full transition-colors ${botConfig.martingale ? 'bg-primary' : 'bg-muted'} relative`}>
+                  <div className={`w-4 h-4 rounded-full bg-background shadow absolute top-0.5 transition-transform ${botConfig.martingale ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* Strategy Section */}
             <div className="border-t border-border pt-2 mt-1">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-[10px] font-semibold text-warning flex items-center gap-1">
@@ -1057,17 +1581,21 @@ export default function TradingChart() {
                         disabled={botRunning}
                         className="h-12 text-[10px] font-mono min-h-0 mt-1"
                       />
+                      <div className={`text-[9px] font-mono mt-1 ${patternValid ? 'text-profit' : 'text-loss'}`}>
+                        {cleanPattern.length === 0 ? 'Enter pattern (min 2 characters)' :
+                          patternValid ? `✓ Pattern: ${cleanPattern}` : `✗ Need at least 2 characters (E/O)`}
+                      </div>
                     </div>
                   ) : (
                     <div className="grid grid-cols-3 gap-1">
                       <div>
-                        <label className="text-[8px] text-muted-foreground">Last</label>
+                        <label className="text-[8px] text-muted-foreground">If last </label>
                         <Input type="number" min="1" max="50" value={digitWindow}
                           onChange={e => setDigitWindow(e.target.value)} disabled={botRunning}
                           className="h-7 text-[10px]" />
                       </div>
                       <div>
-                        <label className="text-[8px] text-muted-foreground">Ticks</label>
+                        <label className="text-[8px] text-muted-foreground">ticks are </label>
                         <Select value={digitCondition} onValueChange={setDigitCondition} disabled={botRunning}>
                           <SelectTrigger className="h-7 text-[10px]"><SelectValue /></SelectTrigger>
                           <SelectContent>
@@ -1083,170 +1611,51 @@ export default function TradingChart() {
                       </div>
                     </div>
                   )}
+
+                  <div className="text-[8px] text-muted-foreground text-center py-1">
+                    Bot will wait for {strategyMode === 'pattern' ? 'pattern match' : 'digit condition'} before each trade
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* Bot Configuration (same as before) */}
-            <Select value={botConfig.contractType} onValueChange={v => setBotConfig(p => ({ ...p, contractType: v }))} disabled={botRunning}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
-            </Select>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[9px] text-muted-foreground">Stake ($)</label>
-                <Input type="number" min="0.35" step="0.01" value={botConfig.stake}
-                  onChange={e => setBotConfig(p => ({ ...p, stake: e.target.value }))} disabled={botRunning} className="h-7 text-xs" />
-              </div>
-              <div>
-                <label className="text-[9px] text-muted-foreground">Duration</label>
-                <div className="flex gap-1">
-                  <Input type="number" min="1" value={botConfig.duration}
-                    onChange={e => setBotConfig(p => ({ ...p, duration: e.target.value }))} disabled={botRunning} className="h-7 text-xs flex-1" />
-                  <Select value={botConfig.durationUnit} onValueChange={v => setBotConfig(p => ({ ...p, durationUnit: v }))} disabled={botRunning}>
-                    <SelectTrigger className="h-7 text-xs w-16"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="t">T</SelectItem>
-                      <SelectItem value="s">S</SelectItem>
-                      <SelectItem value="m">M</SelectItem>
-                    </SelectContent>
-                  </Select>
+            {/* Turbo Stats (when scanner active) */}
+            {scannerActive && (
+              <div className="grid grid-cols-3 gap-1 text-center bg-muted/30 rounded-lg p-1">
+                <div>
+                  <div className="text-[7px] text-muted-foreground">Latency</div>
+                  <div className="font-mono text-[9px] text-primary">{turboLatency}ms</div>
+                </div>
+                <div>
+                  <div className="text-[7px] text-muted-foreground">Captured</div>
+                  <div className="font-mono text-[9px] text-profit">{ticksCaptured}</div>
+                </div>
+                <div>
+                  <div className="text-[7px] text-muted-foreground">Missed</div>
+                  <div className="font-mono text-[9px] text-loss">{ticksMissed}</div>
                 </div>
               </div>
-            </div>
+            )}
 
-            <div className="flex items-center justify-between">
-              <label className="text-[10px] text-foreground">Martingale</label>
-              <div className="flex items-center gap-2">
-                {botConfig.martingale && (
-                  <Input type="number" min="1.1" step="0.1" value={botConfig.multiplier}
-                    onChange={e => setBotConfig(p => ({ ...p, multiplier: e.target.value }))} disabled={botRunning}
-                    className="h-6 text-[10px] w-14" />
-                )}
-                <button onClick={() => setBotConfig(p => ({ ...p, martingale: !p.martingale }))} disabled={botRunning}
-                  className={`w-9 h-5 rounded-full transition-colors ${botConfig.martingale ? 'bg-primary' : 'bg-muted'} relative`}>
-                  <div className={`w-4 h-4 rounded-full bg-background shadow absolute top-0.5 transition-transform ${botConfig.martingale ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                </button>
+            <div className="grid grid-cols-3 gap-1.5">
+              <div>
+                <label className="text-[8px] text-muted-foreground">Stop Loss</label>
+                <Input type="number" value={botConfig.stopLoss} onChange={e => setBotConfig(p => ({ ...p, stopLoss: e.target.value }))}
+                  disabled={botRunning} className="h-7 text-xs" />
+              </div>
+              <div>
+                <label className="text-[8px] text-muted-foreground">Take Profit</label>
+                <Input type="number" value={botConfig.takeProfit} onChange={e => setBotConfig(p => ({ ...p, takeProfit: e.target.value }))}
+                  disabled={botRunning} className="h-7 text-xs" />
+              </div>
+              <div>
+                <label className="text-[8px] text-muted-foreground">Max Trades</label>
+                <Input type="number" value={botConfig.maxTrades} onChange={e => setBotConfig(p => ({ ...p, maxTrades: e.target.value }))}
+                  disabled={botRunning} className="h-7 text-xs" />
               </div>
             </div>
 
-            {/* Market Dashboard Toggle */}
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-7 text-[10px] gap-1"
-              onClick={() => setShowMarketDashboard(!showMarketDashboard)}
-            >
-              <Globe className="w-3 h-3" />
-              {showMarketDashboard ? 'Hide Market Dashboard' : 'Show Market Dashboard'}
-            </Button>
-
-            {/* Market Rankings Dashboard */}
-            <AnimatePresence>
-              {showMarketDashboard && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="space-y-2 overflow-hidden"
-                >
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-[9px] font-semibold text-foreground">Live Market Rankings</h4>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-5 text-[8px]"
-                      onClick={scanAllMarkets}
-                      disabled={botRunning}
-                    >
-                      <Radar className="w-2.5 h-2.5 mr-1" />
-                      Scan All
-                    </Button>
-                  </div>
-                  
-                  <div className="max-h-60 overflow-auto space-y-1.5">
-                    {topMarkets.map((market, idx) => {
-                      const isBlacklisted = marketBlacklist.has(market.symbol);
-                      const isSelected = selectedMarket === market.symbol;
-                      const marketStat = marketStats.get(market.symbol);
-                      
-                      return (
-                        <div
-                          key={market.symbol}
-                          className={`p-2 rounded-lg border transition-all ${
-                            isSelected ? 'border-primary bg-primary/5' :
-                            isBlacklisted ? 'border-loss/30 bg-loss/5 opacity-60' :
-                            'border-border'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[10px] font-mono font-bold text-foreground">
-                                #{idx + 1}
-                              </span>
-                              <span className="text-[10px] font-semibold">{market.name}</span>
-                              <Badge variant="outline" className="text-[7px] px-1">
-                                Score: {market.patternMatchScore.toFixed(0)}%
-                              </Badge>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                className="h-5 w-5 p-0"
-                                onClick={() => toggleMarketBlacklist(market.symbol)}
-                              >
-                                {isBlacklisted ? <StarOff className="w-3 h-3 text-loss" /> : <Star className="w-3 h-3 text-muted-foreground" />}
-                              </Button>
-                            </div>
-                          </div>
-                          
-                          <div className="grid grid-cols-4 gap-1 text-[8px]">
-                            <div>
-                              <span className="text-muted-foreground">Volatility</span>
-                              <span className="ml-1 font-mono">{market.volatility.toFixed(2)}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Win Rate</span>
-                              <span className={`ml-1 font-mono ${market.winRate >= 50 ? 'text-profit' : 'text-loss'}`}>
-                                {market.winRate.toFixed(0)}%
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Trades</span>
-                              <span className="ml-1 font-mono">{market.totalTrades}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">P/L</span>
-                              <span className={`ml-1 font-mono ${market.totalPnL >= 0 ? 'text-profit' : 'text-loss'}`}>
-                                ${market.totalPnL.toFixed(2)}
-                              </span>
-                            </div>
-                          </div>
-                          
-                          {/* Last 10 digits */}
-                          <div className="flex gap-0.5 mt-1">
-                            {market.lastTicks.slice(-10).map((digit, i) => (
-                              <div
-                                key={i}
-                                className={`w-4 h-4 rounded text-[7px] flex items-center justify-center font-mono ${
-                                  digit % 2 === 0 ? 'bg-profit/20 text-profit' : 'bg-loss/20 text-loss'
-                                }`}
-                              >
-                                {digit}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Bot Stats */}
+            {/* Bot live stats */}
             {botRunning && (
               <div className="grid grid-cols-3 gap-1 text-center">
                 <div className="bg-muted/30 rounded p-1">
@@ -1266,21 +1675,11 @@ export default function TradingChart() {
               </div>
             )}
 
-            {/* Current Active Market */}
-            {selectedMarket && !botRunning && (
-              <div className="bg-primary/10 rounded-lg p-2 text-center">
-                <div className="text-[8px] text-muted-foreground">Currently Selected Market</div>
-                <div className="font-mono text-sm font-bold text-primary">
-                  {ALL_MARKETS.find(m => m.symbol === selectedMarket)?.name || selectedMarket}
-                </div>
-              </div>
-            )}
-
-            {/* Control Buttons */}
+            {/* Start/Pause/Stop buttons */}
             <div className="flex gap-2">
               {!botRunning ? (
-                <Button onClick={startScannerBot} disabled={!isAuthorized} className="flex-1 h-10 text-xs font-bold bg-profit hover:bg-profit/90 text-profit-foreground">
-                  <Radar className="w-4 h-4 mr-1" /> Start Scanner Bot
+                <Button onClick={startBot} disabled={!isAuthorized} className="flex-1 h-10 text-xs font-bold bg-profit hover:bg-profit/90 text-profit-foreground">
+                  <Play className="w-4 h-4 mr-1" /> Start Bot
                 </Button>
               ) : (
                 <>
@@ -1293,17 +1692,9 @@ export default function TradingChart() {
                 </>
               )}
             </div>
-
-            {/* Scanner Status */}
-            {scannerEnabled && !botRunning && (
-              <div className="text-center text-[8px] text-muted-foreground">
-                <Radar className="w-3 h-3 inline mr-1 animate-pulse" />
-                Scanner active - Monitoring {marketSubscriptions.size} markets
-              </div>
-            )}
           </div>
 
-          {/* Trade History Panel (same as before) */}
+          {/* Bot Progress */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-2">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
@@ -1348,7 +1739,7 @@ export default function TradingChart() {
               </div>
             )}
 
-            {/* Trade History List */}
+            {/* Trade History */}
             {tradeHistory.length > 0 && (
               <div className="max-h-40 overflow-auto space-y-1">
                 {tradeHistory.slice(0, 10).map(t => (
@@ -1363,9 +1754,8 @@ export default function TradingChart() {
                       </span>
                       <span className="font-mono text-muted-foreground">{t.type}</span>
                       <span className="text-muted-foreground">${t.stake.toFixed(2)}</span>
-                      <span className="text-[8px] text-muted-foreground">{t.symbol}</span>
                       {t.resultDigit !== undefined && (
-                        <Badge variant="outline" className={`text-[7px] px-1 ${t.status === 'won' ? 'border-profit text-profit' : 'border-loss text-loss'}`}>
+                        <Badge variant="outline" className={`text-[8px] px-1 ${t.status === 'won' ? 'border-profit text-profit' : 'border-loss text-loss'}`}>
                           {t.resultDigit}
                         </Badge>
                       )}
@@ -1379,12 +1769,38 @@ export default function TradingChart() {
             )}
           </div>
 
-          {/* Technical Status - keep existing */}
+          {/* Technical Status */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-2">
             <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
               <ShieldAlert className="w-3.5 h-3.5 text-primary" /> Technical Status
             </h3>
-            {/* ... keep existing technical status content ... */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-muted-foreground">RSI (14)</span>
+                <span className={`font-mono font-bold ${rsi > 70 ? 'text-loss' : rsi < 30 ? 'text-profit' : 'text-foreground'}`}>
+                  {rsi.toFixed(1)} {rsi > 70 ? '🔴 Overbought' : rsi < 30 ? '🟢 Oversold' : '⚪ Neutral'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-muted-foreground">MACD</span>
+                <span className={`font-mono font-bold ${macd.macd > 0 ? 'text-profit' : 'text-loss'}`}>
+                  {macd.macd.toFixed(4)} {macd.macd > 0 ? '📈 Bullish' : '📉 Bearish'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-muted-foreground">EMA 50</span>
+                <span className={`font-mono font-bold ${currentPrice > ema50 ? 'text-profit' : 'text-loss'}`}>
+                  {currentPrice > ema50 ? '📈 Above' : '📉 Below'} ({ema50.toFixed(2)})
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-muted-foreground">BB Position</span>
+                <span className="font-mono font-bold text-[#BC8CFF]">{bbPosition.toFixed(1)}%</span>
+              </div>
+              <div className="h-1.5 bg-muted rounded-full">
+                <div className="h-full bg-[#BC8CFF] rounded-full" style={{ width: `${Math.min(100, Math.max(0, bbPosition))}%` }} />
+              </div>
+            </div>
           </div>
         </div>
       </div>
