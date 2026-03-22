@@ -177,6 +177,7 @@ function mapCandlesToPriceIndices(prices: number[], times: number[], tf: string)
   return indices;
 }
 
+// Enhanced support/resistance detection for strong levels
 function detectStrongSupportResistance(prices: number[], lookback: number = 200, sensitivity: number = 5): { support: number; resistance: number } {
   const recentPrices = prices.slice(-lookback);
   if (recentPrices.length < 20) return { support: 0, resistance: 0 };
@@ -265,78 +266,169 @@ function addTick(symbol: string, digit: number) {
   if (tickHistoryRef[symbol].length > 200) tickHistoryRef[symbol].shift();
 }
 
-// Helper function to get digit display symbol based on contract type
-const getDigitDisplaySymbol = (digit: number, contractType: string, prediction: string): { symbol: string; color: string; isWin: boolean } => {
+// Helper function for digit display based on bot config
+const getDigitDisplayType = (digit: number, botConfig: any, botRunning: boolean, contractType: string, prediction: string): {
+  display: string;
+  color: string;
+  bgColor: string;
+  isWin: boolean;
+} => {
+  let display = digit.toString();
+  let color = '';
+  let bgColor = '';
+  let isWin = false;
+  
+  if (!botRunning) {
+    const isEven = digit % 2 === 0;
+    color = isEven ? '#3FB950' : '#D29922';
+    bgColor = isEven ? 'bg-[#3FB950]/10' : 'bg-[#D29922]/10';
+    return { display, color, bgColor, isWin: false };
+  }
+  
   const targetDigit = parseInt(prediction);
   
   switch (contractType) {
     case 'DIGITOVER':
-      if (digit > targetDigit) return { symbol: 'O', color: '#3FB950', isWin: true };
-      if (digit < targetDigit) return { symbol: 'U', color: '#F85149', isWin: false };
-      return { symbol: '=', color: '#58A6FF', isWin: false };
+      if (digit > targetDigit) {
+        display = '↑';
+        color = '#3FB950';
+        bgColor = 'bg-[#3FB950]/20';
+        isWin = true;
+      } else if (digit < targetDigit) {
+        display = '↓';
+        color = '#F85149';
+        bgColor = 'bg-[#F85149]/20';
+        isWin = false;
+      } else {
+        display = '=';
+        color = '#58A6FF';
+        bgColor = 'bg-[#58A6FF]/20';
+        isWin = false;
+      }
+      break;
       
     case 'DIGITUNDER':
-      if (digit < targetDigit) return { symbol: 'U', color: '#3FB950', isWin: true };
-      if (digit > targetDigit) return { symbol: 'O', color: '#F85149', isWin: false };
-      return { symbol: '=', color: '#58A6FF', isWin: false };
+      if (digit < targetDigit) {
+        display = '↑';
+        color = '#3FB950';
+        bgColor = 'bg-[#3FB950]/20';
+        isWin = true;
+      } else if (digit > targetDigit) {
+        display = '↓';
+        color = '#F85149';
+        bgColor = 'bg-[#F85149]/20';
+        isWin = false;
+      } else {
+        display = '=';
+        color = '#58A6FF';
+        bgColor = 'bg-[#58A6FF]/20';
+        isWin = false;
+      }
+      break;
       
     case 'DIGITMATCH':
-      if (digit === targetDigit) return { symbol: 'M', color: '#3FB950', isWin: true };
-      return { symbol: digit.toString(), color: '#F85149', isWin: false };
+      if (digit === targetDigit) {
+        display = 'M';
+        color = '#3FB950';
+        bgColor = 'bg-[#3FB950]/20';
+        isWin = true;
+      } else {
+        display = digit.toString();
+        color = '#F85149';
+        bgColor = 'bg-[#F85149]/20';
+        isWin = false;
+      }
+      break;
       
     case 'DIGITDIFF':
-      if (digit !== targetDigit) return { symbol: 'D', color: '#3FB950', isWin: true };
-      return { symbol: digit.toString(), color: '#F85149', isWin: false };
+      if (digit !== targetDigit) {
+        display = 'D';
+        color = '#3FB950';
+        bgColor = 'bg-[#3FB950]/20';
+        isWin = true;
+      } else {
+        display = digit.toString();
+        color = '#F85149';
+        bgColor = 'bg-[#F85149]/20';
+        isWin = false;
+      }
+      break;
       
     case 'DIGITEVEN':
-      if (digit % 2 === 0) return { symbol: 'E', color: '#3FB950', isWin: true };
-      return { symbol: 'O', color: '#F85149', isWin: false };
+      if (digit % 2 === 0) {
+        display = 'E';
+        color = '#3FB950';
+        bgColor = 'bg-[#3FB950]/20';
+        isWin = true;
+      } else {
+        display = 'O';
+        color = '#F85149';
+        bgColor = 'bg-[#F85149]/20';
+        isWin = false;
+      }
+      break;
       
     case 'DIGITODD':
-      if (digit % 2 !== 0) return { symbol: 'O', color: '#3FB950', isWin: true };
-      return { symbol: 'E', color: '#F85149', isWin: false };
+      if (digit % 2 !== 0) {
+        display = 'O';
+        color = '#3FB950';
+        bgColor = 'bg-[#3FB950]/20';
+        isWin = true;
+      } else {
+        display = 'E';
+        color = '#F85149';
+        bgColor = 'bg-[#F85149]/20';
+        isWin = false;
+      }
+      break;
       
     case 'CALL':
-      if (digit > 4) return { symbol: 'R', color: '#3FB950', isWin: true };
-      return { symbol: 'F', color: '#F85149', isWin: false };
+      if (digit > 4) {
+        display = 'R';
+        color = '#3FB950';
+        bgColor = 'bg-[#3FB950]/20';
+        isWin = true;
+      } else {
+        display = 'F';
+        color = '#F85149';
+        bgColor = 'bg-[#F85149]/20';
+        isWin = false;
+      }
+      break;
       
     case 'PUT':
-      if (digit <= 4) return { symbol: 'F', color: '#3FB950', isWin: true };
-      return { symbol: 'R', color: '#F85149', isWin: false };
+      if (digit <= 4) {
+        display = 'F';
+        color = '#3FB950';
+        bgColor = 'bg-[#3FB950]/20';
+        isWin = true;
+      } else {
+        display = 'R';
+        color = '#F85149';
+        bgColor = 'bg-[#F85149]/20';
+        isWin = false;
+      }
+      break;
       
     default:
-      return { symbol: digit.toString(), color: digit % 2 === 0 ? '#3FB950' : '#D29922', isWin: false };
-  }
-};
-
-// Helper to get display for last 26 digits based on selected contract
-const getDigitDisplayForLast26 = (digit: number, selectedContract: string, selectedPrediction: string): { display: string; color: string; bgColor: string } => {
-  if (!selectedContract) {
-    const isEven = digit % 2 === 0;
-    return {
-      display: digit.toString(),
-      color: isEven ? '#3FB950' : '#D29922',
-      bgColor: isEven ? 'bg-[#3FB950]/10' : 'bg-[#D29922]/10'
-    };
+      const isEven = digit % 2 === 0;
+      color = isEven ? '#3FB950' : '#D29922';
+      bgColor = isEven ? 'bg-[#3FB950]/10' : 'bg-[#D29922]/10';
   }
   
-  const { symbol, color } = getDigitDisplaySymbol(digit, selectedContract, selectedPrediction);
-  return {
-    display: symbol,
-    color: color,
-    bgColor: `${color}20`
-  };
+  return { display, color, bgColor, isWin };
 };
 
 export default function TradingChart() {
   const { isAuthorized } = useAuth();
-  const [showChart, setShowChart] = useState(false);
+  const [showChart, setShowChart] = useState(true);
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
   const [timeframe, setTimeframe] = useState('1m');
   const [prices, setPrices] = useState<number[]>([]);
   const [times, setTimes] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const subscribedRef = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -393,7 +485,7 @@ export default function TradingChart() {
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
   const [turboMode, setTurboMode] = useState(false);
 
-  /* ── Load history + subscribe ── */
+  /* ── Load history + subscribe with error handling ── */
   useEffect(() => {
     if (!showChart) return;
     
@@ -402,10 +494,12 @@ export default function TradingChart() {
 
     const load = async () => {
       if (!derivApi.isConnected) {
+        setConnectionError('Not connected to Deriv API. Please check your connection.');
         setIsLoading(false);
         return;
       }
       
+      setConnectionError(null);
       setIsLoading(true);
       
       try {
@@ -434,10 +528,12 @@ export default function TradingChart() {
             });
           } catch (subError: any) {
             console.error('Subscription error:', subError);
+            setConnectionError(`Failed to subscribe to ticks: ${subError.message}`);
           }
         }
       } catch (err: any) {
         console.error('History fetch error:', err);
+        setConnectionError(`Failed to fetch tick history: ${err.message}`);
         setIsLoading(false);
       }
     };
@@ -895,6 +991,7 @@ export default function TradingChart() {
       toast.info(`⏳ Placing ${ct} trade... $${tradeStake}`);
       const { contractId } = await derivApi.buyContract(params);
       
+      // Copy trade to followers if enabled
       if (copyEnabled && copyTradingService.enabled) {
         copyTradingService.copyTrade({
           ...params,
@@ -981,6 +1078,7 @@ export default function TradingChart() {
       try {
         const { contractId } = await derivApi.buyContract(params);
         
+        // Copy trade to followers if enabled
         if (copyEnabled && copyTradingService.enabled) {
           copyTradingService.copyTrade({
             ...params,
@@ -1048,6 +1146,24 @@ export default function TradingChart() {
 
   return (
     <div className="space-y-4 max-w-[1920px] mx-auto">
+      {/* Connection Status Alert */}
+      {connectionError && (
+        <div className="bg-loss/10 border border-loss/30 rounded-xl p-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="w-4 h-4 text-loss" />
+            <span className="text-xs text-loss">⚠️ {connectionError}</span>
+          </div>
+          <Button 
+            size="sm" 
+            variant="outline" 
+            className="h-6 text-[10px]"
+            onClick={() => window.location.reload()}
+          >
+            Retry Connection
+          </Button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
@@ -1068,6 +1184,9 @@ export default function TradingChart() {
               className="scale-75"
             />
           </div>
+          <Badge className={`text-[10px] ${derivApi.isConnected ? 'bg-profit text-profit-foreground' : 'bg-loss text-loss-foreground'}`}>
+            {derivApi.isConnected ? '● Connected' : '● Disconnected'}
+          </Badge>
           <Button
             onClick={() => setShowChart(!showChart)}
             variant={showChart ? "destructive" : "default"}
@@ -1330,15 +1449,15 @@ export default function TradingChart() {
               <div className="flex flex-wrap gap-2 mb-2 text-[8px] text-muted-foreground border-b border-border pb-2">
                 {botConfig.contractType === 'DIGITOVER' && (
                   <>
-                    <span className="text-[#3FB950]">O = Over {botConfig.prediction} (Win)</span>
-                    <span className="text-[#F85149]">U = Under {botConfig.prediction} (Loss)</span>
+                    <span className="text-[#3FB950]">↑ = Over {botConfig.prediction} (Win)</span>
+                    <span className="text-[#F85149]">↓ = Under {botConfig.prediction} (Loss)</span>
                     <span className="text-[#58A6FF]">= = Equal (Loss)</span>
                   </>
                 )}
                 {botConfig.contractType === 'DIGITUNDER' && (
                   <>
-                    <span className="text-[#3FB950]">U = Under {botConfig.prediction} (Win)</span>
-                    <span className="text-[#F85149]">O = Over {botConfig.prediction} (Loss)</span>
+                    <span className="text-[#3FB950]">↑ = Under {botConfig.prediction} (Win)</span>
+                    <span className="text-[#F85149]">↓ = Over {botConfig.prediction} (Loss)</span>
                     <span className="text-[#58A6FF]">= = Equal (Loss)</span>
                   </>
                 )}
@@ -1384,10 +1503,12 @@ export default function TradingChart() {
             <div className="flex gap-1 flex-wrap justify-center">
               {last26.map((d, i) => {
                 const isLast = i === last26.length - 1;
-                const { display, color, bgColor } = getDigitDisplayForLast26(
+                const { display, color, bgColor, isWin } = getDigitDisplayType(
                   d, 
-                  botConfig.contractType, 
-                  botConfig.prediction
+                  botConfig, 
+                  botRunning, 
+                  botRunning ? botConfig.contractType : '', 
+                  botRunning ? botConfig.prediction : ''
                 );
                 
                 return (
@@ -1402,8 +1523,17 @@ export default function TradingChart() {
                     style={{ 
                       color: color,
                       borderColor: isLast ? color : 'transparent',
+                      boxShadow: botRunning && isWin ? `0 0 0 1px ${color}` : 'none'
                     }}
-                    title={`Digit: ${d}`}
+                    title={`Digit: ${d}${botRunning ? ` | ${botConfig.contractType === 'DIGITOVER' ? (d > parseInt(botConfig.prediction) ? 'Win' : 'Loss') :
+                      botConfig.contractType === 'DIGITUNDER' ? (d < parseInt(botConfig.prediction) ? 'Win' : 'Loss') :
+                      botConfig.contractType === 'DIGITMATCH' ? (d === parseInt(botConfig.prediction) ? 'Win' : 'Loss') :
+                      botConfig.contractType === 'DIGITDIFF' ? (d !== parseInt(botConfig.prediction) ? 'Win' : 'Loss') :
+                      botConfig.contractType === 'DIGITEVEN' ? (d % 2 === 0 ? 'Win' : 'Loss') :
+                      botConfig.contractType === 'DIGITODD' ? (d % 2 !== 0 ? 'Win' : 'Loss') :
+                      botConfig.contractType === 'CALL' ? (d > 4 ? 'Win' : 'Loss') :
+                      botConfig.contractType === 'PUT' ? (d <= 4 ? 'Win' : 'Loss') : ''
+                    }` : ''}`}
                   >
                     {display}
                   </motion.div>
@@ -1733,54 +1863,114 @@ export default function TradingChart() {
               </div>
             )}
 
-            {/* Digit Distribution in Recent Trades with Market and Contract Type */}
+            {/* Digit Distribution in Recent Trades */}
             {tradeHistory.filter(t => t.resultDigit !== undefined).length > 0 && (
               <div className="mt-2">
-                <div className="text-[9px] text-muted-foreground mb-1">Recent Trade Results</div>
-                <div className="space-y-1.5 max-h-48 overflow-auto">
-                  {tradeHistory.filter(t => t.resultDigit !== undefined).slice(0, 15).map(t => {
-                    const { symbol: displaySymbol, color, isWin } = getDigitDisplaySymbol(t.resultDigit!, t.type, t.type.includes('DIGIT') ? t.type : '');
-                    
-                    // Get market name
-                    const marketInfo = ALL_MARKETS.find(m => m.symbol === t.symbol);
-                    const marketName = marketInfo?.name || t.symbol;
-                    
-                    return (
+                <div className="text-[9px] text-muted-foreground mb-1">Recent Trade Digits</div>
+                <div className="flex gap-1 flex-wrap">
+                  {tradeHistory.filter(t => t.resultDigit !== undefined).slice(0, 10).map(t => (
+                    t.resultDigit !== undefined && (
                       <div 
                         key={t.id}
-                        className={`flex items-center justify-between text-[10px] p-2 rounded-lg border ${
+                        className={`w-6 h-6 rounded-lg flex items-center justify-center font-mono text-xs font-bold border ${
                           t.status === 'won' 
-                            ? 'border-profit/30 bg-profit/5' 
-                            : 'border-loss/30 bg-loss/5'
+                            ? 'bg-profit/20 border-profit text-profit' 
+                            : 'bg-loss/20 border-loss text-loss'
                         }`}
+                        title={`${t.type} - ${t.status === 'won' ? 'Won' : 'Lost'} - Digit: ${t.resultDigit}${t.copied ? ' (Copied)' : ''}`}
                       >
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                        {t.resultDigit}
+                        {t.copied && <span className="absolute text-[6px] -top-1 -right-1">📋</span>}
+                      </div>
+                    )
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {tradeHistory.length > 0 && (
+              <div className="max-h-40 overflow-auto space-y-1">
+                {tradeHistory.slice(0, 10).map(t => {
+                  // Determine the display type based on contract type
+                  let displaySymbol = '';
+                  let displayColor = '';
+                  
+                  if (t.resultDigit !== undefined) {
+                    const targetDigit = ['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(t.type) 
+                      ? parseInt(t.type.includes('MATCH') || t.type.includes('DIFF') ? t.type : '5') 
+                      : 5;
+                    
+                    switch (t.type) {
+                      case 'DIGITOVER':
+                        displaySymbol = t.resultDigit > targetDigit ? '↑' : t.resultDigit < targetDigit ? '↓' : '=';
+                        displayColor = t.resultDigit > targetDigit ? '#3FB950' : '#F85149';
+                        break;
+                      case 'DIGITUNDER':
+                        displaySymbol = t.resultDigit < targetDigit ? '↑' : t.resultDigit > targetDigit ? '↓' : '=';
+                        displayColor = t.resultDigit < targetDigit ? '#3FB950' : '#F85149';
+                        break;
+                      case 'DIGITMATCH':
+                        displaySymbol = t.resultDigit === targetDigit ? 'M' : t.resultDigit.toString();
+                        displayColor = t.resultDigit === targetDigit ? '#3FB950' : '#F85149';
+                        break;
+                      case 'DIGITDIFF':
+                        displaySymbol = t.resultDigit !== targetDigit ? 'D' : t.resultDigit.toString();
+                        displayColor = t.resultDigit !== targetDigit ? '#3FB950' : '#F85149';
+                        break;
+                      case 'DIGITEVEN':
+                        displaySymbol = t.resultDigit % 2 === 0 ? 'E' : 'O';
+                        displayColor = t.resultDigit % 2 === 0 ? '#3FB950' : '#F85149';
+                        break;
+                      case 'DIGITODD':
+                        displaySymbol = t.resultDigit % 2 !== 0 ? 'O' : 'E';
+                        displayColor = t.resultDigit % 2 !== 0 ? '#3FB950' : '#F85149';
+                        break;
+                      case 'CALL':
+                        displaySymbol = t.resultDigit > 4 ? 'R' : 'F';
+                        displayColor = t.resultDigit > 4 ? '#3FB950' : '#F85149';
+                        break;
+                      case 'PUT':
+                        displaySymbol = t.resultDigit <= 4 ? 'F' : 'R';
+                        displayColor = t.resultDigit <= 4 ? '#3FB950' : '#F85149';
+                        break;
+                      default:
+                        displaySymbol = t.resultDigit.toString();
+                        displayColor = t.status === 'won' ? '#3FB950' : '#F85149';
+                    }
+                  }
+                  
+                  return (
+                    <div key={t.id} className={`flex items-center justify-between text-[9px] p-1.5 rounded-lg border ${
+                      t.status === 'open' ? 'border-primary/30 bg-primary/5' :
+                      t.status === 'won' ? 'border-profit/30 bg-profit/5' :
+                      'border-loss/30 bg-loss/5'
+                    }`}>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`font-bold ${t.status === 'won' ? 'text-profit' : t.status === 'lost' ? 'text-loss' : 'text-primary'}`}>
+                          {t.status === 'open' ? '⏳' : t.status === 'won' ? '✅' : '❌'}
+                        </span>
+                        <span className="font-mono text-muted-foreground">{t.type}</span>
+                        <span className="text-muted-foreground">${t.stake.toFixed(2)}</span>
+                        {t.resultDigit !== undefined && (
                           <Badge 
                             variant="outline" 
-                            className={`text-[9px] px-1.5 font-mono font-bold ${
+                            className={`text-[8px] px-1 font-mono font-bold ${
                               t.status === 'won' ? 'border-profit text-profit' : 'border-loss text-loss'
                             }`}
-                            style={{ backgroundColor: `${color}20` }}
+                            style={{ backgroundColor: `${displayColor}20` }}
                           >
                             {displaySymbol}
                             <span className="ml-0.5 opacity-70">({t.resultDigit})</span>
+                            {t.copied && <span className="ml-0.5">📋</span>}
                           </Badge>
-                          <div className="flex flex-col min-w-0">
-                            <div className="font-semibold text-[9px] truncate">{marketName}</div>
-                            <div className="text-[7px] text-muted-foreground">{t.type}</div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-[9px] text-muted-foreground">${t.stake.toFixed(2)}</span>
-                          <span className={`font-mono font-bold text-[10px] ${t.profit >= 0 ? 'text-profit' : 'text-loss'}`}>
-                            {t.profit >= 0 ? '+' : ''}{t.profit.toFixed(2)}
-                          </span>
-                          {t.copied && <span className="text-[8px] text-primary">📋</span>}
-                        </div>
+                        )}
                       </div>
-                    );
-                  })}
-                </div>
+                      <span className={`font-mono font-bold ${t.profit >= 0 ? 'text-profit' : 'text-loss'}`}>
+                        {t.status === 'open' ? '...' : `${t.profit >= 0 ? '+' : ''}$${t.profit.toFixed(2)}`}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
