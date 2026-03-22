@@ -247,7 +247,7 @@ function addTick(symbol: string, digit: number) {
 
 export default function TradingChart() {
   const { isAuthorized } = useAuth();
-  const [showChart, setShowChart] = useState(false); // ← CHANGED: initially hidden
+  const [showChart, setShowChart] = useState(false);
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
   const [timeframe, setTimeframe] = useState('1m');
@@ -438,6 +438,7 @@ export default function TradingChart() {
         case '>=': return d >= comp;
         case '<=': return d <= comp;
         case '==': return d === comp;
+        case '!=': return d !== comp;  // ← NOT EQUAL condition added
         default: return false;
       }
     });
@@ -1343,7 +1344,7 @@ export default function TradingChart() {
                         <Select value={digitCondition} onValueChange={setDigitCondition} disabled={botRunning}>
                           <SelectTrigger className="h-7 text-[10px]"><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                            {['==', '!=', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                           </SelectContent>
                         </Select>
                       </div>
