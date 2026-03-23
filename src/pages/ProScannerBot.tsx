@@ -47,9 +47,9 @@ interface LogEntry {
   stake: number;
   martingaleStep: number;
   entryPrice: number;
-  entrySpot: number;      // Added: entry spot price
+  entrySpot: number;
   exitPrice: number;
-  exitSpot: number;       // Added: exit spot price
+  exitSpot: number;
   exitDigit: string;
   result: 'Win' | 'Loss' | 'Pending' | 'V-Win' | 'V-Loss';
   pnl: number;
@@ -57,7 +57,7 @@ interface LogEntry {
   switchInfo: string;
 }
 
-/* ── Circular Tick Buffer ── */
+/* ── Circular Tick Buffer with price storage ── */
 class CircularTickBuffer {
   private buffer: { digit: number; ts: number; price: number }[];
   private head = 0;
@@ -435,7 +435,6 @@ export default function ProScannerBot() {
         let consecLosses = 0;
         let virtualTradeNum = 0;
 
-        // Keep simulating virtual trades until we accumulate requiredLosses consecutive losses
         while (consecLosses < requiredLosses && runningRef.current) {
           virtualTradeNum++;
           const vLogId = ++logIdRef.current;
@@ -481,7 +480,6 @@ export default function ProScannerBot() {
         setVhStatus('confirmed');
         toast.success(`🎣 Hook confirmed! ${requiredLosses} consecutive losses detected → Executing ${realCount} real trade(s)`);
 
-        /* Execute real trades batch */
         for (let ri = 0; ri < realCount && runningRef.current; ri++) {
           const result = await executeRealTrade(
             cfg, tradeSymbol, cStake, mStep, mkt, localBalance, localPnl, baseStake
@@ -502,7 +500,6 @@ export default function ProScannerBot() {
         continue;
       }
 
-      /* ═══ NORMAL REAL TRADE (no hook) ═══ */
       const result = await executeRealTrade(
         cfg, tradeSymbol, cStake, mStep, mkt, localBalance, localPnl, baseStake
       );
@@ -546,6 +543,7 @@ export default function ProScannerBot() {
 
     let entrySpot = 0;
     let exitSpot = 0;
+    let entryPrice = 0;
 
     addLog(logId, {
       time: now, market: mkt === 1 ? 'M1' : 'M2', symbol: tradeSymbol,
@@ -564,7 +562,6 @@ export default function ProScannerBot() {
         entryTick = await waitForNextTick(tradeSymbol as MarketSymbol);
         entrySpot = entryTick.quote;
       } else {
-        // For turbo mode, get the most recent price from buffer
         const buf = turboBuffersRef.current.get(tradeSymbol);
         if (buf) {
           entrySpot = buf.lastPrice();
@@ -577,36 +574,38 @@ export default function ProScannerBot() {
       };
       if (needsBarrier(cfg.contract)) buyParams.barrier = cfg.barrier;
 
-      const { contractId, buyPrice } = await derivApi.buyContract(buyParams);
-      const entryPrice = buyPrice;
+      const buyResponse = await derivApi.buyContract(buyParams);
+      entryPrice = buyResponse.buy_price || 0;
       
       updateLog(logId, { entryPrice, entrySpot });
 
       if (copyTradingService.enabled) {
         copyTradingService.copyTrade({
           ...buyParams,
-          masterTradeId: contractId,
+          masterTradeId: buyResponse.contract_id,
         }).catch(err => console.error('Copy trading error:', err));
       }
       
-      const result = await derivApi.waitForContractResult(contractId);
+      const result = await derivApi.waitForContractResult(buyResponse.contract_id);
       const won = result.status === 'won';
       const pnl = result.profit;
       localPnl += pnl;
       localBalance += pnl;
 
-      exitSpot = result.sellPrice || result.exit_tick || 0;
-      const exitPrice = exitSpot;
+      exitSpot = result.sell_price || result.exit_tick || 0;
+      const exitPriceVal = exitSpot;
       const exitDigit = String(getLastDigit(exitSpot));
 
       // Update totals
       if (won) {
         setTotalPayout(prev => prev + (cStake + pnl));
+        setWins(prev => prev + 1);
+      } else {
+        setLosses(prev => prev + 1);
       }
 
       let switchInfo = '';
       if (won) {
-        setWins(prev => prev + 1);
         if (inRecovery) {
           switchInfo = '✓ Recovery WIN → Back to M1';
           inRecovery = false;
@@ -616,7 +615,6 @@ export default function ProScannerBot() {
         mStep = 0;
         cStake = baseStake;
       } else {
-        setLosses(prev => prev + 1);
         if (activeAccount?.is_virtual) {
           recordLoss(cStake, tradeSymbol, 6000);
         }
@@ -644,7 +642,7 @@ export default function ProScannerBot() {
 
       updateLog(logId, { 
         exitDigit, 
-        exitPrice,
+        exitPrice: exitPriceVal,
         exitSpot,
         result: won ? 'Win' : 'Loss', 
         pnl, 
@@ -668,13 +666,14 @@ export default function ProScannerBot() {
 
       return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak };
     } catch (err: any) {
+      console.error('Trade error:', err);
       updateLog(logId, { 
         result: 'Loss', 
         pnl: 0, 
         exitDigit: '-', 
         exitPrice: exitSpot,
         exitSpot,
-        switchInfo: `Error: ${err.message}` 
+        switchInfo: `Error: ${err.message || 'Unknown error'}` 
       });
       if (!turboMode) await new Promise(r => setTimeout(r, 2000));
       return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak: false };
@@ -1365,8 +1364,8 @@ export default function ProScannerBot() {
                   onClick={() => {
                     const csv = logEntries.map(entry => {
                       const type = entry.market === 'M1' ? 'M1' : entry.market === 'M2' ? 'M2' : 'VH';
-                      const entrySpot = entry.entrySpot.toFixed(2);
-                      const exitSpot = entry.exitSpot.toFixed(2);
+                      const entrySpot = entry.entrySpot > 0 ? entry.entrySpot.toFixed(2) : '-';
+                      const exitSpot = entry.exitSpot > 0 ? entry.exitSpot.toFixed(2) : '-';
                       const pl = entry.result === 'Win' ? `+${entry.pnl.toFixed(2)}` : entry.result === 'Loss' ? `${entry.pnl.toFixed(2)}` : '-';
                       return `${type},${entrySpot},${exitSpot},${pl}`;
                     }).join('\n');
@@ -1396,7 +1395,7 @@ export default function ProScannerBot() {
                     <th className="text-left p-3 text-xs font-medium text-muted-foreground w-16">Type</th>
                     <th className="text-left p-3 text-xs font-medium text-muted-foreground">Entry/Exit spot</th>
                     <th className="text-right p-3 text-xs font-medium text-muted-foreground">Buy price & P/L</th>
-                  </tr>
+                   </tr>
                 </thead>
                 <tbody>
                   {logEntries.length === 0 ? (
@@ -1406,7 +1405,7 @@ export default function ProScannerBot() {
                       </td>
                     </tr>
                   ) : (
-                    logEntries.map((entry, index) => {
+                    logEntries.map((entry) => {
                       const isWin = entry.result === 'Win' || entry.result === 'V-Win';
                       const isLoss = entry.result === 'Loss' || entry.result === 'V-Loss';
                       const isVirtual = entry.market === 'VH';
@@ -1504,7 +1503,7 @@ export default function ProScannerBot() {
                                 {plFormatted}
                               </div>
                               {entry.switchInfo && (
-                                <div className="text-[9px] text-muted-foreground mt-1 max-w-[150px] truncate">
+                                <div className="text-[9px] text-muted-foreground mt-1 max-w-[150px] truncate" title={entry.switchInfo}>
                                   {entry.switchInfo}
                                 </div>
                               )}
