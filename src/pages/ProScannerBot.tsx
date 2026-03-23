@@ -47,9 +47,7 @@ interface LogEntry {
   stake: number;
   martingaleStep: number;
   entryPrice: number;
-  entrySpot: number;
   exitPrice: number;
-  exitSpot: number;
   exitDigit: string;
   result: 'Win' | 'Loss' | 'Pending' | 'V-Win' | 'V-Loss';
   pnl: number;
@@ -57,16 +55,16 @@ interface LogEntry {
   switchInfo: string;
 }
 
-/* ── Circular Tick Buffer with price storage ── */
+/* ── Circular Tick Buffer ── */
 class CircularTickBuffer {
-  private buffer: { digit: number; ts: number; price: number }[];
+  private buffer: { digit: number; ts: number }[];
   private head = 0;
   private count = 0;
   constructor(private capacity = 1000) {
     this.buffer = new Array(capacity);
   }
-  push(digit: number, price: number) {
-    this.buffer[this.head] = { digit, ts: performance.now(), price };
+  push(digit: number) {
+    this.buffer[this.head] = { digit, ts: performance.now() };
     this.head = (this.head + 1) % this.capacity;
     if (this.count < this.capacity) this.count++;
   }
@@ -78,33 +76,16 @@ class CircularTickBuffer {
     }
     return result;
   }
-  lastPrice(): number {
-    if (this.count === 0) return 0;
-    const lastItem = this.buffer[(this.head - 1 + this.capacity) % this.capacity];
-    return lastItem ? lastItem.price : 0;
-  }
-  lastTs(): number { 
-    if (this.count === 0) return 0;
-    const lastItem = this.buffer[(this.head - 1 + this.capacity) % this.capacity];
-    return lastItem ? lastItem.ts : 0;
-  }
+  lastTs(): number { return this.count > 0 ? this.buffer[(this.head - 1 + this.capacity) % this.capacity].ts : 0; }
   get size() { return this.count; }
 }
 
-function waitForNextTick(symbol: string): Promise<{ quote: number; digit: number }> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      unsub();
-      reject(new Error('Timeout waiting for tick'));
-    }, 10000);
-    
+function waitForNextTick(symbol: string): Promise<{ quote: number }> {
+  return new Promise((resolve) => {
     const unsub = derivApi.onMessage((data: any) => {
-      if (data.tick && data.tick.symbol === symbol) {
-        clearTimeout(timeout);
-        unsub();
-        const quote = data.tick.quote;
-        const digit = getLastDigit(quote);
-        resolve({ quote, digit });
+      if (data.tick && data.tick.symbol === symbol) { 
+        unsub(); 
+        resolve({ quote: data.tick.quote }); 
       }
     });
   });
@@ -114,18 +95,11 @@ function waitForNextTick(symbol: string): Promise<{ quote: number; digit: number
 function simulateVirtualContract(
   contractType: string, barrier: string, symbol: string
 ): Promise<{ won: boolean; digit: number; price: number }> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      unsub();
-      reject(new Error('Timeout waiting for tick'));
-    }, 10000);
-    
+  return new Promise((resolve) => {
     const unsub = derivApi.onMessage((data: any) => {
       if (data.tick && data.tick.symbol === symbol) {
-        clearTimeout(timeout);
         unsub();
-        const price = data.tick.quote;
-        const digit = getLastDigit(price);
+        const digit = getLastDigit(data.tick.quote);
         const b = parseInt(barrier) || 0;
         let won = false;
         switch (contractType) {
@@ -135,9 +109,8 @@ function simulateVirtualContract(
           case 'DIGITDIFF': won = digit !== b; break;
           case 'DIGITOVER': won = digit > b; break;
           case 'DIGITUNDER': won = digit < b; break;
-          default: won = false;
         }
-        resolve({ won, digit, price });
+        resolve({ won, digit, price: data.tick.quote });
       }
     });
   });
@@ -222,7 +195,6 @@ export default function ProScannerBot() {
   const [wins, setWins] = useState(0);
   const [losses, setLosses] = useState(0);
   const [totalStaked, setTotalStaked] = useState(0);
-  const [totalPayout, setTotalPayout] = useState(0);
   const [netProfit, setNetProfit] = useState(0);
   const [currentStake, setCurrentStakeState] = useState(0);
   const [martingaleStep, setMartingaleStepState] = useState(0);
@@ -240,8 +212,7 @@ export default function ProScannerBot() {
     const handler = (data: any) => {
       if (!data.tick || !active) return;
       const sym = data.tick.symbol as string;
-      const price = data.tick.quote;
-      const digit = getLastDigit(price);
+      const digit = getLastDigit(data.tick.quote);
       const now = performance.now();
 
       // Legacy tick map
@@ -252,12 +223,12 @@ export default function ProScannerBot() {
       map.set(sym, arr);
       setTickCounts(prev => ({ ...prev, [sym]: arr.length }));
 
-      // Turbo circular buffer with price
+      // Turbo circular buffer
       if (!turboBuffersRef.current.has(sym)) {
         turboBuffersRef.current.set(sym, new CircularTickBuffer(1000));
       }
       const buf = turboBuffersRef.current.get(sym)!;
-      buf.push(digit, price);
+      buf.push(digit);
 
       // Turbo latency tracking
       if (lastTickTsRef.current > 0) {
@@ -269,11 +240,7 @@ export default function ProScannerBot() {
       setTicksCaptured(prev => prev + 1);
     };
     const unsub = derivApi.onMessage(handler);
-    SCANNER_MARKETS.forEach(m => { 
-      derivApi.subscribeTicks(m.symbol as MarketSymbol, () => {}).catch(err => {
-        console.error('Failed to subscribe to', m.symbol, err);
-      });
-    });
+    SCANNER_MARKETS.forEach(m => { derivApi.subscribeTicks(m.symbol as MarketSymbol, () => {}).catch(() => {}); });
     return () => { active = false; unsub(); };
   }, []);
 
@@ -320,7 +287,6 @@ export default function ProScannerBot() {
     const mode = market === 1 ? m1StrategyMode : m2StrategyMode;
     if (mode === 'pattern') {
       const pat = market === 1 ? cleanM1Pattern : cleanM2Pattern;
-      if (!pat) return false;
       return checkPatternMatchWith(symbol, pat);
     }
     const cond = market === 1 ? m1DigitCondition : m2DigitCondition;
@@ -337,12 +303,12 @@ export default function ProScannerBot() {
     return null;
   }, [checkStrategyForMarket]);
 
-  /* ── Add log entry with price tracking ── */
+  /* ── Add log entry ── */
   const addLog = useCallback((id: number, entry: Omit<LogEntry, 'id'>) => {
     setLogEntries(prev => [{ ...entry, id }, ...prev].slice(0, 100));
   }, []);
 
-  /* ── Update pending log with price data ── */
+  /* ── Update pending log ── */
   const updateLog = useCallback((id: number, updates: Partial<LogEntry>) => {
     setLogEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
   }, []);
@@ -350,205 +316,20 @@ export default function ProScannerBot() {
   /* ── Clear log ── */
   const clearLog = useCallback(() => {
     setLogEntries([]);
-    setWins(0); setLosses(0); setTotalStaked(0); setTotalPayout(0); setNetProfit(0);
+    setWins(0); setLosses(0); setTotalStaked(0); setNetProfit(0);
     setMartingaleStepState(0);
     setVhFakeWins(0); setVhFakeLosses(0); setVhConsecLosses(0); setVhStatus('idle');
     setTicksCaptured(0); setTicksMissed(0);
   }, []);
 
-  /* ── Execute a single real trade with price tracking ── */
-  const executeRealTrade = useCallback(async (
-    cfg: { contract: string; barrier: string; symbol: string },
-    tradeSymbol: string,
-    cStake: number,
-    mStep: number,
-    mkt: 1 | 2,
-    localBalance: number,
-    localPnl: number,
-    baseStake: number,
-  ) => {
-    const logId = ++logIdRef.current;
-    const now = new Date().toLocaleTimeString();
-    setTotalStaked(prev => prev + cStake);
-    setCurrentStakeState(cStake);
-
-    let entrySpot = 0;
-    let exitSpot = 0;
-    let entryPrice = 0;
-
-    addLog(logId, {
-      time: now, market: mkt === 1 ? 'M1' : 'M2', symbol: tradeSymbol,
-      contract: cfg.contract, stake: cStake, martingaleStep: mStep,
-      entryPrice: 0, entrySpot: 0, exitPrice: 0, exitSpot: 0,
-      exitDigit: '...', result: 'Pending', pnl: 0, balance: localBalance,
-      switchInfo: '',
-    });
-
-    let inRecovery = mkt === 2;
-
-    try {
-      // Capture entry spot from current tick
-      if (!turboMode) {
-        const entryTick = await waitForNextTick(tradeSymbol as MarketSymbol);
-        entrySpot = entryTick.quote;
-      } else {
-        const buf = turboBuffersRef.current.get(tradeSymbol);
-        if (buf) {
-          entrySpot = buf.lastPrice();
-        }
-      }
-
-      const buyParams: any = {
-        contract_type: cfg.contract, 
-        symbol: tradeSymbol,
-        duration: 1, 
-        duration_unit: 't', 
-        basis: 'stake', 
-        amount: cStake,
-      };
-      if (needsBarrier(cfg.contract)) buyParams.barrier = cfg.barrier;
-
-      const buyResponse = await derivApi.buyContract(buyParams);
-      entryPrice = buyResponse.buy_price || 0;
-      
-      updateLog(logId, { entryPrice, entrySpot });
-
-      if (copyTradingService.enabled) {
-        copyTradingService.copyTrade({
-          ...buyParams,
-          masterTradeId: buyResponse.contract_id,
-        }).catch(err => console.error('Copy trading error:', err));
-      }
-      
-      const result = await derivApi.waitForContractResult(buyResponse.contract_id);
-      const won = result.status === 'won';
-      const pnl = result.profit || 0;
-      localPnl += pnl;
-      localBalance += pnl;
-
-      exitSpot = result.sell_price || result.exit_tick || 0;
-      const exitPriceVal = exitSpot;
-      const exitDigit = String(getLastDigit(exitSpot));
-
-      // Update totals
-      if (won) {
-        setTotalPayout(prev => prev + (cStake + pnl));
-        setWins(prev => prev + 1);
-      } else {
-        setLosses(prev => prev + 1);
-      }
-
-      let switchInfo = '';
-      let newCStake = cStake;
-      let newMStep = mStep;
-      let newInRecovery = inRecovery;
-
-      if (won) {
-        if (inRecovery) {
-          switchInfo = '✓ Recovery WIN → Back to M1';
-          newInRecovery = false;
-        } else {
-          switchInfo = '→ Continue M1';
-        }
-        newMStep = 0;
-        newCStake = baseStake;
-      } else {
-        if (activeAccount?.is_virtual) {
-          recordLoss(cStake, tradeSymbol, 6000);
-        }
-        if (!inRecovery && m2Enabled) {
-          newInRecovery = true;
-          switchInfo = '✗ Loss → Switch to M2';
-        } else {
-          switchInfo = inRecovery ? '→ Stay M2' : '→ Continue M1';
-        }
-        if (martingaleOn) {
-          const maxS = parseInt(martingaleMaxSteps) || 5;
-          if (mStep < maxS) {
-            newCStake = parseFloat((cStake * (parseFloat(martingaleMultiplier) || 2)).toFixed(2));
-            newMStep = mStep + 1;
-          } else {
-            newMStep = 0;
-            newCStake = baseStake;
-          }
-        }
-      }
-
-      setNetProfit(prev => prev + pnl);
-      setMartingaleStepState(newMStep);
-      setCurrentStakeState(newCStake);
-
-      updateLog(logId, { 
-        exitDigit, 
-        exitPrice: exitPriceVal,
-        exitSpot,
-        result: won ? 'Win' : 'Loss', 
-        pnl, 
-        balance: localBalance, 
-        switchInfo 
-      });
-
-      let shouldBreak = false;
-      if (localPnl >= parseFloat(takeProfit)) {
-        toast.success(`🎯 Take Profit! +$${localPnl.toFixed(2)}`);
-        shouldBreak = true;
-      }
-      if (localPnl <= -parseFloat(stopLoss)) {
-        toast.error(`🛑 Stop Loss! $${localPnl.toFixed(2)}`);
-        shouldBreak = true;
-      }
-      if (localBalance < newCStake) {
-        toast.error('Insufficient balance');
-        shouldBreak = true;
-      }
-
-      return { 
-        localPnl, 
-        localBalance, 
-        cStake: newCStake, 
-        mStep: newMStep, 
-        inRecovery: newInRecovery, 
-        shouldBreak 
-      };
-    } catch (err: any) {
-      console.error('Trade error:', err);
-      updateLog(logId, { 
-        result: 'Loss', 
-        pnl: 0, 
-        exitDigit: '-', 
-        exitPrice: exitSpot,
-        exitSpot,
-        switchInfo: `Error: ${err.message || 'Unknown error'}` 
-      });
-      if (!turboMode) await new Promise(r => setTimeout(r, 2000));
-      return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak: false };
-    }
-  }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, turboMode, activeAccount, recordLoss]);
-
   /* ═══════════════ MAIN BOT LOOP ═══════════════ */
   const startBot = useCallback(async () => {
-    if (!isAuthorized || isRunning) {
-      toast.error('Please login first or bot is already running');
-      return;
-    }
-    
+    if (!isAuthorized || isRunning) return;
     const baseStake = parseFloat(stake);
-    if (baseStake < 0.35) { 
-      toast.error('Min stake $0.35'); 
-      return; 
-    }
-    if (!m1Enabled && !m2Enabled) { 
-      toast.error('Enable at least one market'); 
-      return; 
-    }
-    if (strategyM1Enabled && m1StrategyMode === 'pattern' && !m1PatternValid) { 
-      toast.error('Invalid M1 pattern (min 2 E/O)'); 
-      return; 
-    }
-    if (strategyEnabled && m2StrategyMode === 'pattern' && !m2PatternValid) { 
-      toast.error('Invalid M2 pattern (min 2 E/O)'); 
-      return; 
-    }
+    if (baseStake < 0.35) { toast.error('Min stake $0.35'); return; }
+    if (!m1Enabled && !m2Enabled) { toast.error('Enable at least one market'); return; }
+    if (strategyM1Enabled && m1StrategyMode === 'pattern' && !m1PatternValid) { toast.error('Invalid M1 pattern (min 2 E/O)'); return; }
+    if (strategyEnabled && m2StrategyMode === 'pattern' && !m2PatternValid) { toast.error('Invalid M2 pattern (min 2 E/O)'); return; }
 
     setIsRunning(true);
     runningRef.current = true;
@@ -574,16 +355,8 @@ export default function ProScannerBot() {
       const mkt: 1 | 2 = inRecovery ? 2 : 1;
       setCurrentMarket(mkt);
 
-      if (mkt === 1 && !m1Enabled) { 
-        if (m2Enabled) { 
-          inRecovery = true; 
-          continue; 
-        } else break; 
-      }
-      if (mkt === 2 && !m2Enabled) { 
-        inRecovery = false; 
-        continue; 
-      }
+      if (mkt === 1 && !m1Enabled) { if (m2Enabled) { inRecovery = true; continue; } else break; }
+      if (mkt === 2 && !m2Enabled) { inRecovery = false; continue; }
 
       let tradeSymbol: string;
       const cfg = getConfig(mkt);
@@ -600,15 +373,9 @@ export default function ProScannerBot() {
         while (runningRef.current && !matched) {
           if (scannerActive) {
             const found = findScannerMatchForMarket(2);
-            if (found) { 
-              matched = true; 
-              matchedSymbol = found; 
-            }
+            if (found) { matched = true; matchedSymbol = found; }
           } else {
-            if (checkStrategyForMarket(cfg.symbol, 2)) { 
-              matched = true; 
-              matchedSymbol = cfg.symbol; 
-            }
+            if (checkStrategyForMarket(cfg.symbol, 2)) { matched = true; matchedSymbol = cfg.symbol; }
           }
           if (!matched) {
             await new Promise<void>(r => {
@@ -629,9 +396,7 @@ export default function ProScannerBot() {
 
         let matched = false;
         while (runningRef.current && !matched) {
-          if (checkStrategyForMarket(cfg.symbol, 1)) { 
-            matched = true; 
-          }
+          if (checkStrategyForMarket(cfg.symbol, 1)) { matched = true; }
           if (!matched) {
             await new Promise<void>(r => {
               if (turboMode) requestAnimationFrame(() => r());
@@ -659,6 +424,7 @@ export default function ProScannerBot() {
         let consecLosses = 0;
         let virtualTradeNum = 0;
 
+        // Keep simulating virtual trades until we accumulate requiredLosses consecutive losses
         while (consecLosses < requiredLosses && runningRef.current) {
           virtualTradeNum++;
           const vLogId = ++logIdRef.current;
@@ -666,53 +432,45 @@ export default function ProScannerBot() {
           addLog(vLogId, {
             time: vNow, market: 'VH', symbol: tradeSymbol,
             contract: cfg.contract, stake: 0, martingaleStep: 0,
-            entryPrice: 0, entrySpot: 0, exitPrice: 0, exitSpot: 0,
+            entryPrice: 0, exitPrice: 0,
             exitDigit: '...', result: 'Pending', pnl: 0, balance: localBalance,
             switchInfo: `Virtual #${virtualTradeNum} (losses: ${consecLosses}/${requiredLosses})`,
           });
 
-          try {
-            const vResult = await simulateVirtualContract(cfg.contract, cfg.barrier, tradeSymbol);
-            if (!runningRef.current) break;
+          const vResult = await simulateVirtualContract(cfg.contract, cfg.barrier, tradeSymbol);
+          if (!runningRef.current) break;
 
-            if (vResult.won) {
-              consecLosses = 0;
-              setVhConsecLosses(0);
-              setVhFakeWins(prev => prev + 1);
-              updateLog(vLogId, { 
-                exitDigit: String(vResult.digit), 
-                exitPrice: vResult.price,
-                exitSpot: vResult.price,
-                result: 'V-Win', 
-                switchInfo: `Virtual WIN → Losses reset (0/${requiredLosses})` 
-              });
-            } else {
-              consecLosses++;
-              setVhConsecLosses(consecLosses);
-              setVhFakeLosses(prev => prev + 1);
-              updateLog(vLogId, { 
-                exitDigit: String(vResult.digit),
-                exitPrice: vResult.price,
-                exitSpot: vResult.price,
-                result: 'V-Loss', 
-                switchInfo: `Virtual LOSS (${consecLosses}/${requiredLosses})` 
-              });
-            }
-          } catch (err) {
-            console.error('Virtual trade error:', err);
+          if (vResult.won) {
+            // Win resets the consecutive loss counter
+            consecLosses = 0;
+            setVhConsecLosses(0);
+            setVhFakeWins(prev => prev + 1);
             updateLog(vLogId, { 
-              result: 'V-Loss', 
-              switchInfo: `Error: ${err}` 
+              exitDigit: String(vResult.digit), 
+              result: 'V-Win', 
+              exitPrice: vResult.price,
+              switchInfo: `Virtual WIN → Losses reset (0/${requiredLosses})` 
             });
-            break;
+          } else {
+            consecLosses++;
+            setVhConsecLosses(consecLosses);
+            setVhFakeLosses(prev => prev + 1);
+            updateLog(vLogId, { 
+              exitDigit: String(vResult.digit), 
+              result: 'V-Loss', 
+              exitPrice: vResult.price,
+              switchInfo: `Virtual LOSS (${consecLosses}/${requiredLosses})` 
+            });
           }
         }
 
         if (!runningRef.current) break;
 
+        // Required consecutive losses reached → hook confirmed
         setVhStatus('confirmed');
         toast.success(`🎣 Hook confirmed! ${requiredLosses} consecutive losses detected → Executing ${realCount} real trade(s)`);
 
+        /* Execute real trades batch */
         for (let ri = 0; ri < realCount && runningRef.current; ri++) {
           const result = await executeRealTrade(
             cfg, tradeSymbol, cStake, mStep, mkt, localBalance, localPnl, baseStake
@@ -724,12 +482,10 @@ export default function ProScannerBot() {
           mStep = result.mStep;
           inRecovery = result.inRecovery;
 
-          if (result.shouldBreak) { 
-            runningRef.current = false; 
-            break; 
-          }
+          if (result.shouldBreak) { runningRef.current = false; break; }
         }
 
+        // Reset after real trades
         setVhStatus('idle');
         setVhConsecLosses(0);
         if (!runningRef.current) break;
@@ -749,26 +505,162 @@ export default function ProScannerBot() {
 
       if (result.shouldBreak) break;
 
+      // Turbo: no delay between trades; normal: small delay
       if (!turboMode) await new Promise(r => setTimeout(r, 400));
     }
 
     setIsRunning(false);
     runningRef.current = false;
     setBotStatus('idle');
-    toast.info('Bot stopped');
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthorized, isRunning, balance, stake, m1Enabled, m2Enabled, m1Contract, m2Contract,
     m1Barrier, m2Barrier, m1Symbol, m2Symbol, martingaleOn, martingaleMultiplier, martingaleMaxSteps,
     takeProfit, stopLoss, strategyEnabled, strategyM1Enabled, m1StrategyMode, m2StrategyMode, m1PatternValid, m2PatternValid,
     scannerActive, findScannerMatchForMarket, checkStrategyForMarket, addLog, updateLog, turboMode,
-    m1HookEnabled, m2HookEnabled, m1VirtualLossCount, m2VirtualLossCount, m1RealCount, m2RealCount,
-    executeRealTrade]);
+    m1HookEnabled, m2HookEnabled, m1VirtualLossCount, m2VirtualLossCount, m1RealCount, m2RealCount]);
+
+  /* ── Execute a single real trade ── */
+  const executeRealTrade = useCallback(async (
+    cfg: { contract: string; barrier: string; symbol: string },
+    tradeSymbol: string,
+    cStake: number,
+    mStep: number,
+    mkt: 1 | 2,
+    localBalance: number,
+    localPnl: number,
+    baseStake: number,
+  ) => {
+    const logId = ++logIdRef.current;
+    const now = new Date().toLocaleTimeString();
+    setTotalStaked(prev => prev + cStake);
+    setCurrentStakeState(cStake);
+
+    // Get entry price before buying
+    let entryPrice = 0;
+    if (!turboMode) {
+      const tick = await waitForNextTick(tradeSymbol as MarketSymbol);
+      entryPrice = tick.quote;
+    } else {
+      // For turbo mode, get the latest tick from buffer
+      const lastTick = tickMapRef.current.get(tradeSymbol)?.slice(-1)[0];
+      entryPrice = lastTick || 0;
+    }
+
+    addLog(logId, {
+      time: now, market: mkt === 1 ? 'M1' : 'M2', symbol: tradeSymbol,
+      contract: cfg.contract, stake: cStake, martingaleStep: mStep,
+      entryPrice, exitPrice: 0,
+      exitDigit: '...', result: 'Pending', pnl: 0, balance: localBalance,
+      switchInfo: '',
+    });
+
+    let inRecovery = mkt === 2;
+
+    try {
+      // Turbo: skip waiting for next tick, trade immediately
+      if (!turboMode) {
+        await waitForNextTick(tradeSymbol as MarketSymbol);
+      }
+
+      const buyParams: any = {
+        contract_type: cfg.contract, symbol: tradeSymbol,
+        duration: 1, duration_unit: 't', basis: 'stake', amount: cStake,
+      };
+      if (needsBarrier(cfg.contract)) buyParams.barrier = cfg.barrier;
+
+      const { contractId } = await derivApi.buyContract(buyParams);
+      
+      // Copy trade to followers
+      if (copyTradingService.enabled) {
+        copyTradingService.copyTrade({
+          ...buyParams,
+          masterTradeId: contractId,
+        }).catch(err => console.error('Copy trading error:', err));
+      }
+      
+      const result = await derivApi.waitForContractResult(contractId);
+      const won = result.status === 'won';
+      const pnl = result.profit;
+      localPnl += pnl;
+      localBalance += pnl;
+
+      const exitPrice = result.sellPrice || 0;
+      const exitDigit = String(getLastDigit(exitPrice));
+
+      let switchInfo = '';
+      if (won) {
+        setWins(prev => prev + 1);
+        if (inRecovery) {
+          switchInfo = '✓ Recovery WIN → Back to M1';
+          inRecovery = false;
+        } else {
+          switchInfo = '→ Continue M1';
+        }
+        mStep = 0;
+        cStake = baseStake;
+      } else {
+        setLosses(prev => prev + 1);
+        // Record loss for virtual trading requirement (duration ~1 tick ≈ 5s+)
+        if (activeAccount?.is_virtual) {
+          recordLoss(cStake, tradeSymbol, 6000);
+        }
+        if (!inRecovery && m2Enabled) {
+          inRecovery = true;
+          switchInfo = '✗ Loss → Switch to M2';
+        } else {
+          switchInfo = inRecovery ? '→ Stay M2' : '→ Continue M1';
+        }
+        if (martingaleOn) {
+          const maxS = parseInt(martingaleMaxSteps) || 5;
+          if (mStep < maxS) {
+            cStake = parseFloat((cStake * (parseFloat(martingaleMultiplier) || 2)).toFixed(2));
+            mStep++;
+          } else {
+            mStep = 0;
+            cStake = baseStake;
+          }
+        }
+      }
+
+      setNetProfit(prev => prev + pnl);
+      setMartingaleStepState(mStep);
+      setCurrentStakeState(cStake);
+
+      updateLog(logId, { 
+        exitDigit, 
+        exitPrice,
+        result: won ? 'Win' : 'Loss', 
+        pnl, 
+        balance: localBalance, 
+        switchInfo 
+      });
+
+      let shouldBreak = false;
+      if (localPnl >= parseFloat(takeProfit)) {
+        toast.success(`🎯 Take Profit! +$${localPnl.toFixed(2)}`);
+        shouldBreak = true;
+      }
+      if (localPnl <= -parseFloat(stopLoss)) {
+        toast.error(`🛑 Stop Loss! $${localPnl.toFixed(2)}`);
+        shouldBreak = true;
+      }
+      if (localBalance < cStake) {
+        toast.error('Insufficient balance');
+        shouldBreak = true;
+      }
+
+      return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak };
+    } catch (err: any) {
+      updateLog(logId, { result: 'Loss', pnl: 0, exitDigit: '-', exitPrice: 0, switchInfo: `Error: ${err.message}` });
+      if (!turboMode) await new Promise(r => setTimeout(r, 2000));
+      return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak: false };
+    }
+  }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, turboMode, activeAccount, recordLoss]);
 
   const stopBot = useCallback(() => {
     runningRef.current = false;
     setIsRunning(false);
     setBotStatus('idle');
-    toast.info('Bot stopped');
   }, []);
 
   /* ── Status helpers ── */
@@ -841,10 +733,12 @@ export default function ProScannerBot() {
     if ((cfg as any).botName) setBotName((cfg as any).botName);
   }, []);
 
+  // Auto-load config from navigation state (Free Bots page)
   useEffect(() => {
     const state = location.state as { loadConfig?: BotConfig } | null;
     if (state?.loadConfig) {
       handleLoadConfig(state.loadConfig);
+      // Clear state to prevent re-loading on re-render
       window.history.replaceState({}, '');
     }
   }, [location.state, handleLoadConfig]);
@@ -853,7 +747,7 @@ export default function ProScannerBot() {
   const activeDigits = (tickMapRef.current.get(activeSymbol) || []).slice(-8);
 
   return (
-    <div className="space-y-2 max-w-7xl mx-auto p-4">
+    <div className="space-y-2 max-w-7xl mx-auto">
       {/* ── Compact Header ── */}
       <div className="flex items-center justify-between gap-2 bg-card border border-border rounded-xl px-3 py-2">
         <h1 className="text-base font-bold text-foreground flex items-center gap-2">
@@ -1307,7 +1201,48 @@ export default function ProScannerBot() {
                         if (!cfg.version || !cfg.m1 || !cfg.m2 || !cfg.risk) {
                           toast.error('Invalid config file format'); return;
                         }
-                        handleLoadConfig(cfg);
+                        // M1
+                        if (cfg.m1.enabled !== undefined) setM1Enabled(cfg.m1.enabled);
+                        if (cfg.m1.symbol) setM1Symbol(cfg.m1.symbol);
+                        if (cfg.m1.contract) setM1Contract(cfg.m1.contract);
+                        if (cfg.m1.barrier) setM1Barrier(cfg.m1.barrier);
+                        if (cfg.m1.hookEnabled !== undefined) setM1HookEnabled(cfg.m1.hookEnabled);
+                        if (cfg.m1.virtualLossCount) setM1VirtualLossCount(cfg.m1.virtualLossCount);
+                        if (cfg.m1.realCount) setM1RealCount(cfg.m1.realCount);
+                        // M2
+                        if (cfg.m2.enabled !== undefined) setM2Enabled(cfg.m2.enabled);
+                        if (cfg.m2.symbol) setM2Symbol(cfg.m2.symbol);
+                        if (cfg.m2.contract) setM2Contract(cfg.m2.contract);
+                        if (cfg.m2.barrier) setM2Barrier(cfg.m2.barrier);
+                        if (cfg.m2.hookEnabled !== undefined) setM2HookEnabled(cfg.m2.hookEnabled);
+                        if (cfg.m2.virtualLossCount) setM2VirtualLossCount(cfg.m2.virtualLossCount);
+                        if (cfg.m2.realCount) setM2RealCount(cfg.m2.realCount);
+                        // Risk
+                        if (cfg.risk.stake) setStake(cfg.risk.stake);
+                        if (cfg.risk.martingaleOn !== undefined) setMartingaleOn(cfg.risk.martingaleOn);
+                        if (cfg.risk.martingaleMultiplier) setMartingaleMultiplier(cfg.risk.martingaleMultiplier);
+                        if (cfg.risk.martingaleMaxSteps) setMartingaleMaxSteps(cfg.risk.martingaleMaxSteps);
+                        if (cfg.risk.takeProfit) setTakeProfit(cfg.risk.takeProfit);
+                        if (cfg.risk.stopLoss) setStopLoss(cfg.risk.stopLoss);
+                        // Strategy
+                        if (cfg.strategy) {
+                          if (cfg.strategy.m1Enabled !== undefined) setStrategyM1Enabled(cfg.strategy.m1Enabled);
+                          if (cfg.strategy.m2Enabled !== undefined) setStrategyEnabled(cfg.strategy.m2Enabled);
+                          if (cfg.strategy.m1Mode) setM1StrategyMode(cfg.strategy.m1Mode);
+                          if (cfg.strategy.m2Mode) setM2StrategyMode(cfg.strategy.m2Mode);
+                          if (cfg.strategy.m1Pattern !== undefined) setM1Pattern(cfg.strategy.m1Pattern);
+                          if (cfg.strategy.m1DigitCondition) setM1DigitCondition(cfg.strategy.m1DigitCondition);
+                          if (cfg.strategy.m1DigitCompare) setM1DigitCompare(cfg.strategy.m1DigitCompare);
+                          if (cfg.strategy.m1DigitWindow) setM1DigitWindow(cfg.strategy.m1DigitWindow);
+                          if (cfg.strategy.m2Pattern !== undefined) setM2Pattern(cfg.strategy.m2Pattern);
+                          if (cfg.strategy.m2DigitCondition) setM2DigitCondition(cfg.strategy.m2DigitCondition);
+                          if (cfg.strategy.m2DigitCompare) setM2DigitCompare(cfg.strategy.m2DigitCompare);
+                          if (cfg.strategy.m2DigitWindow) setM2DigitWindow(cfg.strategy.m2DigitWindow);
+                        }
+                        // Scanner & Turbo
+                        if (cfg.scanner?.active !== undefined) setScannerActive(cfg.scanner.active);
+                        if (cfg.turbo?.enabled !== undefined) setTurboMode(cfg.turbo.enabled);
+                        if (cfg.botName) setBotName(cfg.botName);
                         toast.success('Config loaded successfully!');
                       } catch {
                         toast.error('Failed to parse config file');
@@ -1351,29 +1286,29 @@ export default function ProScannerBot() {
             </div>
           </div>
 
-          {/* Trade Summary Panel - Like the image */}
-          <div className="grid grid-cols-2 gap-2">
-            <div className="bg-card border border-border rounded-xl p-3">
-              <div className="text-xs text-muted-foreground mb-1">Total stake</div>
-              <div className="text-xl font-bold text-foreground">${totalStaked.toFixed(2)}</div>
-              <div className="text-xs text-muted-foreground mt-1">Total payout: ${totalPayout.toFixed(2)}</div>
+          {/* Trade Summary Panel */}
+          <div className="grid grid-cols-5 gap-1.5">
+            <div className="bg-card border border-border rounded-lg p-2 text-center">
+              <div className="text-[8px] text-muted-foreground">Trades</div>
+              <div className="font-mono text-xs font-bold text-foreground">{wins + losses}</div>
             </div>
-            <div className="bg-card border border-border rounded-xl p-3">
-              <div className="text-xs text-muted-foreground mb-1">No. of runs</div>
-              <div className="text-xl font-bold text-foreground">{wins + losses}</div>
-              <div className="flex justify-between text-xs mt-1">
-                <span className="text-profit">Contracts won: {wins}</span>
-                <span className="text-loss">Contracts lost: {losses}</span>
+            <div className="bg-card border border-border rounded-lg p-2 text-center">
+              <div className="text-[8px] text-muted-foreground">Wins</div>
+              <div className="font-mono text-xs font-bold text-profit">{wins}</div>
+            </div>
+            <div className="bg-card border border-border rounded-lg p-2 text-center">
+              <div className="text-[8px] text-muted-foreground">Losses</div>
+              <div className="font-mono text-xs font-bold text-loss">{losses}</div>
+            </div>
+            <div className="bg-card border border-border rounded-lg p-2 text-center">
+              <div className="text-[8px] text-muted-foreground">Profit/Loss</div>
+              <div className={`font-mono text-xs font-bold ${netProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
+                {netProfit >= 0 ? '+' : ''}{netProfit.toFixed(2)}
               </div>
             </div>
-          </div>
-
-          <div className="bg-card border border-border rounded-xl p-3">
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-muted-foreground">Total profit/loss</span>
-              <span className={`text-xl font-bold ${netProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
-                {netProfit >= 0 ? '+' : ''}{netProfit.toFixed(2)} USD
-              </span>
+            <div className="bg-card border border-border rounded-lg p-2 text-center">
+              <div className="text-[8px] text-muted-foreground">Total Staked</div>
+              <div className="font-mono text-xs font-bold text-primary">${totalStaked.toFixed(2)}</div>
             </div>
           </div>
 
@@ -1396,192 +1331,100 @@ export default function ProScannerBot() {
             </Button>
           </div>
 
-          {/* Activity Log - Styled like the image */}
+          {/* Activity Log */}
           <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-foreground">Transactions</h3>
-                <Badge variant="secondary" className="text-[10px] font-mono">
-                  {wins + losses} runs
-                </Badge>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="ghost" size="sm" onClick={clearLog} className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive">
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-                <Button
-                  onClick={() => {
-                    const csv = logEntries.map(entry => {
-                      const type = entry.market === 'M1' ? 'M1' : entry.market === 'M2' ? 'M2' : 'VH';
-                      const entrySpot = entry.entrySpot > 0 ? entry.entrySpot.toFixed(2) : '-';
-                      const exitSpot = entry.exitSpot > 0 ? entry.exitSpot.toFixed(2) : '-';
-                      const pl = entry.result === 'Win' ? `+${entry.pnl.toFixed(2)}` : entry.result === 'Loss' ? `${entry.pnl.toFixed(2)}` : '-';
-                      return `${type},${entrySpot},${exitSpot},${pl}`;
-                    }).join('\n');
-                    const blob = new Blob([`Type,Entry Spot,Exit Spot,P/L\n${csv}`], { type: 'text/csv' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `trades_${new Date().toISOString().slice(0,19)}.csv`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                    toast.success('Export complete');
-                  }}
-                  size="sm"
-                  variant="outline"
-                  className="h-8 text-xs"
-                  disabled={logEntries.length === 0}
-                >
-                  Export CSV
+            <div className="px-2.5 py-2 border-b border-border flex items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold text-foreground">Activity Log</h3>
+              <div className="flex items-center gap-1.5">
+                {logEntries.length > 0 && logEntries[0].switchInfo && (
+                  <span className="text-[9px] text-muted-foreground font-mono hidden md:inline truncate max-w-[200px]">
+                    {logEntries[0].switchInfo}
+                  </span>
+                )}
+                {!isRunning ? (
+                  <Button onClick={startBot} disabled={!isAuthorized || balance < parseFloat(stake)}
+                    size="sm" className="h-7 text-[10px] font-bold bg-profit hover:bg-profit/90 text-profit-foreground px-3">
+                    <Play className="w-3 h-3 mr-1" /> START
+                  </Button>
+                ) : (
+                  <Button onClick={stopBot} variant="destructive" size="sm" className="h-7 text-[10px] font-bold px-3">
+                    <StopCircle className="w-3 h-3 mr-1" /> STOP
+                  </Button>
+                )}
+                <Button variant="ghost" size="sm" onClick={clearLog} className="h-7 w-7 p-0 text-muted-foreground hover:text-loss">
+                  <Trash2 className="w-3 h-3" />
                 </Button>
               </div>
             </div>
-            
-            <div className="max-h-[500px] min-h-[400px] overflow-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/30 sticky top-0">
-                  <tr className="border-b border-border">
-                    <th className="text-left p-3 text-xs font-medium text-muted-foreground w-16">Type</th>
-                    <th className="text-left p-3 text-xs font-medium text-muted-foreground">Entry/Exit spot</th>
-                    <th className="text-right p-3 text-xs font-medium text-muted-foreground">Buy price & P/L</th>
+            <div className="max-h-[calc(100vh-380px)] min-h-[300px] overflow-auto">
+              <table className="w-full text-[10px]">
+                <thead className="text-[9px] text-muted-foreground bg-muted/30 sticky top-0">
+                  <tr>
+                    <th className="text-left p-1.5">Time</th>
+                    <th className="text-left p-1">Mkt</th>
+                    <th className="text-left p-1">Symbol</th>
+                    <th className="text-left p-1">Type</th>
+                    <th className="text-right p-1">Stake</th>
+                    <th className="text-right p-1">Entry</th>
+                    <th className="text-right p-1">Exit</th>
+                    <th className="text-center p-1">Digit</th>
+                    <th className="text-center p-1">Result</th>
+                    <th className="text-right p-1">P/L</th>
+                    <th className="text-right p-1">Bal</th>
+                    <th className="text-center p-1">⏹</th>
                   </tr>
                 </thead>
                 <tbody>
                   {logEntries.length === 0 ? (
-                    <tr>
-                      <td colSpan={3} className="text-center text-muted-foreground py-12">
-                        No transactions yet — configure and start the bot
+                    <tr><td colSpan={12} className="text-center text-muted-foreground py-8">No trades yet — configure and start the bot</td></tr>
+                  ) : logEntries.map(e => (
+                    <tr key={e.id} className={`border-t border-border/30 hover:bg-muted/20 ${
+                      e.market === 'M1' ? 'border-l-2 border-l-profit' :
+                      e.market === 'VH' ? 'border-l-2 border-l-primary' :
+                      'border-l-2 border-l-purple-500'
+                    }`}>
+                      <td className="p-1 font-mono text-[9px]">{e.time}</td>
+                      <td className={`p-1 font-bold ${
+                        e.market === 'M1' ? 'text-profit' :
+                        e.market === 'VH' ? 'text-primary' :
+                        'text-purple-400'
+                      }`}>{e.market}</td>
+                      <td className="p-1 font-mono text-[9px]">{e.symbol}</td>
+                      <td className="p-1 text-[9px]">{e.contract.replace('DIGIT', '')}</td>
+                      <td className="p-1 font-mono text-right text-[9px]">
+                        {e.market === 'VH' ? 'FAKE' : `$${e.stake.toFixed(2)}`}
+                        {e.martingaleStep > 0 && e.market !== 'VH' && <span className="text-warning ml-0.5">M{e.martingaleStep}</span>}
+                      </td>
+                      <td className="p-1 font-mono text-right text-[9px]">
+                        {e.entryPrice > 0 ? e.entryPrice.toFixed(2) : '-'}
+                      </td>
+                      <td className="p-1 font-mono text-right text-[9px]">
+                        {e.exitPrice > 0 ? e.exitPrice.toFixed(2) : '-'}
+                      </td>
+                      <td className="p-1 text-center font-mono">{e.exitDigit}</td>
+                      <td className="p-1 text-center">
+                        <span className={`px-1 py-0.5 rounded-full text-[8px] font-bold ${
+                          e.result === 'Win' || e.result === 'V-Win' ? 'bg-profit/20 text-profit' :
+                          e.result === 'Loss' || e.result === 'V-Loss' ? 'bg-loss/20 text-loss' :
+                          'bg-warning/20 text-warning animate-pulse'
+                        }`}>{e.result === 'Pending' ? '...' : e.result}</span>
+                      </td>
+                      <td className={`p-1 font-mono text-right text-[9px] ${e.pnl > 0 ? 'text-profit' : e.pnl < 0 ? 'text-loss' : ''}`}>
+                        {e.result === 'Pending' ? '...' : e.market === 'VH' ? '-' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
+                      </td>
+                      <td className="p-1 font-mono text-right text-[9px]">{e.market === 'VH' ? '-' : `$${e.balance.toFixed(2)}`}</td>
+                      <td className="p-1 text-center">
+                        {isRunning && (
+                          <button onClick={stopBot} className="px-1 py-0.5 rounded bg-destructive/80 hover:bg-destructive text-destructive-foreground text-[8px] font-bold transition-colors" title="Stop Bot">
+                            ■
+                          </button>
+                        )}
                       </td>
                     </tr>
-                  ) : (
-                    logEntries.map((entry) => {
-                      const isWin = entry.result === 'Win' || entry.result === 'V-Win';
-                      const isLoss = entry.result === 'Loss' || entry.result === 'V-Loss';
-                      const isVirtual = entry.market === 'VH';
-                      
-                      const entrySpotFormatted = entry.entrySpot > 0 ? entry.entrySpot.toFixed(2) : '—';
-                      const exitSpotFormatted = entry.exitSpot > 0 ? entry.exitSpot.toFixed(2) : '—';
-                      const plFormatted = entry.result === 'Pending' ? '...' : 
-                                         isWin ? `+${entry.pnl.toFixed(2)} USD` : 
-                                         isLoss ? `${entry.pnl.toFixed(2)} USD` : '-';
-                      const stakeFormatted = entry.stake > 0 ? `${entry.stake.toFixed(2)} USD` : 'Virtual';
-                      
-                      const getContractIcon = () => {
-                        if (entry.contract.includes('EVEN')) return '🎲';
-                        if (entry.contract.includes('ODD')) return '🎯';
-                        if (entry.contract.includes('MATCH')) return '⚡';
-                        if (entry.contract.includes('DIFF')) return '🔄';
-                        if (entry.contract.includes('OVER')) return '⬆️';
-                        if (entry.contract.includes('UNDER')) return '⬇️';
-                        return '📊';
-                      };
-                      
-                      return (
-                        <tr 
-                          key={entry.id} 
-                          className={`border-b border-border/50 hover:bg-muted/10 transition-colors ${
-                            isVirtual ? 'opacity-75' : ''
-                          }`}
-                        >
-                          {/* Type column with market indicator */}
-                          <td className="p-3 align-top">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-base">{getContractIcon()}</span>
-                              <div className="flex flex-col">
-                                <span className={`text-xs font-mono font-medium ${
-                                  entry.market === 'M1' ? 'text-profit' : 
-                                  entry.market === 'M2' ? 'text-purple-400' : 
-                                  'text-primary'
-                                }`}>
-                                  {entry.market === 'M1' ? 'M1' : entry.market === 'M2' ? 'M2' : 'VH'}
-                                </span>
-                                {entry.martingaleStep > 0 && !isVirtual && (
-                                  <span className="text-[9px] text-warning font-mono">
-                                    M{entry.martingaleStep}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </td>
-                          
-                          {/* Entry/Exit spot column */}
-                          <td className="p-3 align-top">
-                            <div className="flex flex-col gap-2">
-                              {/* Entry spot */}
-                              <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded-full bg-green-500/10 flex items-center justify-center">
-                                  <span className="text-[10px] text-green-500 font-bold">↑</span>
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="text-[10px] text-muted-foreground">Entry</span>
-                                  <span className="text-xs font-mono font-medium text-foreground">
-                                    {entrySpotFormatted}
-                                  </span>
-                                </div>
-                              </div>
-                              {/* Exit spot */}
-                              <div className="flex items-center gap-2">
-                                <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
-                                  isWin ? 'bg-profit/10' : isLoss ? 'bg-loss/10' : 'bg-muted/20'
-                                }`}>
-                                  <span className={`text-[10px] font-bold ${
-                                    isWin ? 'text-profit' : isLoss ? 'text-loss' : 'text-muted-foreground'
-                                  }`}>
-                                    ↓
-                                  </span>
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="text-[10px] text-muted-foreground">Exit</span>
-                                  <span className="text-xs font-mono font-medium text-foreground">
-                                    {exitSpotFormatted}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                          
-                          {/* Buy price & P/L column */}
-                          <td className="p-3 align-top text-right">
-                            <div className="flex flex-col gap-1">
-                              <div className="text-xs font-mono text-muted-foreground">
-                                {stakeFormatted}
-                              </div>
-                              <div className={`text-sm font-bold ${
-                                isWin ? 'text-profit' : isLoss ? 'text-loss' : 'text-muted-foreground'
-                              }`}>
-                                {plFormatted}
-                              </div>
-                              {entry.switchInfo && (
-                                <div className="text-[9px] text-muted-foreground mt-1 max-w-[150px] truncate" title={entry.switchInfo}>
-                                  {entry.switchInfo}
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
+                  ))}
                 </tbody>
               </table>
             </div>
-            
-            {/* Footer summary */}
-            {logEntries.length > 0 && (
-              <div className="border-t border-border px-4 py-2 bg-muted/20">
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Total stake: ${totalStaked.toFixed(2)} USD</span>
-                  <span className="text-muted-foreground">Total payout: ${totalPayout.toFixed(2)} USD</span>
-                </div>
-                <div className="flex justify-between text-xs mt-1">
-                  <span className="text-muted-foreground">Contracts lost: {losses}</span>
-                  <span className="text-muted-foreground">Contracts won: {wins}</span>
-                  <span className={`font-bold ${netProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
-                    Total profit/loss: {netProfit >= 0 ? '+' : ''}{netProfit.toFixed(2)} USD
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>
