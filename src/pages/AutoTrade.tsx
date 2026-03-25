@@ -295,7 +295,7 @@ export default function TradingChart() {
   const botRunningRef = useRef(false);
   const botPausedRef = useRef(false);
   const [botConfig, setBotConfig] = useState({
-    botSymbol: 'R_100', // New: Bot market selection
+    botSymbol: 'R_100', // Bot market selection
     stake: '1.00',
     contractType: 'CALL',
     prediction: '5',
@@ -309,18 +309,6 @@ export default function TradingChart() {
   });
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
   const [turboMode, setTurboMode] = useState(false);
-  
-  // Recovery Mode State
-  const [recoveryEnabled, setRecoveryEnabled] = useState(false);
-  const [recoveryConfig, setRecoveryConfig] = useState({
-    recoveryStake: '2.00',
-    recoveryMultiplier: '2.0',
-    maxRecoveryAttempts: '5',
-    recoveryTarget: '10.00',
-  });
-  const [recoveryMode, setRecoveryMode] = useState(false);
-  const [recoveryAttempts, setRecoveryAttempts] = useState(0);
-  const [recoveryOriginalStake, setRecoveryOriginalStake] = useState(0);
 
   /* ── Load history + subscribe ── */
   useEffect(() => {
@@ -823,7 +811,7 @@ export default function TradingChart() {
     finally { setIsTrading(false); }
   };
 
-  // ═══ AUTO BOT LOGIC with Strategy and Recovery ═══
+  // ═══ AUTO BOT LOGIC with Strategy ═══
   const startBot = useCallback(async () => {
     if (!isAuthorized) { toast.error('Login to Deriv first'); return; }
     setBotRunning(true); setBotPaused(false);
@@ -875,59 +863,16 @@ export default function TradingChart() {
 
         if (result.status === 'won') {
           wins++; consLosses = 0;
-          
-          // Reset recovery mode if we win
-          if (recoveryMode) {
-            setRecoveryMode(false);
-            setRecoveryAttempts(0);
-            toast.success('🎉 Recovery successful! Back to normal trading.');
-            if (voiceEnabled) speak('Recovery successful. Back to normal trading.');
-          }
-          
           stake = baseStake;
           if (voiceEnabled && trades % 5 === 0) speak(`Trade ${trades} won. Total profit ${pnl.toFixed(2)}`);
         } else {
           losses++; consLosses++;
-          
-          // Recovery Mode Logic
-          if (recoveryEnabled && !recoveryMode && result.status === 'lost') {
-            // Enter recovery mode on first loss
-            setRecoveryMode(true);
-            setRecoveryAttempts(1);
-            setRecoveryOriginalStake(baseStake);
-            const recoveryStakeAmount = parseFloat(recoveryConfig.recoveryStake) || baseStake * 2;
-            stake = recoveryStakeAmount;
-            toast.warning(`🔄 Entering Recovery Mode! Next stake: $${stake.toFixed(2)}`);
-            if (voiceEnabled) speak(`Entering recovery mode. Next stake ${stake.toFixed(2)} dollars`);
-          } else if (recoveryEnabled && recoveryMode) {
-            // Already in recovery mode, continue recovery
-            const maxAttempts = parseInt(recoveryConfig.maxRecoveryAttempts) || 5;
-            const recoveryMultiplier = parseFloat(recoveryConfig.recoveryMultiplier) || 2;
-            
-            if (recoveryAttempts >= maxAttempts) {
-              // Max recovery attempts reached, reset
-              setRecoveryMode(false);
-              setRecoveryAttempts(0);
-              stake = baseStake;
-              toast.error(`❌ Max recovery attempts (${maxAttempts}) reached. Resetting to normal stake.`);
-              if (voiceEnabled) speak(`Max recovery attempts reached. Resetting stake.`);
-            } else {
-              // Continue recovery with multiplier
-              const newAttempts = recoveryAttempts + 1;
-              setRecoveryAttempts(newAttempts);
-              const newStake = stake * recoveryMultiplier;
-              stake = Math.min(newStake, parseFloat(recoveryConfig.recoveryStake) * Math.pow(recoveryMultiplier, maxAttempts));
-              toast.warning(`🔄 Recovery Attempt ${newAttempts}/${maxAttempts} - New stake: $${stake.toFixed(2)}`);
-              if (voiceEnabled) speak(`Recovery attempt ${newAttempts}. Stake ${stake.toFixed(2)} dollars`);
-            }
-          } else if (mart) {
-            // Normal martingale if recovery is off
+          if (mart) {
             stake = Math.round(stake * mult * 100) / 100;
           } else {
             stake = baseStake;
           }
-          
-          if (voiceEnabled && !recoveryMode) speak(`Loss ${consLosses}. ${mart ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
+          if (voiceEnabled) speak(`Loss ${consLosses}. ${mart ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
         }
         setBotStats({ trades, wins, losses, pnl, currentStake: stake, consecutiveLosses: consLosses });
       } catch (err: any) {
@@ -937,11 +882,9 @@ export default function TradingChart() {
     }
     setBotRunning(false); botRunningRef.current = false;
     setBotStats(prev => ({ ...prev, trades, wins, losses, pnl }));
-    setRecoveryMode(false);
-    setRecoveryAttempts(0);
-  }, [isAuthorized, botConfig, voiceEnabled, speak, strategyEnabled, checkStrategyCondition, recoveryEnabled, recoveryConfig]);
+  }, [isAuthorized, botConfig, voiceEnabled, speak, strategyEnabled, checkStrategyCondition]);
 
-  const stopBot = useCallback(() => { botRunningRef.current = false; setBotRunning(false); toast.info('🛑 Bot stopped'); setRecoveryMode(false); setRecoveryAttempts(0); }, []);
+  const stopBot = useCallback(() => { botRunningRef.current = false; setBotRunning(false); toast.info('🛑 Bot stopped'); }, []);
   const togglePauseBot = useCallback(() => { botPausedRef.current = !botPausedRef.current; setBotPaused(botPausedRef.current); }, []);
 
   // Update chart symbol when bot symbol changes
@@ -1271,7 +1214,7 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* ═══ AUTO BOT PANEL with Strategy and Recovery ═══ */}
+          {/* ═══ AUTO BOT PANEL with Strategy ═══ */}
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
@@ -1369,50 +1312,6 @@ export default function TradingChart() {
                   <div className={`w-4 h-4 rounded-full bg-background shadow absolute top-0.5 transition-transform ${botConfig.martingale ? 'translate-x-4' : 'translate-x-0.5'}`} />
                 </button>
               </div>
-            </div>
-
-            {/* Recovery Mode Toggle */}
-            <div className="border-t border-border pt-2 mt-1">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-[10px] font-semibold text-[#F85149] flex items-center gap-1">
-                  <RefreshCw className="w-3 h-3" /> Recovery Mode
-                </label>
-                <Switch checked={recoveryEnabled} onCheckedChange={setRecoveryEnabled} disabled={botRunning} />
-              </div>
-
-              {recoveryEnabled && (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[8px] text-muted-foreground">Recovery Stake</label>
-                      <Input type="number" min="0.35" step="0.01" value={recoveryConfig.recoveryStake}
-                        onChange={e => setRecoveryConfig(p => ({ ...p, recoveryStake: e.target.value }))} disabled={botRunning}
-                        className="h-7 text-xs" />
-                    </div>
-                    <div>
-                      <label className="text-[8px] text-muted-foreground">Multiplier</label>
-                      <Input type="number" min="1.1" step="0.1" value={recoveryConfig.recoveryMultiplier}
-                        onChange={e => setRecoveryConfig(p => ({ ...p, recoveryMultiplier: e.target.value }))} disabled={botRunning}
-                        className="h-7 text-xs" />
-                    </div>
-                    <div>
-                      <label className="text-[8px] text-muted-foreground">Max Attempts</label>
-                      <Input type="number" min="1" max="20" value={recoveryConfig.maxRecoveryAttempts}
-                        onChange={e => setRecoveryConfig(p => ({ ...p, maxRecoveryAttempts: e.target.value }))} disabled={botRunning}
-                        className="h-7 text-xs" />
-                    </div>
-                    <div>
-                      <label className="text-[8px] text-muted-foreground">Target Profit</label>
-                      <Input type="number" min="1" value={recoveryConfig.recoveryTarget}
-                        onChange={e => setRecoveryConfig(p => ({ ...p, recoveryTarget: e.target.value }))} disabled={botRunning}
-                        className="h-7 text-xs" />
-                    </div>
-                  </div>
-                  <div className="text-[8px] text-muted-foreground text-center py-1 bg-loss/5 rounded">
-                    {recoveryMode ? `🔄 RECOVERY ACTIVE | Attempt ${recoveryAttempts}/${recoveryConfig.maxRecoveryAttempts}` : '⚡ Will activate after a loss'}
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Strategy Section */}
