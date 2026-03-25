@@ -212,6 +212,8 @@ const analyzeDigitFrequency = (ticks: number[]): {
   frequencies: Record<number, number>;
   percentages: Record<number, number>;
   mostFrequent: DigitStats;
+  secondMostFrequent: DigitStats;
+  thirdMostFrequent: DigitStats;
   leastFrequent: DigitStats;
   sortedDigits: DigitStats[];
 } => {
@@ -235,6 +237,8 @@ const analyzeDigitFrequency = (ticks: number[]): {
     frequencies,
     percentages,
     mostFrequent: sorted[0],
+    secondMostFrequent: sorted[1],
+    thirdMostFrequent: sorted[2],
     leastFrequent: sorted[sorted.length - 1],
     sortedDigits: sorted,
   };
@@ -485,12 +489,13 @@ const generateRiseFallSignals = (
   const signals: Omit<Signal, 'id' | 'timestamp' | 'priority'>[] = [];
   const rsi = calculateRSI(ticks, 14);
   const macd = calculateMACD(ticks);
+  const lastTicksAnalysis = analyzeLastTicks(ticks);
   
   // Signal 1: RISE
-  if (rsi < 45 && macd.macd > 0) {
+  if (rsi < 45 && macd.macd > 0 && lastTicksAnalysis.trend !== 'decreasing') {
     let strength: SignalStrength = 'moderate';
     let confidence = 65;
-    if (rsi < 30 && macd.histogram > 0.5) {
+    if (rsi < 30 && macd.histogram > 0.5 && lastTicksAnalysis.over4Pct > 55) {
       strength = 'strong';
       confidence = 85;
     }
@@ -503,16 +508,16 @@ const generateRiseFallSignals = (
       entryPrice: 'RISE',
       confidence,
       timeframe: '1m',
-      conditionMet: `RSI at ${rsi.toFixed(1)} (oversold territory) + MACD bullish ${macd.macd > 0 ? '+' : ''}${macd.macd.toFixed(4)}. Expect upward movement.`,
-      stats: { rsi, macd: macd.macd },
+      conditionMet: `RSI at ${rsi.toFixed(1)} (oversold territory) + MACD bullish ${macd.macd > 0 ? '+' : ''}${macd.macd.toFixed(4)}. Last 20: ${lastTicksAnalysis.over4Pct.toFixed(0)}% over. Expect upward movement.`,
+      stats: { rsi, macd: macd.macd, last20Pct: lastTicksAnalysis.over4Pct },
     });
   }
   
   // Signal 2: FALL
-  if (rsi > 55 && macd.macd < 0) {
+  if (rsi > 55 && macd.macd < 0 && lastTicksAnalysis.trend !== 'increasing') {
     let strength: SignalStrength = 'moderate';
     let confidence = 65;
-    if (rsi > 70 && macd.histogram < -0.5) {
+    if (rsi > 70 && macd.histogram < -0.5 && lastTicksAnalysis.under5Pct > 55) {
       strength = 'strong';
       confidence = 85;
     }
@@ -525,8 +530,8 @@ const generateRiseFallSignals = (
       entryPrice: 'FALL',
       confidence,
       timeframe: '1m',
-      conditionMet: `RSI at ${rsi.toFixed(1)} (overbought territory) + MACD bearish ${macd.macd.toFixed(4)}. Expect downward movement.`,
-      stats: { rsi, macd: macd.macd },
+      conditionMet: `RSI at ${rsi.toFixed(1)} (overbought territory) + MACD bearish ${macd.macd.toFixed(4)}. Last 20: ${lastTicksAnalysis.under5Pct.toFixed(0)}% under. Expect downward movement.`,
+      stats: { rsi, macd: macd.macd, last20Pct: lastTicksAnalysis.under5Pct },
     });
   }
   
@@ -569,7 +574,7 @@ const generateEvenOddSignals = (
       entryPrice: 'EVEN',
       confidence,
       timeframe: '1m',
-      conditionMet: `Even digits at ${evenPct.toFixed(1)}% (${evenCount}/${total}). Strong even bias confirmed.`,
+      conditionMet: `Even digits at ${evenPct.toFixed(1)}% (${evenCount}/${total}). Strong even bias confirmed. Last 20: ${last20Analysis.over4Pct.toFixed(0)}% over.`,
       stats: { evenPct, oddPct, last20Pct: last20Analysis.over4Pct },
     });
   }
@@ -594,7 +599,7 @@ const generateEvenOddSignals = (
       entryPrice: 'ODD',
       confidence,
       timeframe: '1m',
-      conditionMet: `Odd digits at ${oddPct.toFixed(1)}% (${oddCount}/${total}). Strong odd bias confirmed.`,
+      conditionMet: `Odd digits at ${oddPct.toFixed(1)}% (${oddCount}/${total}). Strong odd bias confirmed. Last 20: ${last20Analysis.under5Pct.toFixed(0)}% under.`,
       stats: { evenPct, oddPct, last20Pct: last20Analysis.under5Pct },
     });
   }
@@ -632,7 +637,7 @@ const generateEvenOddSignals = (
   return signals;
 };
 
-// Generate Digit Match Signals
+// Generate Digit Match Signals (Top 3 digits)
 const generateDigitMatchSignals = (
   market: typeof ALL_MARKETS[0],
   ticks: number[]
@@ -644,12 +649,12 @@ const generateDigitMatchSignals = (
   const last20Analysis = analyzeLastTicks(ticks, 20);
   
   // Top 3 most frequent digits
-  const topDigits = digitFreq.sortedDigits.slice(0, 3);
+  const topDigits = [digitFreq.mostFrequent, digitFreq.secondMostFrequent, digitFreq.thirdMostFrequent];
   
   topDigits.forEach((digit, idx) => {
-    if (digit.percentage >= 12) {
+    if (digit.percentage >= 10) {
       let strength: SignalStrength = 'moderate';
-      let confidence = 70;
+      let confidence = 65;
       
       if (digit.percentage >= 18) {
         strength = 'critical';
@@ -657,7 +662,12 @@ const generateDigitMatchSignals = (
       } else if (digit.percentage >= 15) {
         strength = 'strong';
         confidence = 85;
+      } else if (digit.percentage >= 12) {
+        strength = 'moderate';
+        confidence = 75;
       }
+      
+      const rankText = idx === 0 ? 'most' : idx === 1 ? 'second most' : 'third most';
       
       signals.push({
         market,
@@ -667,7 +677,7 @@ const generateDigitMatchSignals = (
         entryPrice: `MATCH ${digit.digit}`,
         confidence,
         timeframe: '1m',
-        conditionMet: `Digit ${digit.digit} appears ${digit.percentage.toFixed(1)}% - ${idx === 0 ? 'most' : idx === 1 ? 'second most' : 'third most'} frequent. Strong match probability.`,
+        conditionMet: `Digit ${digit.digit} appears ${digit.percentage.toFixed(1)}% - ${rankText} frequent. Strong match probability.`,
         stats: {
           matchDigit: digit.digit,
           matchPct: digit.percentage,
@@ -693,6 +703,9 @@ export default function SignalPage() {
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [showAdvancedStats, setShowAdvancedStats] = useState(false);
   const [activeTab, setActiveTab] = useState<string>('all');
+  const [martingaleLevel, setMartingaleLevel] = useState(0);
+  const [balance, setBalance] = useState(1000);
+  const [stakePercent, setStakePercent] = useState(2);
   
   // Market data storage
   const ticksMap = useRef<Record<string, number[]>>({});
@@ -861,12 +874,21 @@ export default function SignalPage() {
     return activeSignals.filter(s => s.category === activeTab);
   }, [activeSignals, activeTab]);
 
+  // Calculate suggested stake based on balance and martingale
+  const suggestedStake = useMemo(() => {
+    const baseStake = (balance * stakePercent) / 100;
+    const multiplier = Math.pow(2, martingaleLevel);
+    return (baseStake * multiplier).toFixed(2);
+  }, [balance, stakePercent, martingaleLevel]);
+
   // Groups for filter
   const groups = [
     { value: 'recommended', label: '⭐ Recommended (Vol 25/50)' },
     { value: 'all', label: 'All Markets' },
     { value: 'vol', label: 'Volatility' },
     { value: 'jump', label: 'Jump' },
+    { value: 'bull', label: 'Bull' },
+    { value: 'bear', label: 'Bear' },
   ];
 
   // Signal Card Component
@@ -1058,6 +1080,48 @@ export default function SignalPage() {
             </div>
           </motion.div>
 
+          {/* Money Management Panel */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 p-3 bg-gradient-to-r from-emerald-500/10 to-rose-500/10 rounded-xl border border-border/50"
+          >
+            <div>
+              <label className="text-[10px] text-muted-foreground mb-1 block">Balance</label>
+              <Input
+                type="number"
+                value={balance}
+                onChange={(e) => setBalance(parseFloat(e.target.value) || 0)}
+                className="h-8 text-xs"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-muted-foreground mb-1 block">Risk %</label>
+              <Input
+                type="number"
+                value={stakePercent}
+                onChange={(e) => setStakePercent(parseFloat(e.target.value) || 2)}
+                className="h-8 text-xs"
+                min={1}
+                max={10}
+                step={0.5}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-muted-foreground mb-1 block">Martingale</label>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => setMartingaleLevel(Math.max(0, martingaleLevel - 1))} className="h-7 w-7">-</Button>
+                <span className="font-mono font-bold text-sm w-6 text-center">{martingaleLevel}</span>
+                <Button size="sm" variant="outline" onClick={() => setMartingaleLevel(Math.min(2, martingaleLevel + 1))} className="h-7 w-7">+</Button>
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] text-muted-foreground mb-1 block">Suggested Stake</label>
+              <div className="text-lg font-bold text-primary">${suggestedStake}</div>
+            </div>
+          </motion.div>
+
           {/* Stats Row */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -1105,6 +1169,10 @@ export default function SignalPage() {
               <BarChart3 className="w-3 h-3" />
               {getFilteredMarkets().length} Markets
             </Badge>
+            <Badge variant="outline" className="gap-1 bg-emerald-500/10 border-emerald-500/30 text-[10px]">
+              <Brain className="w-3 h-3" />
+              1000 Ticks Analysis
+            </Badge>
             <Button
               variant="ghost"
               size="sm"
@@ -1116,7 +1184,7 @@ export default function SignalPage() {
             </Button>
           </div>
           
-          <div className="flex gap-1">
+          <div className="flex gap-1 flex-wrap">
             {groups.map(group => (
               <Button
                 key={group.value}
@@ -1125,6 +1193,7 @@ export default function SignalPage() {
                 onClick={() => setSelectedGroup(group.value)}
                 className="text-[10px] h-7 px-2"
               >
+                {group.value === 'recommended' && <Star className="w-3 h-3 mr-1" />}
                 {group.label}
               </Button>
             ))}
@@ -1231,7 +1300,7 @@ export default function SignalPage() {
             <div>
               <div className="font-medium text-amber-400 mb-1">🎯 Digit Match (3)</div>
               <div className="text-muted-foreground">• Top 3 most frequent digits</div>
-              <div className="text-muted-foreground">• ≥12% frequency threshold</div>
+              <div className="text-muted-foreground">• ≥10% frequency threshold</div>
               <div className="text-muted-foreground">• Strong match probability</div>
             </div>
           </div>
