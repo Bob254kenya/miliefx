@@ -14,7 +14,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   TrendingUp, TrendingDown, Activity, BarChart3, ArrowUp, ArrowDown, Minus,
-  Target, ShieldAlert, Gauge, Volume2, VolumeX, Clock, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, Bot, RefreshCw, Globe,
+  Target, ShieldAlert, Gauge, Volume2, VolumeX, Clock, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, Bot, RefreshCw, Globe, Search,
 } from 'lucide-react';
 
 /* ── Markets ── */
@@ -364,6 +364,90 @@ export default function TradingChart() {
   });
   const [recoveryAttempts, setRecoveryAttempts] = useState(0);
   const [recoveryCurrentStake, setRecoveryCurrentStake] = useState(0);
+  const [recoveryConsecutiveLosses, setRecoveryConsecutiveLosses] = useState(0);
+  
+  // Recovery Market Scanner
+  const [recoveryScanMarkets, setRecoveryScanMarkets] = useState(false);
+  const [scanningMarkets, setScanningMarkets] = useState(false);
+  const [foundMarket, setFoundMarket] = useState<string | null>(null);
+  const [scanResults, setScanResults] = useState<{ symbol: string; name: string; matches: boolean }[]>([]);
+
+  // Function to scan all markets for pattern/digit condition
+  const scanMarketsForCondition = useCallback(async () => {
+    if (!recoveryStrategy.enabled) {
+      toast.warning('Please enable pattern/digit strategy first');
+      return;
+    }
+    
+    setScanningMarkets(true);
+    setScanResults([]);
+    toast.info('🔍 Scanning all markets for pattern/digit condition...');
+    
+    const results: { symbol: string; name: string; matches: boolean }[] = [];
+    let matchFound = false;
+    
+    for (const market of ALL_MARKETS) {
+      const ticks = getTickHistory(market.symbol);
+      if (ticks.length === 0) {
+        results.push({ symbol: market.symbol, name: market.name, matches: false });
+        continue;
+      }
+      
+      let conditionMet = false;
+      
+      if (recoveryStrategy.mode === 'pattern') {
+        const pattern = recoveryStrategy.patternInput.toUpperCase().replace(/[^EO]/g, '');
+        if (ticks.length >= pattern.length && pattern.length > 0) {
+          const recent = ticks.slice(-pattern.length);
+          let patternMatch = true;
+          for (let i = 0; i < pattern.length; i++) {
+            const expected = pattern[i];
+            const actual = recent[i] % 2 === 0 ? 'E' : 'O';
+            if (expected !== actual) {
+              patternMatch = false;
+              break;
+            }
+          }
+          conditionMet = patternMatch;
+        }
+      } else {
+        const win = parseInt(recoveryStrategy.digitWindow) || 3;
+        const comp = parseInt(recoveryStrategy.digitCompare);
+        if (ticks.length >= win) {
+          const recent = ticks.slice(-win);
+          conditionMet = recent.every(d => {
+            switch (recoveryStrategy.digitCondition) {
+              case '>': return d > comp;
+              case '<': return d < comp;
+              case '>=': return d >= comp;
+              case '<=': return d <= comp;
+              case '==': return d === comp;
+              case '!=': return d !== comp;
+              default: return false;
+            }
+          });
+        }
+      }
+      
+      results.push({ symbol: market.symbol, name: market.name, matches: conditionMet });
+      
+      if (conditionMet && !matchFound) {
+        matchFound = true;
+        setFoundMarket(market.symbol);
+        setRecoveryConfig(prev => ({ ...prev, recoverySymbol: market.symbol }));
+        toast.success(`✅ Found matching market: ${market.name} (${market.symbol})`);
+        if (voiceEnabled) speak(`Found matching market: ${market.name}`);
+      }
+    }
+    
+    setScanResults(results);
+    setScanningMarkets(false);
+    
+    if (!matchFound) {
+      toast.warning('No market matches the current pattern/digit condition');
+      setFoundMarket(null);
+    }
+  }, [recoveryStrategy, voiceEnabled, speak]);
 
   /* ── Load history + subscribe ── */
   useEffect(() => {
@@ -927,7 +1011,7 @@ export default function TradingChart() {
     finally { setIsTrading(false); }
   };
 
-  // Recovery Bot Execution
+  // Recovery Bot Execution with Martingale from Bot 1
   const executeRecoveryTrade = useCallback(async (stake: number): Promise<boolean> => {
     const ct = recoveryConfig.contractType;
     const params: any = { 
@@ -1036,8 +1120,15 @@ export default function TradingChart() {
             if (voiceEnabled) speak(`Loss detected. Activating recovery bot on ${recoveryConfig.recoverySymbol}`);
             setRecoveryActive(true);
             setRecoveryAttempts(1);
+            setRecoveryConsecutiveLosses(0);
             
-            const recoveryStake = parseFloat(bot1Config.stake) * parseFloat(bot1Config.multiplier);
+            // Use Bot 1's martingale settings for recovery stake
+            let recoveryStake = parseFloat(bot1Config.stake);
+            if (mart) {
+              recoveryStake = recoveryStake * mult;
+            } else {
+              recoveryStake = recoveryStake * 2; // Default 2x for recovery if martingale off
+            }
             setRecoveryCurrentStake(recoveryStake);
             
             // Check recovery strategy condition before trading
@@ -1062,15 +1153,23 @@ export default function TradingChart() {
               setRecoveryActive(false);
               setRecoveryAttempts(0);
               setRecoveryCurrentStake(0);
+              setRecoveryConsecutiveLosses(0);
               stake = baseStake;
             } else {
-              // Recovery lost - try again with martingale
-              const recoveryMultiplier = parseFloat(bot1Config.multiplier) || 2;
+              // Recovery lost - use Bot 1's martingale for subsequent attempts
+              setRecoveryConsecutiveLosses(1);
               let newAttempts = 2;
-              let recoveryStakeAmount = recoveryStake * recoveryMultiplier;
+              let recoveryStakeAmount = recoveryStake;
               let recoverySuccess = false;
               
               while (newAttempts <= 5 && !recoverySuccess && bot1RunningRef.current) {
+                // Apply martingale if enabled in Bot 1
+                if (mart) {
+                  recoveryStakeAmount = recoveryStakeAmount * mult;
+                } else {
+                  recoveryStakeAmount = recoveryStakeAmount * 2;
+                }
+                
                 setRecoveryAttempts(newAttempts);
                 setRecoveryCurrentStake(recoveryStakeAmount);
                 
@@ -1097,7 +1196,6 @@ export default function TradingChart() {
                   break;
                 }
                 
-                recoveryStakeAmount = recoveryStakeAmount * recoveryMultiplier;
                 newAttempts++;
                 await new Promise(r => setTimeout(r, 1000));
               }
@@ -1106,6 +1204,7 @@ export default function TradingChart() {
                 setRecoveryActive(false);
                 setRecoveryAttempts(0);
                 setRecoveryCurrentStake(0);
+                setRecoveryConsecutiveLosses(0);
                 stake = baseStake;
               } else {
                 toast.error(`❌ Recovery failed after 5 attempts! Stopping both bots.`);
@@ -1731,7 +1830,7 @@ export default function TradingChart() {
                   {recoveryActive ? (
                     <span>🔄 RECOVERY ACTIVE | Attempts: {recoveryAttempts}/5 | Stake: ${recoveryCurrentStake.toFixed(2)}</span>
                   ) : (
-                    <span>⚡ Will activate on main bot loss (Uses Main Bot duration, stake, martingale)</span>
+                    <span>⚡ Will activate on main bot loss | Uses Main Bot martingale: {bot1Config.martingale ? `ON (${bot1Config.multiplier}x)` : 'OFF'}</span>
                   )}
                 </div>
 
@@ -1750,6 +1849,52 @@ export default function TradingChart() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Market Scanner Toggle */}
+                <div className="flex items-center justify-between border-t border-border pt-2 mt-1">
+                  <div className="flex items-center gap-2">
+                    <Search className="w-3.5 h-3.5 text-primary" />
+                    <span className="text-[9px] text-foreground">Scan All Markets</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch 
+                      checked={recoveryScanMarkets} 
+                      onCheckedChange={(checked) => {
+                        setRecoveryScanMarkets(checked);
+                        if (checked) {
+                          scanMarketsForCondition();
+                        }
+                      }} 
+                      disabled={bot1Running || !recoveryStrategy.enabled}
+                    />
+                    <span className="text-[8px] text-muted-foreground">Auto-scan for matching markets</span>
+                  </div>
+                </div>
+
+                {scanningMarkets && (
+                  <div className="text-center py-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary mx-auto mb-1"></div>
+                    <span className="text-[8px] text-muted-foreground">Scanning all markets...</span>
+                  </div>
+                )}
+
+                {foundMarket && !scanningMarkets && (
+                  <div className="bg-success/10 border border-success/30 rounded p-1 text-center">
+                    <span className="text-[8px] text-success">✓ Found matching market: {foundMarket}</span>
+                  </div>
+                )}
+
+                {scanResults.length > 0 && !scanningMarkets && recoveryScanMarkets && (
+                  <div className="max-h-32 overflow-auto space-y-1 border border-border rounded p-1">
+                    <div className="text-[8px] font-semibold text-muted-foreground mb-1">Scan Results:</div>
+                    {scanResults.slice(0, 10).map((result, idx) => (
+                      <div key={idx} className={`flex justify-between text-[8px] p-1 rounded ${result.matches ? 'bg-success/10 text-success' : 'text-muted-foreground'}`}>
+                        <span>{result.name}</span>
+                        {result.matches && <Badge className="text-[6px] bg-success">MATCH</Badge>}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 <Select value={recoveryConfig.contractType} onValueChange={v => setRecoveryConfig(prev => ({ ...prev, contractType: v }))} disabled={bot1Running}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
@@ -1846,12 +1991,25 @@ export default function TradingChart() {
                       <div className="text-[8px] text-muted-foreground text-center py-1">
                         Recovery bot will wait for {recoveryStrategy.mode === 'pattern' ? 'pattern match' : 'digit condition'} before recovery trades
                       </div>
+                      
+                      {recoveryStrategy.enabled && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full text-[8px] h-6"
+                          onClick={scanMarketsForCondition}
+                          disabled={bot1Running || scanningMarkets}
+                        >
+                          <Search className="w-3 h-3 mr-1" />
+                          Scan Markets Now
+                        </Button>
+                      )}
                     </div>
                   )}
                 </div>
 
                 <div className="text-[8px] text-muted-foreground text-center py-1 bg-muted/30 rounded">
-                  ⚡ Uses Main Bot duration ({bot1Config.duration}{bot1Config.durationUnit}), stake, and martingale settings
+                  ⚡ Uses Main Bot duration ({bot1Config.duration}{bot1Config.durationUnit}), stake, and martingale: {bot1Config.martingale ? `ON (${bot1Config.multiplier}x)` : 'OFF'}
                 </div>
               </>
             )}
@@ -1972,4 +2130,4 @@ export default function TradingChart() {
       </div>
     </div>
   );
-    }
+                    }
