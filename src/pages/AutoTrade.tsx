@@ -14,7 +14,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   TrendingUp, TrendingDown, Activity, BarChart3, ArrowUp, ArrowDown, Minus,
-  Target, ShieldAlert, Gauge, Volume2, VolumeX, Clock, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, Bot, RefreshCw,
+  Target, ShieldAlert, Gauge, Volume2, VolumeX, Clock, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, Bot, RefreshCw, Globe,
 } from 'lucide-react';
 
 /* ── Markets ── */
@@ -343,17 +343,24 @@ export default function TradingChart() {
     digitWindow: '3',
   });
 
+  // Global Strategy Toggle
+  const [globalStrategyEnabled, setGlobalStrategyEnabled] = useState(false);
+
   // Recovery Bot (Bot 2)
   const [recoveryEnabled, setRecoveryEnabled] = useState(false);
   const [recoveryActive, setRecoveryActive] = useState(false);
   const [recoveryConfig, setRecoveryConfig] = useState({
     recoverySymbol: 'R_50',
-    stake: '2.00',
-    multiplier: '2.0',
     contractType: 'CALL',
     prediction: '5',
-    duration: '1',
-    durationUnit: 't',
+  });
+  const [recoveryStrategy, setRecoveryStrategy] = useState<BotStrategy>({
+    enabled: false,
+    mode: 'pattern',
+    patternInput: '',
+    digitCondition: '==',
+    digitCompare: '5',
+    digitWindow: '3',
   });
   const [recoveryAttempts, setRecoveryAttempts] = useState(0);
   const [recoveryCurrentStake, setRecoveryCurrentStake] = useState(0);
@@ -493,13 +500,76 @@ export default function TradingChart() {
   }, [bot1Config.botSymbol, bot1Strategy.digitCondition, bot1Strategy.digitCompare, bot1Strategy.digitWindow]);
 
   const checkStrategyCondition1 = useCallback((): boolean => {
-    if (!bot1Strategy.enabled) return true;
-    if (bot1Strategy.mode === 'pattern') {
-      return checkPatternMatch1();
+    const strategyToUse = globalStrategyEnabled ? (bot1Strategy.enabled ? bot1Strategy : recoveryStrategy) : bot1Strategy;
+    if (!strategyToUse.enabled) return true;
+    if (strategyToUse.mode === 'pattern') {
+      const pattern = strategyToUse.patternInput.toUpperCase().replace(/[^EO]/g, '');
+      const ticks = getTickHistory(bot1Config.botSymbol);
+      if (ticks.length < pattern.length) return false;
+      const recent = ticks.slice(-pattern.length);
+      for (let i = 0; i < pattern.length; i++) {
+        const expected = pattern[i];
+        const actual = recent[i] % 2 === 0 ? 'E' : 'O';
+        if (expected !== actual) return false;
+      }
+      return true;
     } else {
-      return checkDigitCondition1();
+      const win = parseInt(strategyToUse.digitWindow) || 3;
+      const comp = parseInt(strategyToUse.digitCompare);
+      const ticks = getTickHistory(bot1Config.botSymbol);
+      if (ticks.length < win) return false;
+      const recent = ticks.slice(-win);
+      return recent.every(d => {
+        switch (strategyToUse.digitCondition) {
+          case '>': return d > comp;
+          case '<': return d < comp;
+          case '>=': return d >= comp;
+          case '<=': return d <= comp;
+          case '==': return d === comp;
+          case '!=': return d !== comp;
+          default: return false;
+        }
+      });
     }
-  }, [bot1Strategy.enabled, bot1Strategy.mode, checkPatternMatch1, checkDigitCondition1]);
+  }, [bot1Config.botSymbol, bot1Strategy, recoveryStrategy, globalStrategyEnabled]);
+
+  // Strategy Helpers for Recovery Bot
+  const cleanPatternRecovery = recoveryStrategy.patternInput.toUpperCase().replace(/[^EO]/g, '');
+  const patternValidRecovery = cleanPatternRecovery.length >= 2;
+
+  const checkRecoveryStrategyCondition = useCallback((): boolean => {
+    const strategyToUse = globalStrategyEnabled ? (recoveryStrategy.enabled ? recoveryStrategy : bot1Strategy) : recoveryStrategy;
+    if (!strategyToUse.enabled) return true;
+    if (strategyToUse.mode === 'pattern') {
+      const pattern = strategyToUse.patternInput.toUpperCase().replace(/[^EO]/g, '');
+      const ticks = getTickHistory(recoveryConfig.recoverySymbol);
+      if (ticks.length < pattern.length) return false;
+      const recent = ticks.slice(-pattern.length);
+      for (let i = 0; i < pattern.length; i++) {
+        const expected = pattern[i];
+        const actual = recent[i] % 2 === 0 ? 'E' : 'O';
+        if (expected !== actual) return false;
+      }
+      return true;
+    } else {
+      const win = parseInt(strategyToUse.digitWindow) || 3;
+      const comp = parseInt(strategyToUse.digitCompare);
+      const ticks = getTickHistory(recoveryConfig.recoverySymbol);
+      if (ticks.length < win) return false;
+      const recent = ticks.slice(-win);
+      return recent.every(d => {
+        switch (strategyToUse.digitCondition) {
+          case '>': return d > comp;
+          case '<': return d < comp;
+          case '>=': return d >= comp;
+          case '<=': return d <= comp;
+          case '==': return d === comp;
+          case '!=': return d !== comp;
+          default: return false;
+        }
+      });
+    }
+  }, [recoveryConfig.recoverySymbol, recoveryStrategy, bot1Strategy, globalStrategyEnabled]);
 
   /* ── Canvas Chart ── */
   const candleEndIndices = useMemo(() => mapCandlesToPriceIndices(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
@@ -863,8 +933,8 @@ export default function TradingChart() {
     const params: any = { 
       contract_type: ct, 
       symbol: recoveryConfig.recoverySymbol, 
-      duration: parseInt(recoveryConfig.duration), 
-      duration_unit: recoveryConfig.durationUnit, 
+      duration: parseInt(bot1Config.duration), 
+      duration_unit: bot1Config.durationUnit, 
       basis: 'stake', 
       amount: stake 
     };
@@ -900,7 +970,7 @@ export default function TradingChart() {
       toast.error(`Recovery trade error: ${err.message}`);
       return false;
     }
-  }, [recoveryConfig, voiceEnabled, speak]);
+  }, [recoveryConfig, bot1Config.duration, bot1Config.durationUnit, voiceEnabled, speak]);
 
   // Bot 1 Execution with Recovery Trigger
   const startBot1 = useCallback(async () => {
@@ -927,7 +997,8 @@ export default function TradingChart() {
         break;
       }
 
-      if (bot1Strategy.enabled) {
+      // Check strategy condition
+      if (globalStrategyEnabled ? (bot1Strategy.enabled || recoveryStrategy.enabled) : bot1Strategy.enabled) {
         let conditionMet = false;
         while (bot1RunningRef.current && !conditionMet) {
           conditionMet = checkStrategyCondition1();
@@ -966,8 +1037,20 @@ export default function TradingChart() {
             setRecoveryActive(true);
             setRecoveryAttempts(1);
             
-            const recoveryStake = parseFloat(recoveryConfig.stake) || parseFloat(bot1Config.stake) * 2;
+            const recoveryStake = parseFloat(bot1Config.stake) * parseFloat(bot1Config.multiplier);
             setRecoveryCurrentStake(recoveryStake);
+            
+            // Check recovery strategy condition before trading
+            if (globalStrategyEnabled ? (recoveryStrategy.enabled || bot1Strategy.enabled) : recoveryStrategy.enabled) {
+              let recoveryConditionMet = false;
+              while (bot1RunningRef.current && !recoveryConditionMet) {
+                recoveryConditionMet = checkRecoveryStrategyCondition();
+                if (!recoveryConditionMet) {
+                  await new Promise(r => setTimeout(r, 500));
+                }
+              }
+              if (!bot1RunningRef.current) break;
+            }
             
             // Execute recovery trade
             const recoveryWon = await executeRecoveryTrade(recoveryStake);
@@ -981,8 +1064,8 @@ export default function TradingChart() {
               setRecoveryCurrentStake(0);
               stake = baseStake;
             } else {
-              // Recovery lost - try again with martingale if enabled
-              const recoveryMultiplier = parseFloat(recoveryConfig.multiplier) || 2;
+              // Recovery lost - try again with martingale
+              const recoveryMultiplier = parseFloat(bot1Config.multiplier) || 2;
               let newAttempts = 2;
               let recoveryStakeAmount = recoveryStake * recoveryMultiplier;
               let recoverySuccess = false;
@@ -993,6 +1076,18 @@ export default function TradingChart() {
                 
                 toast.warning(`🔄 Recovery Attempt ${newAttempts}/5 - Stake: $${recoveryStakeAmount.toFixed(2)} on ${recoveryConfig.recoverySymbol}`);
                 if (voiceEnabled) speak(`Recovery attempt ${newAttempts}. Stake ${recoveryStakeAmount.toFixed(2)} dollars`);
+                
+                // Check recovery strategy condition before each attempt
+                if (globalStrategyEnabled ? (recoveryStrategy.enabled || bot1Strategy.enabled) : recoveryStrategy.enabled) {
+                  let recoveryConditionMet = false;
+                  while (bot1RunningRef.current && !recoveryConditionMet) {
+                    recoveryConditionMet = checkRecoveryStrategyCondition();
+                    if (!recoveryConditionMet) {
+                      await new Promise(r => setTimeout(r, 500));
+                    }
+                  }
+                  if (!bot1RunningRef.current) break;
+                }
                 
                 recoverySuccess = await executeRecoveryTrade(recoveryStakeAmount);
                 
@@ -1038,7 +1133,7 @@ export default function TradingChart() {
     setRecoveryActive(false);
     setRecoveryAttempts(0);
     setBot1Stats(prev => ({ ...prev, trades, wins, losses, pnl }));
-  }, [isAuthorized, bot1Config, voiceEnabled, speak, bot1Strategy.enabled, checkStrategyCondition1, recoveryEnabled, recoveryConfig, executeRecoveryTrade]);
+  }, [isAuthorized, bot1Config, voiceEnabled, speak, bot1Strategy, recoveryStrategy, globalStrategyEnabled, checkStrategyCondition1, checkRecoveryStrategyCondition, recoveryEnabled, recoveryConfig, executeRecoveryTrade]);
 
   const stopBot1 = useCallback(() => { 
     bot1RunningRef.current = false; 
@@ -1276,6 +1371,24 @@ export default function TradingChart() {
             </div>
             {voiceEnabled && (
               <p className="text-[9px] text-muted-foreground mt-1">🔊 AI will announce trade results</p>
+            )}
+          </div>
+
+          {/* Global Strategy Toggle */}
+          <div className="bg-card border border-warning/30 rounded-xl p-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
+                <Globe className="w-3.5 h-3.5 text-warning" /> Global Strategy
+              </h3>
+              <div className="flex items-center gap-2">
+                <Switch checked={globalStrategyEnabled} onCheckedChange={setGlobalStrategyEnabled} disabled={bot1Running} />
+                <span className="text-[8px] text-muted-foreground">Apply to all markets</span>
+              </div>
+            </div>
+            {globalStrategyEnabled && (
+              <p className="text-[8px] text-warning mt-1">
+                ⚡ Strategy from {bot1Strategy.enabled ? 'Main Bot' : 'Recovery Bot'} will be used for both markets
+              </p>
             )}
           </div>
 
@@ -1618,7 +1731,7 @@ export default function TradingChart() {
                   {recoveryActive ? (
                     <span>🔄 RECOVERY ACTIVE | Attempts: {recoveryAttempts}/5 | Stake: ${recoveryCurrentStake.toFixed(2)}</span>
                   ) : (
-                    <span>⚡ Will activate on main bot loss</span>
+                    <span>⚡ Will activate on main bot loss (Uses Main Bot duration, stake, martingale)</span>
                   )}
                 </div>
 
@@ -1657,40 +1770,88 @@ export default function TradingChart() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-[9px] text-muted-foreground">Recovery Stake ($)</label>
-                    <Input type="number" min="0.35" step="0.01" value={recoveryConfig.stake}
-                      onChange={e => setRecoveryConfig(prev => ({ ...prev, stake: e.target.value }))} disabled={bot1Running}
-                      className="h-7 text-xs" />
+                {/* Recovery Strategy Section */}
+                <div className="border-t border-border pt-2 mt-1">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-[10px] font-semibold text-warning flex items-center gap-1">
+                      <Zap className="w-3 h-3" /> Pattern/Digit Strategy
+                    </label>
+                    <Switch checked={recoveryStrategy.enabled} onCheckedChange={(v) => setRecoveryStrategy(prev => ({ ...prev, enabled: v }))} disabled={bot1Running} />
                   </div>
-                  <div>
-                    <label className="text-[9px] text-muted-foreground">Recovery Multiplier</label>
-                    <Input type="number" min="1.1" step="0.1" value={recoveryConfig.multiplier}
-                      onChange={e => setRecoveryConfig(prev => ({ ...prev, multiplier: e.target.value }))} disabled={bot1Running}
-                      className="h-7 text-xs" />
-                  </div>
-                  <div>
-                    <label className="text-[9px] text-muted-foreground">Duration</label>
-                    <Input type="number" min="1" value={recoveryConfig.duration}
-                      onChange={e => setRecoveryConfig(prev => ({ ...prev, duration: e.target.value }))} disabled={bot1Running}
-                      className="h-7 text-xs" />
-                  </div>
-                  <div>
-                    <label className="text-[9px] text-muted-foreground">Unit</label>
-                    <Select value={recoveryConfig.durationUnit} onValueChange={v => setRecoveryConfig(prev => ({ ...prev, durationUnit: v }))} disabled={bot1Running}>
-                      <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="t">Ticks</SelectItem>
-                        <SelectItem value="s">Seconds</SelectItem>
-                        <SelectItem value="m">Minutes</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+
+                  {recoveryStrategy.enabled && (
+                    <div className="space-y-2">
+                      <div className="flex gap-1">
+                        <Button
+                          size="sm"
+                          variant={recoveryStrategy.mode === 'pattern' ? 'default' : 'outline'}
+                          className="text-[9px] h-6 px-2 flex-1"
+                          onClick={() => setRecoveryStrategy(prev => ({ ...prev, mode: 'pattern' }))}
+                          disabled={bot1Running}
+                        >
+                          Pattern (E/O)
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant={recoveryStrategy.mode === 'digit' ? 'default' : 'outline'}
+                          className="text-[9px] h-6 px-2 flex-1"
+                          onClick={() => setRecoveryStrategy(prev => ({ ...prev, mode: 'digit' }))}
+                          disabled={bot1Running}
+                        >
+                          Digit Condition 
+                        </Button>
+                      </div>
+
+                      {recoveryStrategy.mode === 'pattern' ? (
+                        <div>
+                          <label className="text-[8px] text-muted-foreground">Pattern (E=Even, O=Odd)</label>
+                          <Textarea
+                            placeholder="e.g., EEEOE or OOEEO"
+                            value={recoveryStrategy.patternInput}
+                            onChange={e => setRecoveryStrategy(prev => ({ ...prev, patternInput: e.target.value.toUpperCase().replace(/[^EO]/g, '') }))}
+                            disabled={bot1Running}
+                            className="h-12 text-[10px] font-mono min-h-0 mt-1"
+                          />
+                          <div className={`text-[9px] font-mono mt-1 ${patternValidRecovery ? 'text-profit' : 'text-loss'}`}>
+                            {cleanPatternRecovery.length === 0 ? 'Enter pattern (min 2 characters)' :
+                              patternValidRecovery ? `✓ Pattern: ${cleanPatternRecovery}` : `✗ Need at least 2 characters (E/O)`}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-3 gap-1">
+                          <div>
+                            <label className="text-[8px] text-muted-foreground">If last </label>
+                            <Input type="number" min="1" max="50" value={recoveryStrategy.digitWindow}
+                              onChange={e => setRecoveryStrategy(prev => ({ ...prev, digitWindow: e.target.value }))} disabled={bot1Running}
+                              className="h-7 text-[10px]" />
+                          </div>
+                          <div>
+                            <label className="text-[8px] text-muted-foreground">ticks are </label>
+                            <Select value={recoveryStrategy.digitCondition} onValueChange={(v) => setRecoveryStrategy(prev => ({ ...prev, digitCondition: v }))} disabled={bot1Running}>
+                              <SelectTrigger className="h-7 text-[10px]"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {['==', '!=', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <label className="text-[8px] text-muted-foreground">Digit</label>
+                            <Input type="number" min="0" max="9" value={recoveryStrategy.digitCompare}
+                              onChange={e => setRecoveryStrategy(prev => ({ ...prev, digitCompare: e.target.value }))} disabled={bot1Running}
+                              className="h-7 text-[10px]" />
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="text-[8px] text-muted-foreground text-center py-1">
+                        Recovery bot will wait for {recoveryStrategy.mode === 'pattern' ? 'pattern match' : 'digit condition'} before recovery trades
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="text-[8px] text-muted-foreground text-center py-1 bg-muted/30 rounded">
-                  When main bot loses, switches to {recoveryConfig.recoverySymbol} with {recoveryConfig.multiplier}x martingale recovery
+                  ⚡ Uses Main Bot duration ({bot1Config.duration}{bot1Config.durationUnit}), stake, and martingale settings
                 </div>
               </>
             )}
@@ -1811,4 +1972,4 @@ export default function TradingChart() {
       </div>
     </div>
   );
-  }
+    }
