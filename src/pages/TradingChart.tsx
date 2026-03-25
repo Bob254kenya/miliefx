@@ -26,7 +26,9 @@ import {
   Pause,
   RefreshCw,
   Flame,
-  AlertTriangle
+  AlertTriangle,
+  BarChart,
+  PieChart
 } from 'lucide-react';
 
 // Market configurations
@@ -60,7 +62,7 @@ const getLastDigit = (price: number): number => {
   return parseInt(numStr.slice(-1), 10);
 };
 
-// Analyze digit percentages
+// Analyze digit percentages with full distribution
 const analyzeDigits = (prices: number[]) => {
   const digits = prices.map(p => getLastDigit(p));
   const frequency: Record<number, number> = {};
@@ -71,7 +73,23 @@ const analyzeDigits = (prices: number[]) => {
   for (let i = 0; i <= 9; i++) {
     percentages[i] = (frequency[i] / total) * 100;
   }
-  return { frequency, percentages };
+  
+  // Sort digits by frequency
+  const sortedDigits = Object.entries(frequency)
+    .map(([digit, count]) => ({ digit: parseInt(digit), count, percentage: percentages[parseInt(digit)] }))
+    .sort((a, b) => b.count - a.count);
+  
+  return { 
+    frequency, 
+    percentages,
+    mostAppearing: sortedDigits[0]?.digit ?? 0,
+    mostAppearingPct: sortedDigits[0]?.percentage ?? 0,
+    secondMostAppearing: sortedDigits[1]?.digit ?? 0,
+    secondMostAppearingPct: sortedDigits[1]?.percentage ?? 0,
+    leastAppearing: sortedDigits[sortedDigits.length - 1]?.digit ?? 0,
+    leastAppearingPct: sortedDigits[sortedDigits.length - 1]?.percentage ?? 0,
+    allDigits: sortedDigits
+  };
 };
 
 // Calculate digit distribution percentages for ranges
@@ -81,17 +99,22 @@ const getRangePercentages = (prices: number[]) => {
   const lowRange = digits.filter(d => d >= 0 && d <= 3).length;
   const midRange = digits.filter(d => d >= 4 && d <= 5).length;
   const highRange = digits.filter(d => d >= 6 && d <= 9).length;
+  const under5 = digits.filter(d => d < 5).length;
+  const over5 = digits.filter(d => d >= 5).length;
+  
   return {
     lowPct: (lowRange / total) * 100,
     midPct: (midRange / total) * 100,
     highPct: (highRange / total) * 100,
     oddPct: (digits.filter(d => d % 2 === 1).length / total) * 100,
     evenPct: (digits.filter(d => d % 2 === 0).length / total) * 100,
+    under5Pct: (under5 / total) * 100,
+    over5Pct: (over5 / total) * 100,
   };
 };
 
 // Signal types
-type SignalType = 'over' | 'under' | 'odd' | 'even' | 'over_strong' | 'under_strong';
+type SignalType = 'over' | 'under' | 'odd' | 'even' | 'over_strong' | 'under_strong' | 'over_digit_based' | 'under_digit_based';
 type SignalStrength = 'strong' | 'moderate' | 'weak' | 'critical';
 
 interface Signal {
@@ -104,6 +127,14 @@ interface Signal {
   timeframe: string;
   conditionMet: string;
   priority: number; // 1-6 for ordering
+  digitAnalysis?: {
+    mostAppearing: number;
+    secondMostAppearing: number;
+    leastAppearing: number;
+    mostAppearingPct: number;
+    secondMostAppearingPct: number;
+    leastAppearingPct: number;
+  };
 }
 
 interface SignalCardProps {
@@ -117,9 +148,11 @@ const SignalCard: React.FC<SignalCardProps> = ({ signal, index }) => {
     switch (signal.type) {
       case 'over':
       case 'over_strong':
+      case 'over_digit_based':
         return <ArrowUp className="w-5 h-5" />;
       case 'under':
       case 'under_strong':
+      case 'under_digit_based':
         return <ArrowDown className="w-5 h-5" />;
       case 'odd':
         return <Activity className="w-5 h-5" />;
@@ -134,9 +167,11 @@ const SignalCard: React.FC<SignalCardProps> = ({ signal, index }) => {
     switch (signal.type) {
       case 'over':
       case 'over_strong':
+      case 'over_digit_based':
         return 'from-emerald-500 to-green-600';
       case 'under':
       case 'under_strong':
+      case 'under_digit_based':
         return 'from-rose-500 to-red-600';
       case 'odd':
         return 'from-amber-500 to-orange-600';
@@ -177,9 +212,11 @@ const SignalCard: React.FC<SignalCardProps> = ({ signal, index }) => {
     switch (signal.type) {
       case 'over':
       case 'over_strong':
+      case 'over_digit_based':
         return 'OVER';
       case 'under':
       case 'under_strong':
+      case 'under_digit_based':
         return 'UNDER';
       case 'odd':
         return 'ODD';
@@ -201,9 +238,6 @@ const SignalCard: React.FC<SignalCardProps> = ({ signal, index }) => {
       <Card className={`overflow-hidden border-border/50 bg-gradient-to-br from-card/80 to-card/40 backdrop-blur-sm hover:shadow-xl transition-all duration-300 ${
         signal.strength === 'critical' ? 'ring-2 ring-red-500/50 shadow-lg shadow-red-500/20' : ''
       }`}>
-        {/* Animated gradient border */}
-        <div className={`absolute inset-0 bg-gradient-to-r ${getSignalColor()} opacity-0 group-hover:opacity-20 transition-opacity duration-500`} />
-        
         <CardContent className="p-4 relative">
           <div className="flex items-start justify-between mb-3">
             <div className="flex items-center gap-3">
@@ -237,7 +271,7 @@ const SignalCard: React.FC<SignalCardProps> = ({ signal, index }) => {
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground capitalize">
                 {getDisplayType()} Signal
-                {signal.type.includes('strong') && ' 🔥'}
+                {signal.type.includes('digit_based') && ' (Digit Analysis)'}
               </span>
               <span className="font-mono font-bold text-lg">{signal.percentage.toFixed(1)}%</span>
             </div>
@@ -259,6 +293,26 @@ const SignalCard: React.FC<SignalCardProps> = ({ signal, index }) => {
               )}
               <span className="text-muted-foreground">{signal.conditionMet}</span>
             </div>
+
+            {signal.digitAnalysis && (
+              <div className="grid grid-cols-3 gap-1 text-[10px] bg-muted/20 rounded-lg p-2">
+                <div className="text-center">
+                  <div className="text-muted-foreground">Most</div>
+                  <div className="font-mono font-bold text-emerald-400">{signal.digitAnalysis.mostAppearing}</div>
+                  <div className="text-[8px]">{signal.digitAnalysis.mostAppearingPct.toFixed(1)}%</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-muted-foreground">2nd Most</div>
+                  <div className="font-mono font-bold text-amber-400">{signal.digitAnalysis.secondMostAppearing}</div>
+                  <div className="text-[8px]">{signal.digitAnalysis.secondMostAppearingPct.toFixed(1)}%</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-muted-foreground">Least</div>
+                  <div className="font-mono font-bold text-rose-400">{signal.digitAnalysis.leastAppearing}</div>
+                  <div className="text-[8px]">{signal.digitAnalysis.leastAppearingPct.toFixed(1)}%</div>
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center justify-between pt-2">
               <div className="flex items-center gap-1 text-xs">
@@ -293,25 +347,33 @@ export default function SignalPage() {
 
   // Simulate market data (in production, this would come from Deriv API)
   const generateMarketData = useCallback((market: typeof VOLATILITY_MARKETS[0]) => {
-    // Simulate price movement based on volatility
     const basePrice = 100 + Math.random() * 50;
     const volatilityFactor = market.baseVol / 50;
     const prices: number[] = [];
+    // Create patterns that favor certain digits
     for (let i = 0; i < 100; i++) {
       const change = (Math.random() - 0.5) * volatilityFactor * 2;
-      const price = basePrice + change * i;
+      let price = basePrice + change * i;
+      // Introduce digit bias for testing
+      if (Math.random() > 0.7) {
+        // Add bias to create patterns
+        const bias = Math.random();
+        if (bias > 0.6) price += 0.01 * market.baseVol;
+        else if (bias < 0.4) price -= 0.01 * market.baseVol;
+      }
       prices.push(price);
     }
     return prices;
   }, []);
 
-  // Check signal conditions for a market with enhanced over/under detection
+  // Enhanced signal detection with digit-based over/under analysis
   const checkMarketSignals = useCallback((market: typeof VOLATILITY_MARKETS[0], prices: number[]) => {
-    const signals: Omit<Signal, 'id' | 'timestamp' | 'priority'>[] = [];
-    const { lowPct, highPct, oddPct, evenPct } = getRangePercentages(prices);
+    const signals: Omit<Signal, 'id' | 'timestamp' | 'priority' | 'digitAnalysis'>[] = [];
+    const { lowPct, highPct, oddPct, evenPct, under5Pct, over5Pct } = getRangePercentages(prices);
+    const digitAnalysis = analyzeDigits(prices);
     
-    // Enhanced Over Signal Detection (0-3 digits)
-    if (lowPct <= 15) { // Threshold extended to include "nearly meant"
+    // ========== OVER SIGNAL DETECTION (Digits 0-3) ==========
+    if (lowPct <= 15) {
       let strength: SignalStrength;
       let type: SignalType;
       let percentage: number;
@@ -349,8 +411,8 @@ export default function SignalPage() {
       });
     }
     
-    // Enhanced Under Signal Detection (6-9 digits)
-    if (highPct <= 15) { // Threshold extended to include "nearly meant"
+    // ========== UNDER SIGNAL DETECTION (Digits 6-9) ==========
+    if (highPct <= 15) {
       let strength: SignalStrength;
       let type: SignalType;
       let percentage: number;
@@ -388,8 +450,135 @@ export default function SignalPage() {
       });
     }
     
-    // Odd Signal Detection
-    if (oddPct >= 52) { // Lowered threshold for "nearly meant"
+    // ========== DIGIT-BASED OVER SIGNAL ==========
+    // Condition: Most appearing digit, second most appearing digit, and least appearing digit are all > 5 (over digits)
+    const mostDigit = digitAnalysis.mostAppearing;
+    const secondMostDigit = digitAnalysis.secondMostAppearing;
+    const leastDigit = digitAnalysis.leastAppearing;
+    
+    const allThreeDigitsAreOver = mostDigit >= 5 && secondMostDigit >= 5 && leastDigit >= 5;
+    const allThreeDigitsAreUnder = mostDigit < 5 && secondMostDigit < 5 && leastDigit < 5;
+    
+    if (allThreeDigitsAreOver) {
+      const avgPercentage = (digitAnalysis.mostAppearingPct + digitAnalysis.secondMostAppearingPct + digitAnalysis.leastAppearingPct) / 3;
+      let strength: SignalStrength;
+      let conditionMet: string;
+      
+      if (avgPercentage > 15) {
+        strength = 'critical';
+        conditionMet = `CRITICAL: Most (${mostDigit}), 2nd (${secondMostDigit}), Least (${leastDigit}) are ALL OVER digits (≥5)! Strong over confirmation! 🔥`;
+      } else if (avgPercentage > 12) {
+        strength = 'strong';
+        conditionMet = `STRONG: Most (${mostDigit}), 2nd (${secondMostDigit}), Least (${leastDigit}) are all over digits (≥5) → Over bias confirmed`;
+      } else if (avgPercentage > 10) {
+        strength = 'moderate';
+        conditionMet = `MODERATE: Digit analysis shows over bias - most (${mostDigit}), 2nd (${secondMostDigit}), least (${leastDigit}) all ≥5`;
+      } else {
+        strength = 'weak';
+        conditionMet = `WEAK: Digit pattern leaning over - most (${mostDigit}), 2nd (${secondMostDigit}), least (${leastDigit}) are over digits`;
+      }
+      
+      signals.push({
+        market,
+        type: 'over_digit_based',
+        strength,
+        percentage: avgPercentage,
+        timeframe: '1m',
+        conditionMet,
+      });
+    }
+    
+    // ========== DIGIT-BASED UNDER SIGNAL ==========
+    // Condition: Most appearing digit, second most appearing digit, and least appearing digit are all < 5 (under digits)
+    if (allThreeDigitsAreUnder) {
+      const avgPercentage = (digitAnalysis.mostAppearingPct + digitAnalysis.secondMostAppearingPct + digitAnalysis.leastAppearingPct) / 3;
+      let strength: SignalStrength;
+      let conditionMet: string;
+      
+      if (avgPercentage > 15) {
+        strength = 'critical';
+        conditionMet = `CRITICAL: Most (${mostDigit}), 2nd (${secondMostDigit}), Least (${leastDigit}) are ALL UNDER digits (<5)! Strong under confirmation! 🔥`;
+      } else if (avgPercentage > 12) {
+        strength = 'strong';
+        conditionMet = `STRONG: Most (${mostDigit}), 2nd (${secondMostDigit}), Least (${leastDigit}) are all under digits (<5) → Under bias confirmed`;
+      } else if (avgPercentage > 10) {
+        strength = 'moderate';
+        conditionMet = `MODERATE: Digit analysis shows under bias - most (${mostDigit}), 2nd (${secondMostDigit}), least (${leastDigit}) all <5`;
+      } else {
+        strength = 'weak';
+        conditionMet = `WEAK: Digit pattern leaning under - most (${mostDigit}), 2nd (${secondMostDigit}), least (${leastDigit}) are under digits`;
+      }
+      
+      signals.push({
+        market,
+        type: 'under_digit_based',
+        strength,
+        percentage: avgPercentage,
+        timeframe: '1m',
+        conditionMet,
+      });
+    }
+    
+    // ========== UNDER 5 SIGNAL (Condition: if under digit 5 under signal) ==========
+    if (under5Pct >= 55) {
+      let strength: SignalStrength;
+      let conditionMet: string;
+      
+      if (under5Pct >= 70) {
+        strength = 'critical';
+        conditionMet = `CRITICAL: Digits under 5 at ${under5Pct.toFixed(1)}% (70%+) → Extreme under 5 bias! 🔥`;
+      } else if (under5Pct >= 60) {
+        strength = 'strong';
+        conditionMet = `STRONG: Digits under 5 at ${under5Pct.toFixed(1)}% (60%+) → Strong under 5 bias`;
+      } else if (under5Pct >= 55) {
+        strength = 'moderate';
+        conditionMet = `MODERATE: Digits under 5 at ${under5Pct.toFixed(1)}% (55%+) → Under 5 bias confirmed`;
+      } else {
+        strength = 'weak';
+        conditionMet = `WEAK: Digits under 5 at ${under5Pct.toFixed(1)}% → Approaching under 5 threshold`;
+      }
+      
+      signals.push({
+        market,
+        type: 'under',
+        strength,
+        percentage: under5Pct,
+        timeframe: '1m',
+        conditionMet: `UNDER 5 SIGNAL: ${conditionMet}`,
+      });
+    }
+    
+    // ========== OVER 5 SIGNAL (Complementary signal) ==========
+    if (over5Pct >= 55) {
+      let strength: SignalStrength;
+      let conditionMet: string;
+      
+      if (over5Pct >= 70) {
+        strength = 'critical';
+        conditionMet = `CRITICAL: Digits over 5 at ${over5Pct.toFixed(1)}% (70%+) → Extreme over 5 bias! 🔥`;
+      } else if (over5Pct >= 60) {
+        strength = 'strong';
+        conditionMet = `STRONG: Digits over 5 at ${over5Pct.toFixed(1)}% (60%+) → Strong over 5 bias`;
+      } else if (over5Pct >= 55) {
+        strength = 'moderate';
+        conditionMet = `MODERATE: Digits over 5 at ${over5Pct.toFixed(1)}% (55%+) → Over 5 bias confirmed`;
+      } else {
+        strength = 'weak';
+        conditionMet = `WEAK: Digits over 5 at ${over5Pct.toFixed(1)}% → Approaching over 5 threshold`;
+      }
+      
+      signals.push({
+        market,
+        type: 'over',
+        strength,
+        percentage: over5Pct,
+        timeframe: '1m',
+        conditionMet: `OVER 5 SIGNAL: ${conditionMet}`,
+      });
+    }
+    
+    // ========== ODD/EVEN Signals ==========
+    if (oddPct >= 52) {
       let strength: SignalStrength;
       let conditionMet: string;
       
@@ -404,7 +593,7 @@ export default function SignalPage() {
         conditionMet = `MODERATE: Odd digits at ${oddPct.toFixed(1)}% (55%+) → Odd bias confirmed`;
       } else {
         strength = 'weak';
-        conditionMet = `WEAK: Odd digits at ${oddPct.toFixed(1)}% (nearly 55%) → Odd bias approaching`;
+        conditionMet = `WEAK: Odd digits at ${oddPct.toFixed(1)}% → Approaching odd threshold`;
       }
       
       signals.push({
@@ -417,8 +606,7 @@ export default function SignalPage() {
       });
     }
     
-    // Even Signal Detection
-    if (evenPct >= 52) { // Lowered threshold for "nearly meant"
+    if (evenPct >= 52) {
       let strength: SignalStrength;
       let conditionMet: string;
       
@@ -433,7 +621,7 @@ export default function SignalPage() {
         conditionMet = `MODERATE: Even digits at ${evenPct.toFixed(1)}% (55%+) → Even bias confirmed`;
       } else {
         strength = 'weak';
-        conditionMet = `WEAK: Even digits at ${evenPct.toFixed(1)}% (nearly 55%) → Even bias approaching`;
+        conditionMet = `WEAK: Even digits at ${evenPct.toFixed(1)}% → Approaching even threshold`;
       }
       
       signals.push({
@@ -446,13 +634,28 @@ export default function SignalPage() {
       });
     }
     
-    return signals;
+    // Attach digit analysis to each signal
+    return signals.map(signal => ({
+      ...signal,
+      digitAnalysis: {
+        mostAppearing: digitAnalysis.mostAppearing,
+        secondMostAppearing: digitAnalysis.secondMostAppearing,
+        leastAppearing: digitAnalysis.leastAppearing,
+        mostAppearingPct: digitAnalysis.mostAppearingPct,
+        secondMostAppearingPct: digitAnalysis.secondMostAppearingPct,
+        leastAppearingPct: digitAnalysis.leastAppearingPct,
+      }
+    }));
   }, []);
 
-  // Ensure at least 2 over/under signals and manage total signals up to 6
+  // Ensure at least 3 over/under signals and manage total signals up to 6
   const prioritizeSignals = useCallback((allSignals: Omit<Signal, 'id' | 'timestamp' | 'priority'>[]) => {
-    // Separate over/under signals from odd/even
-    const overUnderSignals = allSignals.filter(s => s.type === 'over' || s.type === 'under' || s.type === 'over_strong' || s.type === 'under_strong');
+    // Separate over/under signals (all types that indicate OVER or UNDER)
+    const overUnderSignals = allSignals.filter(s => 
+      s.type === 'over' || s.type === 'under' || 
+      s.type === 'over_strong' || s.type === 'under_strong' ||
+      s.type === 'over_digit_based' || s.type === 'under_digit_based'
+    );
     const oddEvenSignals = allSignals.filter(s => s.type === 'odd' || s.type === 'even');
     
     // Sort by strength (critical > strong > moderate > weak)
@@ -460,14 +663,20 @@ export default function SignalPage() {
     
     let selectedSignals: typeof allSignals = [];
     
-    // First, ensure we have at least 2 over/under signals
+    // First, ensure we have at least 3 over/under signals
     const sortedOverUnder = [...overUnderSignals].sort((a, b) => 
       strengthOrder[b.strength] - strengthOrder[a.strength]
     );
     
-    // Take top 2 over/under signals (or all if less than 2)
-    const overUnderToTake = sortedOverUnder.slice(0, Math.max(2, sortedOverUnder.length));
+    // Take top 3 over/under signals (or all if less than 3)
+    const overUnderToTake = sortedOverUnder.slice(0, Math.max(3, sortedOverUnder.length));
     selectedSignals.push(...overUnderToTake);
+    
+    // If we have less than 3 over/under signals, add more from remaining over/under
+    if (selectedSignals.length < 3 && sortedOverUnder.length > overUnderToTake.length) {
+      const additionalOverUnder = sortedOverUnder.slice(overUnderToTake.length, 3 - selectedSignals.length);
+      selectedSignals.push(...additionalOverUnder);
+    }
     
     // Then fill remaining slots (up to 6 total) with odd/even signals
     const remainingSlots = Math.max(0, 6 - selectedSignals.length);
@@ -529,13 +738,18 @@ export default function SignalPage() {
       setIsScanning(false);
       
       // Toast notification for new signals
-      const overUnderCount = finalSignals.filter(s => s.type.includes('over') || s.type.includes('under')).length;
+      const overUnderCount = finalSignals.filter(s => 
+        s.type.includes('over') || s.type.includes('under')
+      ).length;
+      const digitBasedCount = finalSignals.filter(s => 
+        s.type === 'over_digit_based' || s.type === 'under_digit_based'
+      ).length;
       const criticalCount = finalSignals.filter(s => s.strength === 'critical').length;
       
       if (finalSignals.length > 0) {
         toast.success(
           `📡 ${finalSignals.length} signal${finalSignals.length > 1 ? 's' : ''} detected! ` +
-          `(${overUnderCount} over/under, ${criticalCount > 0 ? `${criticalCount} critical 🔥` : ''})`
+          `(${overUnderCount} over/under, ${digitBasedCount} digit-based, ${criticalCount > 0 ? `${criticalCount} critical 🔥` : ''})`
         );
       } else {
         toast.info('No signals detected in this scan cycle');
@@ -570,8 +784,13 @@ export default function SignalPage() {
     const strong = activeSignals.filter(s => s.strength === 'strong').length;
     const moderate = activeSignals.filter(s => s.strength === 'moderate').length;
     const weak = activeSignals.filter(s => s.strength === 'weak').length;
-    const overUnder = activeSignals.filter(s => s.type.includes('over') || s.type.includes('under')).length;
-    return { total, critical, strong, moderate, weak, overUnder };
+    const overUnder = activeSignals.filter(s => 
+      s.type.includes('over') || s.type.includes('under')
+    ).length;
+    const digitBased = activeSignals.filter(s => 
+      s.type === 'over_digit_based' || s.type === 'under_digit_based'
+    ).length;
+    return { total, critical, strong, moderate, weak, overUnder, digitBased };
   }, [activeSignals]);
 
   return (
@@ -594,7 +813,7 @@ export default function SignalPage() {
                   Volatility Signal Scanner
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                  Enhanced over/under detection | Up to 6 signals | Critical alerts
+                  Enhanced over/under detection | Digit-based analysis | Min 3 over/under signals
                 </p>
               </div>
             </div>
@@ -627,7 +846,7 @@ export default function SignalPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="grid grid-cols-2 md:grid-cols-6 gap-4 mt-8"
+            className="grid grid-cols-2 md:grid-cols-7 gap-4 mt-8"
           >
             <div className="bg-card/50 rounded-xl border border-border/50 p-4 backdrop-blur-sm">
               <div className="flex items-center gap-2 text-muted-foreground mb-2">
@@ -665,7 +884,14 @@ export default function SignalPage() {
                 <span className="text-sm">Over/Under</span>
               </div>
               <div className="text-3xl font-bold">{getSignalStats.overUnder}</div>
-              <div className="text-xs text-muted-foreground">Min 2 guaranteed</div>
+              <div className="text-xs text-muted-foreground">Min 3 guaranteed</div>
+            </div>
+            <div className="bg-card/50 rounded-xl border border-border/50 p-4 backdrop-blur-sm">
+              <div className="flex items-center gap-2 text-purple-400 mb-2">
+                <BarChart className="w-4 h-4" />
+                <span className="text-sm">Digit-Based</span>
+              </div>
+              <div className="text-3xl font-bold text-purple-400">{getSignalStats.digitBased}</div>
             </div>
             <div className="bg-card/50 rounded-xl border border-border/50 p-4 backdrop-blur-sm">
               <div className="flex items-center gap-2 text-muted-foreground mb-2">
@@ -681,14 +907,22 @@ export default function SignalPage() {
       {/* Filter Section */}
       <div className="container mx-auto px-4 py-6">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Badge variant="outline" className="gap-1">
               <BarChart3 className="w-3 h-3" />
               Markets: {selectedGroup === 'all' ? VOLATILITY_MARKETS.length : VOLATILITY_MARKETS.filter(m => m.group === selectedGroup).length}
             </Badge>
-            <Badge variant="outline" className="gap-1 bg-red-500/10 border-red-500/30">
-              <AlertTriangle className="w-3 h-3 text-red-400" />
-              Enhanced Detection: 0-3 & 6-9 ≤15% | Odd/Even ≥52%
+            <Badge variant="outline" className="gap-1 bg-emerald-500/10 border-emerald-500/30">
+              <ArrowUp className="w-3 h-3 text-emerald-400" />
+              Over: 0-3 ≤15% | Digit-based ≥5
+            </Badge>
+            <Badge variant="outline" className="gap-1 bg-rose-500/10 border-rose-500/30">
+              <ArrowDown className="w-3 h-3 text-rose-400" />
+              Under: 6-9 ≤15% | Digit-based <5
+            </Badge>
+            <Badge variant="outline" className="gap-1 bg-purple-500/10 border-purple-500/30">
+              <PieChart className="w-3 h-3 text-purple-400" />
+              Min 3 over/under signals guaranteed
             </Badge>
           </div>
           
@@ -777,16 +1011,16 @@ export default function SignalPage() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs ${
-                        signal.type === 'over' || signal.type === 'over_strong' ? 'bg-emerald-500/20 text-emerald-400' :
-                        signal.type === 'under' || signal.type === 'under_strong' ? 'bg-rose-500/20 text-rose-400' :
+                        signal.type === 'over' || signal.type === 'over_strong' || signal.type === 'over_digit_based' ? 'bg-emerald-500/20 text-emerald-400' :
+                        signal.type === 'under' || signal.type === 'under_strong' || signal.type === 'under_digit_based' ? 'bg-rose-500/20 text-rose-400' :
                         signal.type === 'odd' ? 'bg-amber-500/20 text-amber-400' :
                         'bg-sky-500/20 text-sky-400'
                       }`}>
-                        {signal.type === 'over' || signal.type === 'over_strong' ? '↑' : 
-                         signal.type === 'under' || signal.type === 'under_strong' ? '↓' : 
+                        {signal.type === 'over' || signal.type === 'over_strong' || signal.type === 'over_digit_based' ? '↑' : 
+                         signal.type === 'under' || signal.type === 'under_strong' || signal.type === 'under_digit_based' ? '↓' : 
                          signal.type === 'odd' ? 'O' : 'E'}
                       </div>
-                      <span className="font-mono text-xs font-medium">{signal.market.name}</span>
+                      <span className="font-mono text-xs font-medium truncate max-w-[120px]">{signal.market.name}</span>
                     </div>
                     <Badge className={`text-[8px] ${
                       signal.strength === 'critical' ? 'bg-red-500/20 text-red-400' :
@@ -799,14 +1033,21 @@ export default function SignalPage() {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-xs capitalize text-muted-foreground">
-                      {signal.type === 'over' || signal.type === 'over_strong' ? 'OVER' : 
-                       signal.type === 'under' || signal.type === 'under_strong' ? 'UNDER' : 
-                       signal.type} • {signal.percentage.toFixed(0)}%
+                      {signal.type === 'over_digit_based' ? 'OVER (digit)' : 
+                       signal.type === 'under_digit_based' ? 'UNDER (digit)' :
+                       signal.type === 'over_strong' ? 'OVER+STRONG' :
+                       signal.type === 'under_strong' ? 'UNDER+STRONG' :
+                       signal.type?.toUpperCase() || 'SIGNAL'} • {signal.percentage.toFixed(0)}%
                     </span>
                     <span className="text-[10px] text-muted-foreground">
                       {new Date(signal.timestamp).toLocaleTimeString()}
                     </span>
                   </div>
+                  {signal.digitAnalysis && (
+                    <div className="flex gap-2 mt-1 text-[8px] text-muted-foreground">
+                      <span>📊 {signal.digitAnalysis.mostAppearing},{signal.digitAnalysis.secondMostAppearing},{signal.digitAnalysis.leastAppearing}</span>
+                    </div>
+                  )}
                 </motion.div>
               ))}
             </div>
@@ -829,7 +1070,6 @@ export default function SignalPage() {
                     <div>• &lt;8% → 🔥 CRITICAL over signal</div>
                     <div>• 8-12% → ⚡ STRONG over signal</div>
                     <div>• 12-15% → 📊 MODERATE over (nearly meant)</div>
-                    <div>• 15%+ → ⚠️ WEAK approaching</div>
                   </div>
                 </div>
               </div>
@@ -841,41 +1081,58 @@ export default function SignalPage() {
                     <div>• &lt;8% → 🔥 CRITICAL under signal</div>
                     <div>• 8-12% → ⚡ STRONG under signal</div>
                     <div>• 12-15% → 📊 MODERATE under (nearly meant)</div>
-                    <div>• 15%+ → ⚠️ WEAK approaching</div>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <BarChart className="w-4 h-4 text-purple-400 mt-0.5" />
+                <div>
+                  <span className="font-medium">Digit-Based OVER Signal:</span>
+                  <div className="text-muted-foreground text-xs mt-1">
+                    <div>• Most, 2nd Most & Least digits ALL ≥5 → Over bias confirmed</div>
+                    <div>• Higher average percentage = stronger signal</div>
                   </div>
                 </div>
               </div>
             </div>
             <div className="space-y-2">
               <div className="flex items-start gap-2">
+                <BarChart className="w-4 h-4 text-purple-400 mt-0.5" />
+                <div>
+                  <span className="font-medium">Digit-Based UNDER Signal:</span>
+                  <div className="text-muted-foreground text-xs mt-1">
+                    <div>• Most, 2nd Most & Least digits ALL &lt;5 → Under bias confirmed</div>
+                    <div>• Higher average percentage = stronger signal</div>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
                 <Activity className="w-4 h-4 text-amber-400 mt-0.5" />
                 <div>
-                  <span className="font-medium">ODD Signal:</span>
+                  <span className="font-medium">ODD/EVEN Signals:</span>
                   <div className="text-muted-foreground text-xs mt-1">
-                    <div>• ≥65% → 🔥 CRITICAL odd bias</div>
-                    <div>• 58-65% → ⚡ STRONG odd bias</div>
-                    <div>• 55-58% → 📊 MODERATE odd bias</div>
+                    <div>• ≥65% → 🔥 CRITICAL bias</div>
+                    <div>• 58-65% → ⚡ STRONG bias</div>
+                    <div>• 55-58% → 📊 MODERATE bias</div>
                     <div>• 52-55% → ⚠️ WEAK approaching</div>
                   </div>
                 </div>
               </div>
               <div className="flex items-start gap-2">
-                <Target className="w-4 h-4 text-sky-400 mt-0.5" />
+                <Target className="w-4 h-4 text-primary mt-0.5" />
                 <div>
-                  <span className="font-medium">EVEN Signal:</span>
+                  <span className="font-medium">Under 5 / Over 5 Signals:</span>
                   <div className="text-muted-foreground text-xs mt-1">
-                    <div>• ≥65% → 🔥 CRITICAL even bias</div>
-                    <div>• 58-65% → ⚡ STRONG even bias</div>
-                    <div>• 55-58% → 📊 MODERATE even bias</div>
-                    <div>• 52-55% → ⚠️ WEAK approaching</div>
+                    <div>• ≥55% threshold for under/over 5 bias detection</div>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-          <div className="mt-4 pt-3 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
-            <span>🎯 Minimum 2 over/under signals guaranteed per scan</span>
+          <div className="mt-4 pt-3 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground flex-wrap gap-2">
+            <span>🎯 Minimum 3 over/under signals guaranteed per scan</span>
             <span>📊 Maximum 6 signals total per scan</span>
+            <span>🔢 Digit analysis based on most, 2nd most & least appearing digits</span>
             <span>🔄 Auto-scans every 30 seconds</span>
           </div>
         </div>
