@@ -1037,19 +1037,21 @@ export default function ProScannerBot() {
                   ) : (
                     <>
                       <div className="grid grid-cols-3 gap-1 mt-0.5">
-                        <label className="text-[8px] text-muted-foreground text-center">Condition</label>
+                        <label className="text-[8px] text-muted-foreground text-center">If the Last </label>
+                        <label className="text-[8px] text-muted-foreground text-center">Ticks Are</label>
                         <label className="text-[8px] text-muted-foreground text-center">Digit</label>
-                        <label className="text-[8px] text-muted-foreground text-center">Ticks</label>
+                        
                       </div>
                       <div className="grid grid-cols-3 gap-1">
-                        <Select value={m1DigitCondition} onValueChange={setM1DigitCondition} disabled={isRunning}>
-                          <SelectTrigger className="h-6 text-[10px]"><SelectValue /></SelectTrigger>
-                          <SelectContent>
+                         <Input type="number" min="1" max="50" value={m1DigitWindow} onChange={e => setM1DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                           <Select value={m1DigitCondition} onValueChange={setM1DigitCondition} disabled={isRunning}>
+                            <SelectTrigger className="h-6 text-[10px]"><SelectValue /></SelectTrigger>
+                            <SelectContent>
                             {['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                           </SelectContent>
                         </Select>
                         <Input type="number" min="0" max="9" value={m1DigitCompare} onChange={e => setM1DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
-                        <Input type="number" min="1" max="50" value={m1DigitWindow} onChange={e => setM1DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                       
                       </div>
                     </>
                   )}
@@ -1091,14 +1093,15 @@ export default function ProScannerBot() {
                         
                       </div>
                       <div className="grid grid-cols-3 gap-1">
-                        <Input type="number" min="0" max="9" value={m2DigitCompare} onChange={e => setM2DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                        <Input type="number" min="1" max="50" value={m2DigitWindow} onChange={e => setM2DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                      
                         <Select value={m2DigitCondition} onValueChange={setM2DigitCondition} disabled={isRunning}>
                           <SelectTrigger className="h-6 text-[10px]"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                           </SelectContent>
                         </Select>
-                        <Input type="number" min="1" max="50" value={m2DigitWindow} onChange={e => setM2DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                          <Input type="number" min="0" max="9" value={m2DigitCompare} onChange={e => setM2DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                       </div>
                     </>
                   )}
