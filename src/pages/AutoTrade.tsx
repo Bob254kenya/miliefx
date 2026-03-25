@@ -14,7 +14,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   TrendingUp, TrendingDown, Activity, BarChart3, ArrowUp, ArrowDown,
-  Target, ShieldAlert, Volume2, VolumeX, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, Bot, RefreshCw, Globe, Search,
+  Target, ShieldAlert, Volume2, VolumeX, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, Bot, RefreshCw, Globe, Search, Sparkles,
 } from 'lucide-react';
 
 /* ── Markets ── */
@@ -217,6 +217,7 @@ interface TradeRecord {
   profit: number;
   status: 'won' | 'lost' | 'open';
   symbol: string;
+  marketName: string;
   resultDigit?: number;
   botId?: string;
 }
@@ -344,10 +345,9 @@ export default function TradingChart() {
   });
   const [recoveryAttempts, setRecoveryAttempts] = useState(0);
   const [recoveryCurrentStake, setRecoveryCurrentStake] = useState(0);
-  const [recoveryScanMarkets, setRecoveryScanMarkets] = useState(false);
+  const [autoScanAndTrade, setAutoScanAndTrade] = useState(false);
   const [scanningMarkets, setScanningMarkets] = useState(false);
-  const [foundMarket, setFoundMarket] = useState<string | null>(null);
-  const [scanResults, setScanResults] = useState<{ symbol: string; name: string; matches: boolean }[]>([]);
+  const [autoTradeExecuted, setAutoTradeExecuted] = useState(false);
 
   const speak = useCallback((text: string) => {
     if (!voiceEnabled || !window.speechSynthesis) return;
@@ -361,87 +361,134 @@ export default function TradingChart() {
     window.speechSynthesis.speak(utterance);
   }, [voiceEnabled]);
 
-  const scanMarketsForCondition = useCallback(async () => {
+  const getMarketName = (symbol: string): string => {
+    const market = ALL_MARKETS.find(m => m.symbol === symbol);
+    return market ? market.name : symbol;
+  };
+
+  const checkConditionOnMarket = useCallback((marketSymbol: string, strategy: BotStrategy): boolean => {
+    const ticks = getTickHistory(marketSymbol);
+    if (ticks.length === 0) return false;
+    
+    if (strategy.mode === 'pattern') {
+      const pattern = strategy.patternInput.toUpperCase().replace(/[^EO]/g, '');
+      if (ticks.length < pattern.length || pattern.length === 0) return false;
+      const recent = ticks.slice(-pattern.length);
+      for (let i = 0; i < pattern.length; i++) {
+        const expected = pattern[i];
+        const actual = recent[i] % 2 === 0 ? 'E' : 'O';
+        if (expected !== actual) return false;
+      }
+      return true;
+    } else {
+      const win = parseInt(strategy.digitWindow) || 3;
+      const comp = parseInt(strategy.digitCompare);
+      if (ticks.length < win) return false;
+      const recent = ticks.slice(-win);
+      return recent.every(d => {
+        switch (strategy.digitCondition) {
+          case '>': return d > comp;
+          case '<': return d < comp;
+          case '>=': return d >= comp;
+          case '<=': return d <= comp;
+          case '==': return d === comp;
+          case '!=': return d !== comp;
+          default: return false;
+        }
+      });
+    }
+  }, []);
+
+  const scanAndAutoTrade = useCallback(async () => {
     if (!recoveryStrategy.enabled) {
       toast.warning('Please enable pattern/digit strategy first');
       return;
     }
     
     setScanningMarkets(true);
-    setScanResults([]);
-    toast.info('🔍 Scanning all markets for pattern/digit condition...');
     
-    const results: { symbol: string; name: string; matches: boolean }[] = [];
-    let matchFound = false;
+    let foundMatch = false;
+    let matchedMarket = '';
     
     for (const market of ALL_MARKETS) {
-      const ticks = getTickHistory(market.symbol);
-      if (ticks.length === 0) {
-        results.push({ symbol: market.symbol, name: market.name, matches: false });
-        continue;
-      }
+      const conditionMet = checkConditionOnMarket(market.symbol, recoveryStrategy);
       
-      let conditionMet = false;
-      
-      if (recoveryStrategy.mode === 'pattern') {
-        const pattern = recoveryStrategy.patternInput.toUpperCase().replace(/[^EO]/g, '');
-        if (ticks.length >= pattern.length && pattern.length > 0) {
-          const recent = ticks.slice(-pattern.length);
-          let patternMatch = true;
-          for (let i = 0; i < pattern.length; i++) {
-            const expected = pattern[i];
-            const actual = recent[i] % 2 === 0 ? 'E' : 'O';
-            if (expected !== actual) {
-              patternMatch = false;
-              break;
-            }
-          }
-          conditionMet = patternMatch;
-        }
-      } else {
-        const win = parseInt(recoveryStrategy.digitWindow) || 3;
-        const comp = parseInt(recoveryStrategy.digitCompare);
-        if (ticks.length >= win) {
-          const recent = ticks.slice(-win);
-          conditionMet = recent.every(d => {
-            switch (recoveryStrategy.digitCondition) {
-              case '>': return d > comp;
-              case '<': return d < comp;
-              case '>=': return d >= comp;
-              case '<=': return d <= comp;
-              case '==': return d === comp;
-              case '!=': return d !== comp;
-              default: return false;
-            }
-          });
-        }
-      }
-      
-      results.push({ symbol: market.symbol, name: market.name, matches: conditionMet });
-      
-      if (conditionMet && !matchFound) {
-        matchFound = true;
-        setFoundMarket(market.symbol);
-        setRecoveryConfig(prev => ({ ...prev, recoverySymbol: market.symbol }));
+      if (conditionMet) {
+        foundMatch = true;
+        matchedMarket = market.symbol;
         toast.success(`✅ Found matching market: ${market.name} (${market.symbol})`);
         if (voiceEnabled) speak(`Found matching market: ${market.name}`);
+        break;
       }
+      
+      await new Promise(r => setTimeout(r, 50));
     }
     
-    setScanResults(results);
     setScanningMarkets(false);
     
-    if (!matchFound) {
-      toast.warning('No market matches the current pattern/digit condition');
-      setFoundMarket(null);
+    if (foundMatch && autoScanAndTrade && !autoTradeExecuted && !recoveryActive) {
+      setAutoTradeExecuted(true);
+      setRecoveryConfig(prev => ({ ...prev, recoverySymbol: matchedMarket }));
+      
+      toast.info(`🎯 Auto-trade triggered on ${getMarketName(matchedMarket)}`);
+      if (voiceEnabled) speak(`Auto-trade triggered on ${getMarketName(matchedMarket)}`);
+      
+      const stake = parseFloat(bot1Config.stake);
+      const ct = recoveryConfig.contractType;
+      const params: any = { 
+        contract_type: ct, 
+        symbol: matchedMarket, 
+        duration: parseInt(bot1Config.duration), 
+        duration_unit: bot1Config.durationUnit, 
+        basis: 'stake', 
+        amount: stake 
+      };
+      if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct)) params.barrier = recoveryConfig.prediction;
+      
+      try {
+        const { contractId } = await derivApi.buyContract(params);
+        const tr: TradeRecord = { 
+          id: contractId, 
+          time: Date.now(), 
+          type: ct, 
+          stake, 
+          profit: 0, 
+          status: 'open', 
+          symbol: matchedMarket,
+          marketName: getMarketName(matchedMarket),
+          botId: 'auto-scan' 
+        };
+        setTradeHistory(prev => [tr, ...prev].slice(0, 100));
+        
+        const result = await derivApi.waitForContractResult(contractId);
+        const resultDigit = getLastDigit(result.price || 0);
+        setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status, resultDigit } : t));
+        
+        if (result.status === 'won') {
+          toast.success(`🎉 AUTO-TRADE WON! +$${result.profit.toFixed(2)} | ${getMarketName(matchedMarket)} | Digit: ${resultDigit}`);
+          if (voiceEnabled) speak(`Auto-trade won. Profit ${result.profit.toFixed(2)} dollars`);
+        } else {
+          toast.error(`❌ AUTO-TRADE LOST -$${Math.abs(result.profit).toFixed(2)} | ${getMarketName(matchedMarket)} | Digit: ${resultDigit}`);
+          if (voiceEnabled) speak(`Auto-trade lost. Loss ${Math.abs(result.profit).toFixed(2)} dollars`);
+        }
+      } catch (err: any) {
+        toast.error(`Auto-trade error: ${err.message}`);
+      }
+      
+      setTimeout(() => setAutoTradeExecuted(false), 5000);
+    } else if (!foundMatch) {
+      // Silent scan - no toast to avoid spam
     }
-  }, [recoveryStrategy, voiceEnabled, speak]);
+  }, [recoveryStrategy, autoScanAndTrade, autoTradeExecuted, recoveryActive, bot1Config, recoveryConfig, voiceEnabled, speak, checkConditionOnMarket]);
 
   useEffect(() => {
-    if (recoveryScanMarkets && recoveryStrategy.enabled && !scanningMarkets) {
-      scanMarketsForCondition();
+    if (autoScanAndTrade && recoveryStrategy.enabled && !scanningMarkets && !autoTradeExecuted && !recoveryActive) {
+      const interval = setInterval(() => {
+        scanAndAutoTrade();
+      }, 3000);
+      return () => clearInterval(interval);
     }
-  }, [recoveryScanMarkets, recoveryStrategy.enabled, recoveryStrategy.patternInput, recoveryStrategy.digitCondition, recoveryStrategy.digitCompare, recoveryStrategy.digitWindow, scanMarketsForCondition]);
+  }, [autoScanAndTrade, recoveryStrategy.enabled, scanningMarkets, autoTradeExecuted, recoveryActive, scanAndAutoTrade]);
 
   useEffect(() => {
     let active = true;
@@ -971,13 +1018,13 @@ export default function TradingChart() {
     try {
       toast.info(`⏳ Placing ${ct} trade... $${tradeStake}`);
       const { contractId } = await derivApi.buyContract(params);
-      const newTrade: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake: parseFloat(tradeStake), profit: 0, status: 'open', symbol };
+      const newTrade: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake: parseFloat(tradeStake), profit: 0, status: 'open', symbol, marketName: getMarketName(symbol), botId: 'manual' };
       setTradeHistory(prev => [newTrade, ...prev].slice(0, 50));
       const result = await derivApi.waitForContractResult(contractId);
       const resultDigit = getLastDigit(result.price || currentPrice);
       setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status, resultDigit } : t));
-      if (result.status === 'won') { toast.success(`✅ WON +$${result.profit.toFixed(2)} | Digit: ${resultDigit}`); if (voiceEnabled) speak(`Trade won. Profit ${result.profit.toFixed(2)} dollars`); }
-      else { toast.error(`❌ LOST -$${Math.abs(result.profit).toFixed(2)} | Digit: ${resultDigit}`); if (voiceEnabled) speak(`Trade lost. Loss ${Math.abs(result.profit).toFixed(2)} dollars`); }
+      if (result.status === 'won') { toast.success(`✅ WON +$${result.profit.toFixed(2)} | ${getMarketName(symbol)} | Digit: ${resultDigit}`); if (voiceEnabled) speak(`Trade won. Profit ${result.profit.toFixed(2)} dollars`); }
+      else { toast.error(`❌ LOST -$${Math.abs(result.profit).toFixed(2)} | ${getMarketName(symbol)} | Digit: ${resultDigit}`); if (voiceEnabled) speak(`Trade lost. Loss ${Math.abs(result.profit).toFixed(2)} dollars`); }
     } catch (err: any) { toast.error(`Trade failed: ${err.message}`); }
     finally { setIsTrading(false); }
   };
@@ -1003,7 +1050,8 @@ export default function TradingChart() {
         stake, 
         profit: 0, 
         status: 'open', 
-        symbol: recoveryConfig.recoverySymbol, 
+        symbol: recoveryConfig.recoverySymbol,
+        marketName: getMarketName(recoveryConfig.recoverySymbol),
         botId: 'recovery' 
       };
       setTradeHistory(prev => [tr, ...prev].slice(0, 100));
@@ -1012,11 +1060,11 @@ export default function TradingChart() {
       setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status, resultDigit } : t));
 
       if (result.status === 'won') {
-        toast.success(`🔄 RECOVERY WON! +$${result.profit.toFixed(2)} | Market: ${recoveryConfig.recoverySymbol} | Digit: ${resultDigit}`);
+        toast.success(`🔄 RECOVERY WON! +$${result.profit.toFixed(2)} | ${getMarketName(recoveryConfig.recoverySymbol)} | Digit: ${resultDigit}`);
         if (voiceEnabled) speak(`Recovery trade won. Profit ${result.profit.toFixed(2)} dollars`);
         return true;
       } else {
-        toast.error(`🔄 RECOVERY LOST -$${Math.abs(result.profit).toFixed(2)} | Market: ${recoveryConfig.recoverySymbol} | Digit: ${resultDigit}`);
+        toast.error(`🔄 RECOVERY LOST -$${Math.abs(result.profit).toFixed(2)} | ${getMarketName(recoveryConfig.recoverySymbol)} | Digit: ${resultDigit}`);
         if (voiceEnabled) speak(`Recovery trade lost. Loss ${Math.abs(result.profit).toFixed(2)} dollars`);
         return false;
       }
@@ -1067,7 +1115,7 @@ export default function TradingChart() {
 
       try {
         const { contractId } = await derivApi.buyContract(params);
-        const tr: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake, profit: 0, status: 'open', symbol: bot1Config.botSymbol, botId: 'main' };
+        const tr: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake, profit: 0, status: 'open', symbol: bot1Config.botSymbol, marketName: getMarketName(bot1Config.botSymbol), botId: 'main' };
         setTradeHistory(prev => [tr, ...prev].slice(0, 100));
         const result = await derivApi.waitForContractResult(contractId);
         trades++; pnl += result.profit;
@@ -1078,13 +1126,13 @@ export default function TradingChart() {
           wins++; consLosses = 0;
           stake = baseStake;
           if (voiceEnabled && trades % 5 === 0) speak(`Main bot trade ${trades} won. Total profit ${pnl.toFixed(2)}`);
-          toast.success(`✅ MAIN BOT WON! +$${result.profit.toFixed(2)} | Market: ${bot1Config.botSymbol} | Digit: ${resultDigit}`);
+          toast.success(`✅ MAIN BOT WON! +$${result.profit.toFixed(2)} | ${getMarketName(bot1Config.botSymbol)} | Digit: ${resultDigit}`);
         } else {
           losses++; consLosses++;
           
           if (recoveryEnabled && !recoveryActive) {
-            toast.warning(`🔄 Loss detected! Activating Recovery Bot on ${recoveryConfig.recoverySymbol}`);
-            if (voiceEnabled) speak(`Loss detected. Activating recovery bot on ${recoveryConfig.recoverySymbol}`);
+            toast.warning(`🔄 Loss detected! Activating Recovery Bot on ${getMarketName(recoveryConfig.recoverySymbol)}`);
+            if (voiceEnabled) speak(`Loss detected. Activating recovery bot on ${getMarketName(recoveryConfig.recoverySymbol)}`);
             setRecoveryActive(true);
             setRecoveryAttempts(1);
             
@@ -1110,7 +1158,7 @@ export default function TradingChart() {
             const recoveryWon = await executeRecoveryTrade(recoveryStake);
             
             if (recoveryWon) {
-              toast.success(`🎉 Recovery successful! Returning to main bot on ${bot1Config.botSymbol}`);
+              toast.success(`🎉 Recovery successful! Returning to main bot on ${getMarketName(bot1Config.botSymbol)}`);
               if (voiceEnabled) speak(`Recovery successful. Returning to main bot.`);
               setRecoveryActive(false);
               setRecoveryAttempts(0);
@@ -1131,7 +1179,7 @@ export default function TradingChart() {
                 setRecoveryAttempts(newAttempts);
                 setRecoveryCurrentStake(recoveryStakeAmount);
                 
-                toast.warning(`🔄 Recovery Attempt ${newAttempts}/5 - Stake: $${recoveryStakeAmount.toFixed(2)} on ${recoveryConfig.recoverySymbol}`);
+                toast.warning(`🔄 Recovery Attempt ${newAttempts}/5 - Stake: $${recoveryStakeAmount.toFixed(2)} on ${getMarketName(recoveryConfig.recoverySymbol)}`);
                 if (voiceEnabled) speak(`Recovery attempt ${newAttempts}. Stake ${recoveryStakeAmount.toFixed(2)} dollars`);
                 
                 if (globalStrategyEnabled ? (recoveryStrategy.enabled || bot1Strategy.enabled) : recoveryStrategy.enabled) {
@@ -1688,69 +1736,68 @@ export default function TradingChart() {
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${recoveryActive ? 'border-warning animate-pulse' : 'border-border'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                <RefreshCw className="w-3.5 h-3.5 text-warning" /> Recovery Bot
+                <Sparkles className="w-3.5 h-3.5 text-warning" /> Auto Scan & Trade Bot
               </h3>
               <div className="flex items-center gap-2">
                 <Switch checked={recoveryEnabled} onCheckedChange={setRecoveryEnabled} disabled={bot1Running} />
-                <span className="text-[8px] text-muted-foreground">Enable Recovery</span>
+                <span className="text-[8px] text-muted-foreground">Enable Scanner</span>
               </div>
             </div>
 
             {recoveryEnabled && (
               <>
-                <div className="text-[10px] text-warning bg-warning/10 rounded p-2 text-center">
-                  {recoveryActive ? (
-                    <span>🔄 RECOVERY ACTIVE | Attempts: {recoveryAttempts}/5 | Stake: ${recoveryCurrentStake.toFixed(2)}</span>
-                  ) : (
-                    <span>⚡ Will activate on main bot loss | Uses Main Bot martingale: {bot1Config.martingale ? `ON (${bot1Config.multiplier}x)` : 'OFF'}</span>
-                  )}
+                <div className="flex items-center justify-between border-t border-border pt-2 mt-1">
+                  <div className="flex items-center gap-2">
+                    <Search className="w-3.5 h-3.5 text-primary" />
+                    <span className="text-[9px] text-foreground">Auto Scan & Trade</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch 
+                      checked={autoScanAndTrade} 
+                      onCheckedChange={(checked) => {
+                        setAutoScanAndTrade(checked);
+                        if (checked) {
+                          toast.info('Auto-scan mode activated - will trade immediately when market matches condition');
+                          if (voiceEnabled) speak('Auto-scan mode activated');
+                          scanAndAutoTrade();
+                        } else {
+                          toast.info('Auto-scan mode deactivated');
+                        }
+                      }} 
+                      disabled={bot1Running || !recoveryStrategy.enabled}
+                    />
+                    <span className="text-[8px] text-muted-foreground">Auto trade on match</span>
+                  </div>
                 </div>
 
+                {scanningMarkets && (
+                  <div className="text-center py-2 bg-warning/10 rounded">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary mx-auto mb-1"></div>
+                    <span className="text-[8px] text-warning">Scanning markets for condition...</span>
+                  </div>
+                )}
+
+                {autoScanAndTrade && !scanningMarkets && (
+                  <div className="bg-success/10 border border-success/30 rounded p-2 text-center">
+                    <div className="flex items-center justify-center gap-2">
+                      <Sparkles className="w-3 h-3 text-success animate-pulse" />
+                      <span className="text-[8px] text-success">Auto-scan active - Will trade instantly when condition matches any market</span>
+                    </div>
+                  </div>
+                )}
+
                 <div>
-                  <label className="text-[9px] text-muted-foreground">Recovery Market</label>
-                  <Select value={recoveryConfig.recoverySymbol} onValueChange={(v) => setRecoveryConfig(prev => ({ ...prev, recoverySymbol: v }))} disabled={bot1Running}>
+                  <label className="text-[9px] text-muted-foreground">Fallback Market (if no match found)</label>
+                  <Select value={recoveryConfig.recoverySymbol} onValueChange={(v) => setRecoveryConfig(prev => ({ ...prev, recoverySymbol: v }))} disabled={bot1Running || autoScanAndTrade}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent className="max-h-60">
                       {ALL_MARKETS.map(m => (<SelectItem key={m.symbol} value={m.symbol}>{m.name}</SelectItem>))}
                     </SelectContent>
                   </Select>
+                  {autoScanAndTrade && (
+                    <p className="text-[8px] text-muted-foreground mt-1">⚠️ Auto-scan overrides fallback market</p>
+                  )}
                 </div>
-
-                <div className="flex items-center justify-between border-t border-border pt-2 mt-1">
-                  <div className="flex items-center gap-2">
-                    <Search className="w-3.5 h-3.5 text-primary" />
-                    <span className="text-[9px] text-foreground">Scan All Markets</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Switch checked={recoveryScanMarkets} onCheckedChange={setRecoveryScanMarkets} disabled={bot1Running || !recoveryStrategy.enabled} />
-                    <span className="text-[8px] text-muted-foreground">Auto-scan for matching markets</span>
-                  </div>
-                </div>
-
-                {scanningMarkets && (
-                  <div className="text-center py-2">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary mx-auto mb-1"></div>
-                    <span className="text-[8px] text-muted-foreground">Scanning all markets...</span>
-                  </div>
-                )}
-
-                {foundMarket && !scanningMarkets && (
-                  <div className="bg-success/10 border border-success/30 rounded p-1 text-center">
-                    <span className="text-[8px] text-success">✓ Found matching market: {foundMarket}</span>
-                  </div>
-                )}
-
-                {scanResults.length > 0 && !scanningMarkets && recoveryScanMarkets && (
-                  <div className="max-h-32 overflow-auto space-y-1 border border-border rounded p-1">
-                    <div className="text-[8px] font-semibold text-muted-foreground mb-1">Scan Results:</div>
-                    {scanResults.slice(0, 10).map((result, idx) => (
-                      <div key={idx} className={`flex justify-between text-[8px] p-1 rounded ${result.matches ? 'bg-success/10 text-success' : 'text-muted-foreground'}`}>
-                        <span>{result.name}</span>
-                        {result.matches && <Badge className="text-[6px] bg-success">MATCH</Badge>}
-                      </div>
-                    ))}
-                  </div>
-                )}
 
                 <Select value={recoveryConfig.contractType} onValueChange={v => setRecoveryConfig(prev => ({ ...prev, contractType: v }))} disabled={bot1Running}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
@@ -1817,25 +1864,24 @@ export default function TradingChart() {
                           <div>
                             <label className="text-[8px] text-muted-foreground">Digit</label>
                             <Input type="number" min="0" max="9" value={recoveryStrategy.digitCompare}
-                              onChange={e => setRecoveryStrategy(prev => ({ ...prev, digitCompare: e.target.value }))} disabled={bot1Running} className="h-7 text-[10px]" />
+                              onChange={e => setRecoveryStrategy(prev => ({ ...prev, digitCompare: e.target.value }))} disabled={bot1Running}
+                              className="h-7 text-[10px]" />
                           </div>
                         </div>
                       )}
                       <div className="text-[8px] text-muted-foreground text-center py-1">
-                        Recovery bot will wait for {recoveryStrategy.mode === 'pattern' ? 'pattern match' : 'digit condition'} before recovery trades
+                        Scanner will check all markets for {recoveryStrategy.mode === 'pattern' ? 'pattern match' : 'digit condition'} every 3 seconds
                       </div>
                       
-                      {recoveryStrategy.enabled && (
-                        <Button size="sm" variant="outline" className="w-full text-[8px] h-6" onClick={scanMarketsForCondition} disabled={bot1Running || scanningMarkets}>
-                          <Search className="w-3 h-3 mr-1" /> Scan Markets Now
-                        </Button>
-                      )}
+                      <Button size="sm" variant="outline" className="w-full text-[8px] h-6" onClick={scanAndAutoTrade} disabled={bot1Running || scanningMarkets}>
+                        <Search className="w-3 h-3 mr-1" /> Scan Now
+                      </Button>
                     </div>
                   )}
                 </div>
 
                 <div className="text-[8px] text-muted-foreground text-center py-1 bg-muted/30 rounded">
-                  ⚡ Uses Main Bot duration ({bot1Config.duration}{bot1Config.durationUnit}), stake, and martingale: {bot1Config.martingale ? `ON (${bot1Config.multiplier}x)` : 'OFF'}
+                  ⚡ Uses Main Bot duration ({bot1Config.duration}{bot1Config.durationUnit}) and stake (${bot1Config.stake})
                 </div>
               </>
             )}
@@ -1844,7 +1890,7 @@ export default function TradingChart() {
           <div className="bg-card border border-border rounded-xl p-3 space-y-2">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                <Trophy className="w-3.5 h-3.5 text-primary" /> Combined Trade Progress
+                <Trophy className="w-3.5 h-3.5 text-primary" /> Trade Progress
               </h3>
               {tradeHistory.length > 0 && (
                 <Button variant="ghost" size="sm" className="h-6 text-[9px] text-muted-foreground hover:text-loss"
@@ -1886,22 +1932,23 @@ export default function TradingChart() {
             )}
 
             {tradeHistory.length > 0 && (
-              <div className="max-h-40 overflow-auto space-y-1">
-                {tradeHistory.slice(0, 15).map(t => (
+              <div className="max-h-48 overflow-auto space-y-1">
+                {tradeHistory.slice(0, 20).map(t => (
                   <div key={t.id} className={`flex items-center justify-between text-[9px] p-1.5 rounded-lg border ${
                     t.status === 'open' ? 'border-primary/30 bg-primary/5' :
                     t.status === 'won' ? 'border-profit/30 bg-profit/5' :
                     'border-loss/30 bg-loss/5'
                   }`}>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <span className={`font-bold ${t.status === 'won' ? 'text-profit' : t.status === 'lost' ? 'text-loss' : 'text-primary'}`}>
                         {t.status === 'open' ? '⏳' : t.status === 'won' ? '✅' : '❌'}
                       </span>
-                      <Badge variant="outline" className={`text-[7px] px-1 ${t.botId === 'recovery' ? 'bg-warning/20 text-warning' : 'bg-primary/20 text-primary'}`}>
-                        {t.botId === 'recovery' ? 'REC' : 'MAIN'}
+                      <Badge variant="outline" className={`text-[7px] px-1 ${t.botId === 'recovery' ? 'bg-warning/20 text-warning' : t.botId === 'auto-scan' ? 'bg-success/20 text-success' : 'bg-primary/20 text-primary'}`}>
+                        {t.botId === 'recovery' ? 'REC' : t.botId === 'auto-scan' ? 'SCAN' : t.botId === 'manual' ? 'MAN' : 'MAIN'}
                       </Badge>
                       <span className="font-mono text-muted-foreground">{t.type}</span>
                       <span className="text-muted-foreground">${t.stake.toFixed(2)}</span>
+                      <span className="text-primary font-mono text-[8px]">{t.marketName}</span>
                       {t.resultDigit !== undefined && (
                         <Badge variant="outline" className={`text-[8px] px-1 ${t.status === 'won' ? 'border-profit text-profit' : 'border-loss text-loss'}`}>
                           {t.resultDigit}
