@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
 import {
   TrendingUp,
@@ -30,10 +31,16 @@ import {
   BarChart,
   Eye,
   EyeOff,
-  TrendingUp as TrendIcon
+  TrendingUp as TrendIcon,
+  Layers,
+  Timer,
+  Brain,
+  Shield,
+  Star,
+  Award
 } from 'lucide-react';
 
-// Market configurations from your code
+// Market configurations - focus on Volatility 25/50 as recommended
 const VOLATILITIES = {
   vol: ["1HZ10V", "1HZ25V", "1HZ50V", "1HZ75V", "1HZ100V", "R_10", "R_25", "R_50", "R_75", "R_100"],
   jump: ["JD10", "JD25", "JD50", "JD75", "JD100"],
@@ -41,363 +48,514 @@ const VOLATILITIES = {
   bear: ["RDBEAR"],
 };
 
-// Full market list with metadata
-const ALL_MARKETS = [
-  ...VOLATILITIES.vol.map(s => ({ symbol: s, name: s, group: s.includes('1HZ') ? 'vol1s' : 'vol', baseVol: parseInt(s.match(/\d+/)?.[0] || '10') })),
-  ...VOLATILITIES.jump.map(s => ({ symbol: s, name: s, group: 'jump', baseVol: parseInt(s.match(/\d+/)?.[0] || '10') })),
-  ...VOLATILITIES.bull.map(s => ({ symbol: s, name: 'Bull Market', group: 'bull', baseVol: 50 })),
-  ...VOLATILITIES.bear.map(s => ({ symbol: s, name: 'Bear Market', group: 'bear', baseVol: 50 })),
+// Recommended markets for this strategy (avoid 1s indices and Vol 100 as per strategy)
+const RECOMMENDED_MARKETS = [
+  { symbol: "R_25", name: "Volatility 25", group: "vol", baseVol: 25, recommended: true },
+  { symbol: "R_50", name: "Volatility 50", group: "vol", baseVol: 50, recommended: true },
+  { symbol: "R_75", name: "Volatility 75", group: "vol", baseVol: 75, recommended: false },
+  { symbol: "R_100", name: "Volatility 100", group: "vol", baseVol: 100, recommended: false },
+  { symbol: "1HZ25V", name: "Volatility 25 (1s)", group: "vol1s", baseVol: 25, recommended: false },
+  { symbol: "1HZ50V", name: "Volatility 50 (1s)", group: "vol1s", baseVol: 50, recommended: false },
+  { symbol: "JD25", name: "Jump 25", group: "jump", baseVol: 25, recommended: true },
+  { symbol: "JD50", name: "Jump 50", group: "jump", baseVol: 50, recommended: true },
 ];
 
+const ALL_MARKETS = VOLATILITIES.vol.map(s => ({ 
+  symbol: s, 
+  name: s, 
+  group: s.includes('1HZ') ? 'vol1s' : 'vol', 
+  baseVol: parseInt(s.match(/\d+/)?.[0] || '10'),
+  recommended: s === 'R_25' || s === 'R_50'
+})).concat(
+  VOLATILITIES.jump.map(s => ({ 
+    symbol: s, 
+    name: s, 
+    group: 'jump', 
+    baseVol: parseInt(s.match(/\d+/)?.[0] || '10'),
+    recommended: s === 'JD25' || s === 'JD50'
+  })),
+  VOLATILITIES.bull.map(s => ({ symbol: s, name: 'Bull Market', group: 'bull', baseVol: 50, recommended: false })),
+  VOLATILITIES.bear.map(s => ({ symbol: s, name: 'Bear Market', group: 'bear', baseVol: 50, recommended: false }))
+);
+
 // Signal types
-type SignalType = 'over' | 'under' | 'odd' | 'even';
-type SignalStrength = 'strong' | 'moderate' | 'weak' | 'critical';
+type SignalType = 'over_4' | 'under_5' | 'over_0' | 'under_9' | 'reversal_over' | 'reversal_under';
+type SignalStrength = 'critical' | 'strong' | 'moderate' | 'weak';
+
+interface DigitStats {
+  digit: number;
+  count: number;
+  percentage: number;
+}
+
+interface ZoneAnalysis {
+  lowerZone: number[]; // digits 0-4
+  upperZone: number[]; // digits 5-9
+  lowerCount: number;
+  upperCount: number;
+  lowerPct: number;
+  upperPct: number;
+  difference: number;
+  dominantZone: 'lower' | 'upper' | 'balanced';
+}
+
+interface LastTicksAnalysis {
+  ticks: number[];
+  over4Count: number;
+  under5Count: number;
+  over4Pct: number;
+  under5Pct: number;
+  trend: 'increasing' | 'decreasing' | 'stable';
+  hasSpike: boolean;
+  isSlow: boolean;
+}
 
 interface Signal {
   id: string;
   market: typeof ALL_MARKETS[0];
   type: SignalType;
   strength: SignalStrength;
-  percentage: number;
-  threshold: number;
+  entryPrice: string;
+  confidence: number;
   timestamp: number;
   timeframe: string;
   conditionMet: string;
   priority: number;
-  recentDigits: number[];
-  patternLength: number;
+  stats: {
+    lowerCount: number;
+    upperCount: number;
+    difference: number;
+    last20OverPct: number;
+    weakDigits: number[];
+    strongDigits: number[];
+    dominantDigit: number;
+    weakestDigit: number;
+  };
+  reversalInfo?: {
+    overboughtDigit: number;
+    oversoldDigit: number;
+  };
 }
 
-interface OverUnderSignal {
-  type: 'over' | 'under';
-  market: typeof ALL_MARKETS[0];
-  percentage: number;
-  threshold: number;
-  strength: SignalStrength;
-  recentDigits: number[];
-  patternConfidence: number;
-}
+// Helper function to get last digit
+const getLastDigit = (price: number): number => {
+  const priceStr = price.toString();
+  const match = priceStr.match(/\d+(?:\.\d+)?/);
+  if (!match) return 0;
+  const numStr = match[0].replace('.', '');
+  return parseInt(numStr.slice(-1), 10);
+};
+
+// Analyze 1000 ticks for zone distribution
+const analyzeZoneDistribution = (ticks: number[]): ZoneAnalysis => {
+  const lowerZone = ticks.filter(d => d >= 0 && d <= 4);
+  const upperZone = ticks.filter(d => d >= 5 && d <= 9);
+  
+  const lowerCount = lowerZone.length;
+  const upperCount = upperZone.length;
+  const total = ticks.length;
+  
+  return {
+    lowerZone: lowerZone.map(d => d),
+    upperZone: upperZone.map(d => d),
+    lowerCount,
+    upperCount,
+    lowerPct: (lowerCount / total) * 100,
+    upperPct: (upperCount / total) * 100,
+    difference: Math.abs(upperCount - lowerCount),
+    dominantZone: upperCount > lowerCount ? 'upper' : lowerCount > upperCount ? 'lower' : 'balanced',
+  };
+};
+
+// Analyze last 20 ticks for confirmation
+const analyzeLastTicks = (ticks: number[], threshold: number = 4): LastTicksAnalysis => {
+  const last20 = ticks.slice(-20);
+  const over4Count = last20.filter(d => d > 4).length;
+  const under5Count = last20.filter(d => d < 5).length;
+  
+  // Check for spikes (sudden change in pattern)
+  const last5 = last20.slice(-5);
+  const prev5 = last20.slice(-10, -5);
+  const spikeDetected = Math.abs(
+    last5.filter(d => d > 4).length - prev5.filter(d => d > 4).length
+  ) >= 3;
+  
+  // Check if market is slow (tick pause simulation)
+  // In real implementation, this would check actual time between ticks
+  const isSlow = last20.length > 0; // Placeholder - would need timestamp data
+  
+  // Trend analysis
+  const recent = last20.slice(-10);
+  const older = last20.slice(-20, -10);
+  const recentOver = recent.filter(d => d > 4).length;
+  const olderOver = older.filter(d => d > 4).length;
+  
+  let trend: 'increasing' | 'decreasing' | 'stable' = 'stable';
+  if (recentOver > olderOver + 2) trend = 'increasing';
+  else if (recentOver < olderOver - 2) trend = 'decreasing';
+  
+  return {
+    ticks: last20,
+    over4Count,
+    under5Count,
+    over4Pct: (over4Count / 20) * 100,
+    under5Pct: (under5Count / 20) * 100,
+    trend,
+    hasSpike: spikeDetected,
+    isSlow,
+  };
+};
+
+// Analyze digit frequency
+const analyzeDigitFrequency = (ticks: number[]): {
+  frequencies: Record<number, number>;
+  percentages: Record<number, number>;
+  mostFrequent: DigitStats;
+  leastFrequent: DigitStats;
+  sortedDigits: DigitStats[];
+} => {
+  const frequencies: Record<number, number> = {};
+  for (let i = 0; i <= 9; i++) frequencies[i] = 0;
+  ticks.forEach(d => frequencies[d]++);
+  
+  const total = ticks.length;
+  const percentages: Record<number, number> = {};
+  const sorted: DigitStats[] = [];
+  
+  for (let i = 0; i <= 9; i++) {
+    const pct = (frequencies[i] / total) * 100;
+    percentages[i] = pct;
+    sorted.push({ digit: i, count: frequencies[i], percentage: pct });
+  }
+  
+  sorted.sort((a, b) => b.count - a.count);
+  
+  return {
+    frequencies,
+    percentages,
+    mostFrequent: sorted[0],
+    leastFrequent: sorted[sorted.length - 1],
+    sortedDigits: sorted,
+  };
+};
+
+// Check for reversal conditions (extreme digit appearance)
+const checkReversalConditions = (digitFreq: ReturnType<typeof analyzeDigitFrequency>): {
+  overboughtDigit: number | null;
+  oversoldDigit: number | null;
+  overboughtPct: number;
+  oversoldPct: number;
+} => {
+  let overboughtDigit: number | null = null;
+  let oversoldDigit: number | null = null;
+  let overboughtPct = 0;
+  let oversoldPct = 100;
+  
+  for (let i = 0; i <= 9; i++) {
+    const pct = digitFreq.percentages[i];
+    if (pct > 15) {
+      overboughtDigit = i;
+      overboughtPct = pct;
+    }
+    if (pct < 5 && oversoldPct > pct) {
+      oversoldDigit = i;
+      oversoldPct = pct;
+    }
+  }
+  
+  return { overboughtDigit, oversoldDigit, overboughtPct, oversoldPct };
+};
+
+// Generate signals based on 1000 ticks strategy
+const generateSignals = (
+  market: typeof ALL_MARKETS[0],
+  ticks: number[]
+): Omit<Signal, 'id' | 'timestamp' | 'priority'>[] => {
+  if (!ticks || ticks.length < 1000) return [];
+  
+  const signals: Omit<Signal, 'id' | 'timestamp' | 'priority'>[] = [];
+  
+  // STEP 2: Calculate zones
+  const zoneAnalysis = analyzeZoneDistribution(ticks);
+  const lastTicksAnalysis = analyzeLastTicks(ticks);
+  const digitFreq = analyzeDigitFrequency(ticks);
+  const reversalConditions = checkReversalConditions(digitFreq);
+  
+  // STEP 3: STRATEGY 1 - OVER 4 (BUY OVER)
+  // Entry: Upper zone > Lower zone, difference >= 60, digits 7,8,9 increasing, digit 0 or 1 weak
+  const isOver4Condition = 
+    zoneAnalysis.upperCount > zoneAnalysis.lowerCount &&
+    zoneAnalysis.difference >= 60 &&
+    lastTicksAnalysis.over4Pct > 50 &&
+    (digitFreq.percentages[0] < 8 || digitFreq.percentages[1] < 8) &&
+    !lastTicksAnalysis.hasSpike;
+  
+  if (isOver4Condition) {
+    let strength: SignalStrength = 'moderate';
+    let confidence = 65;
+    
+    // Strong confirmation
+    if (zoneAnalysis.difference >= 80 && lastTicksAnalysis.over4Pct >= 70) {
+      strength = 'critical';
+      confidence = 92;
+    } else if (zoneAnalysis.difference >= 70 && lastTicksAnalysis.over4Pct >= 60) {
+      strength = 'strong';
+      confidence = 82;
+    } else if (zoneAnalysis.difference >= 60 && lastTicksAnalysis.over4Pct >= 55) {
+      strength = 'moderate';
+      confidence = 72;
+    }
+    
+    // Check if digits 7,8,9 are strong
+    const strongDigits = [7, 8, 9].filter(d => digitFreq.percentages[d] > 10);
+    const weakDigits = [0, 1].filter(d => digitFreq.percentages[d] < 8);
+    
+    signals.push({
+      market,
+      type: 'over_4',
+      strength,
+      entryPrice: 'OVER 4',
+      confidence,
+      timeframe: '1m',
+      conditionMet: `Upper zone (5-9) at ${zoneAnalysis.upperPct.toFixed(1)}% vs Lower zone at ${zoneAnalysis.lowerPct.toFixed(1)}%. Difference: ${zoneAnalysis.difference} ticks. Strong digits: ${strongDigits.join(',')}. Weak digits: ${weakDigits.join(',')}. Last 20 ticks: ${lastTicksAnalysis.over4Pct.toFixed(0)}% over 4.`,
+      stats: {
+        lowerCount: zoneAnalysis.lowerCount,
+        upperCount: zoneAnalysis.upperCount,
+        difference: zoneAnalysis.difference,
+        last20OverPct: lastTicksAnalysis.over4Pct,
+        weakDigits,
+        strongDigits,
+        dominantDigit: digitFreq.mostFrequent.digit,
+        weakestDigit: digitFreq.leastFrequent.digit,
+      },
+    });
+  }
+  
+  // STRATEGY 2 - UNDER 5 (BUY UNDER)
+  // Entry: Lower zone > Upper zone, difference >= 60, digits 0,1,2 strong, digits 8,9 weak
+  const isUnder5Condition = 
+    zoneAnalysis.lowerCount > zoneAnalysis.upperCount &&
+    zoneAnalysis.difference >= 60 &&
+    lastTicksAnalysis.under5Pct > 50 &&
+    (digitFreq.percentages[8] < 8 || digitFreq.percentages[9] < 8) &&
+    !lastTicksAnalysis.hasSpike;
+  
+  if (isUnder5Condition) {
+    let strength: SignalStrength = 'moderate';
+    let confidence = 65;
+    
+    if (zoneAnalysis.difference >= 80 && lastTicksAnalysis.under5Pct >= 70) {
+      strength = 'critical';
+      confidence = 92;
+    } else if (zoneAnalysis.difference >= 70 && lastTicksAnalysis.under5Pct >= 60) {
+      strength = 'strong';
+      confidence = 82;
+    } else if (zoneAnalysis.difference >= 60 && lastTicksAnalysis.under5Pct >= 55) {
+      strength = 'moderate';
+      confidence = 72;
+    }
+    
+    const strongDigits = [0, 1, 2].filter(d => digitFreq.percentages[d] > 10);
+    const weakDigits = [8, 9].filter(d => digitFreq.percentages[d] < 8);
+    
+    signals.push({
+      market,
+      type: 'under_5',
+      strength,
+      entryPrice: 'UNDER 5',
+      confidence,
+      timeframe: '1m',
+      conditionMet: `Lower zone (0-4) at ${zoneAnalysis.lowerPct.toFixed(1)}% vs Upper zone at ${zoneAnalysis.upperPct.toFixed(1)}%. Difference: ${zoneAnalysis.difference} ticks. Strong digits: ${strongDigits.join(',')}. Weak digits: ${weakDigits.join(',')}. Last 20 ticks: ${lastTicksAnalysis.under5Pct.toFixed(0)}% under 5.`,
+      stats: {
+        lowerCount: zoneAnalysis.lowerCount,
+        upperCount: zoneAnalysis.upperCount,
+        difference: zoneAnalysis.difference,
+        last20OverPct: lastTicksAnalysis.under5Pct,
+        weakDigits,
+        strongDigits,
+        dominantDigit: digitFreq.mostFrequent.digit,
+        weakestDigit: digitFreq.leastFrequent.digit,
+      },
+    });
+  }
+  
+  // REVERSAL STRATEGY - OVER 0 or UNDER 9
+  if (reversalConditions.overboughtDigit !== null) {
+    const overbought = reversalConditions.overboughtDigit;
+    let type: SignalType = 'reversal_under';
+    let entryPrice = `UNDER ${overbought}`;
+    let conditionMet = `REVERSAL: Digit ${overbought} appears ${reversalConditions.overboughtPct.toFixed(1)}% (overbought). Market will balance → BUY UNDER ${overbought}`;
+    
+    if (overbought === 9) {
+      type = 'reversal_under';
+      entryPrice = 'UNDER 9';
+      conditionMet = `REVERSAL: Digit 9 appears ${reversalConditions.overboughtPct.toFixed(1)}% (overbought). Market will balance → BUY UNDER 9`;
+    } else if (overbought === 0) {
+      type = 'reversal_over';
+      entryPrice = 'OVER 0';
+      conditionMet = `REVERSAL: Digit 0 appears ${reversalConditions.overboughtPct.toFixed(1)}% (oversold). Market will balance → BUY OVER 0`;
+    }
+    
+    signals.push({
+      market,
+      type,
+      strength: reversalConditions.overboughtPct > 20 ? 'critical' : 'strong',
+      entryPrice,
+      confidence: Math.min(95, 70 + (reversalConditions.overboughtPct - 15) * 2),
+      timeframe: '1m',
+      conditionMet,
+      stats: {
+        lowerCount: zoneAnalysis.lowerCount,
+        upperCount: zoneAnalysis.upperCount,
+        difference: zoneAnalysis.difference,
+        last20OverPct: lastTicksAnalysis.over4Pct,
+        weakDigits: [digitFreq.leastFrequent.digit],
+        strongDigits: [digitFreq.mostFrequent.digit],
+        dominantDigit: digitFreq.mostFrequent.digit,
+        weakestDigit: digitFreq.leastFrequent.digit,
+      },
+      reversalInfo: {
+        overboughtDigit: reversalConditions.overboughtDigit,
+        oversoldDigit: reversalConditions.oversoldDigit || 0,
+      },
+    });
+  }
+  
+  if (reversalConditions.oversoldDigit !== null && reversalConditions.oversoldDigit !== reversalConditions.overboughtDigit) {
+    const oversold = reversalConditions.oversoldDigit;
+    let type: SignalType = 'reversal_over';
+    let entryPrice = `OVER ${oversold}`;
+    let conditionMet = `REVERSAL: Digit ${oversold} appears ${reversalConditions.oversoldPct.toFixed(1)}% (oversold). Market will balance → BUY OVER ${oversold}`;
+    
+    if (oversold === 0) {
+      type = 'reversal_over';
+      entryPrice = 'OVER 0';
+      conditionMet = `REVERSAL: Digit 0 appears ${reversalConditions.oversoldPct.toFixed(1)}% (oversold). Market will balance → BUY OVER 0`;
+    } else if (oversold === 9) {
+      type = 'reversal_under';
+      entryPrice = 'UNDER 9';
+      conditionMet = `REVERSAL: Digit 9 appears ${reversalConditions.oversoldPct.toFixed(1)}% (oversold). Market will balance → BUY UNDER 9`;
+    }
+    
+    signals.push({
+      market,
+      type,
+      strength: reversalConditions.oversoldPct < 3 ? 'critical' : 'strong',
+      entryPrice,
+      confidence: Math.min(95, 70 + (15 - reversalConditions.oversoldPct) * 2),
+      timeframe: '1m',
+      conditionMet,
+      stats: {
+        lowerCount: zoneAnalysis.lowerCount,
+        upperCount: zoneAnalysis.upperCount,
+        difference: zoneAnalysis.difference,
+        last20OverPct: lastTicksAnalysis.over4Pct,
+        weakDigits: [digitFreq.leastFrequent.digit],
+        strongDigits: [digitFreq.mostFrequent.digit],
+        dominantDigit: digitFreq.mostFrequent.digit,
+        weakestDigit: digitFreq.leastFrequent.digit,
+      },
+      reversalInfo: {
+        overboughtDigit: reversalConditions.overboughtDigit || 0,
+        oversoldDigit: reversalConditions.oversoldDigit,
+      },
+    });
+  }
+  
+  return signals;
+};
 
 // Main Signal Page Component
 export default function SignalPage() {
   const [activeSignals, setActiveSignals] = useState<Signal[]>([]);
   const [historicalSignals, setHistoricalSignals] = useState<Signal[]>([]);
   const [isScanning, setIsScanning] = useState(false);
-  const [selectedGroup, setSelectedGroup] = useState<string>('all');
+  const [selectedGroup, setSelectedGroup] = useState<string>('recommended');
   const [autoScan, setAutoScan] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
-  const [contractType, setContractType] = useState<'risefall' | 'evenodd' | 'overunder'>('overunder');
-  const [patternLength, setPatternLength] = useState<number | 'all'>(3);
-  const [tickCount, setTickCount] = useState<number>(1000);
-  const [showPatterns, setShowPatterns] = useState(false);
-  const [selectedDigitThreshold, setSelectedDigitThreshold] = useState<Record<string, number>>({});
+  const [showAdvancedStats, setShowAdvancedStats] = useState(false);
+  const [martingaleLevel, setMartingaleLevel] = useState(0);
+  const [balance, setBalance] = useState(1000);
+  const [stakePercent, setStakePercent] = useState(2);
   
   // Market data storage
   const ticksMap = useRef<Record<string, number[]>>({});
   const wsConnections = useRef<Record<string, WebSocket>>({});
+  const lastScanResults = useRef<Record<string, ReturnType<typeof generateSignals>>>({});
 
-  // Get last digit from price
-  const getLastDigit = (price: number): number => {
-    const priceStr = price.toString();
-    const match = priceStr.match(/\d+(?:\.\d+)?/);
-    if (!match) return 0;
-    const numStr = match[0].replace('.', '');
-    return parseInt(numStr.slice(-1), 10);
-  };
-
-  // Calculate percentages for a market
-  const calculatePercentages = useCallback((ticks: number[], threshold: number) => {
-    if (ticks.length === 0) return null;
-    
-    let evenCount = 0, oddCount = 0, overCount = 0, underCount = 0;
-    ticks.forEach(d => {
-      if (d % 2 === 0) evenCount++;
-      else oddCount++;
-      if (d > threshold) overCount++;
-      else if (d < threshold) underCount++;
-    });
-    const total = ticks.length;
-    
-    return {
-      evenPct: (evenCount / total) * 100,
-      oddPct: (oddCount / total) * 100,
-      overPct: (overCount / total) * 100,
-      underPct: (underCount / total) * 100,
-      total,
-    };
-  }, []);
-
-  // Analyze patterns for over/under signals
-  const analyzePatterns = useCallback((ticks: number[], threshold: number, patternLen: number) => {
-    if (ticks.length < patternLen + 10) return null;
-    
-    const patterns: Record<string, { wins: number; total: number; winDigits: number[] }> = {};
-    
-    for (let i = 0; i < ticks.length - patternLen; i++) {
-      const pattern = ticks.slice(i, i + patternLen).join('');
-      const nextDigit = ticks[i + patternLen];
-      const isOver = nextDigit > threshold;
-      
-      if (!patterns[pattern]) {
-        patterns[pattern] = { wins: 0, total: 0, winDigits: [] };
-      }
-      patterns[pattern].total++;
-      if (isOver) {
-        patterns[pattern].wins++;
-        patterns[pattern].winDigits.push(nextDigit);
-        if (patterns[pattern].winDigits.length > 13) patterns[pattern].winDigits.shift();
-      }
+  // Get filtered markets
+  const getFilteredMarkets = useCallback(() => {
+    if (selectedGroup === 'recommended') {
+      return ALL_MARKETS.filter(m => m.recommended);
     }
-    
-    // Find patterns with highest win rate
-    const patternStats = Object.entries(patterns)
-      .map(([pattern, stats]) => ({
-        pattern,
-        winRate: (stats.wins / stats.total) * 100,
-        wins: stats.wins,
-        total: stats.total,
-        recentWins: stats.winDigits.slice(-5),
-      }))
-      .filter(p => p.total >= 5)
-      .sort((a, b) => b.winRate - a.winRate);
-    
-    return patternStats.slice(0, 5);
-  }, []);
-
-  // Check for over/under signals (ensure exactly 3 signals)
-  const checkOverUnderSignals = useCallback((
-    markets: typeof ALL_MARKETS[],
-    ticksData: Record<string, number[]>,
-    thresholds: Record<string, number>
-  ): OverUnderSignal[] => {
-    const overUnderSignals: OverUnderSignal[] = [];
-    
-    for (const market of markets) {
-      const ticks = ticksData[market.symbol];
-      if (!ticks || ticks.length < 100) continue;
-      
-      const threshold = thresholds[market.symbol] || 5;
-      const percentages = calculatePercentages(ticks.slice(-tickCount), threshold);
-      if (!percentages) continue;
-      
-      // Check over signal (digits > threshold)
-      if (percentages.overPct >= 55) {
-        let strength: SignalStrength = 'weak';
-        if (percentages.overPct >= 75) strength = 'critical';
-        else if (percentages.overPct >= 65) strength = 'strong';
-        else if (percentages.overPct >= 55) strength = 'moderate';
-        
-        // Analyze patterns for confirmation
-        const patterns = analyzePatterns(ticks.slice(-500), threshold, 
-          typeof patternLength === 'number' ? patternLength : 3);
-        const patternConfidence = patterns && patterns[0]?.winRate || 50;
-        
-        overUnderSignals.push({
-          type: 'over',
-          market,
-          percentage: percentages.overPct,
-          threshold,
-          strength,
-          recentDigits: ticks.slice(-30),
-          patternConfidence,
-        });
-      }
-      
-      // Check under signal (digits < threshold)
-      if (percentages.underPct >= 55) {
-        let strength: SignalStrength = 'weak';
-        if (percentages.underPct >= 75) strength = 'critical';
-        else if (percentages.underPct >= 65) strength = 'strong';
-        else if (percentages.underPct >= 55) strength = 'moderate';
-        
-        const patterns = analyzePatterns(ticks.slice(-500), threshold,
-          typeof patternLength === 'number' ? patternLength : 3);
-        const patternConfidence = patterns && patterns[0]?.winRate || 50;
-        
-        overUnderSignals.push({
-          type: 'under',
-          market,
-          percentage: percentages.underPct,
-          threshold,
-          strength,
-          recentDigits: ticks.slice(-30),
-          patternConfidence,
-        });
-      }
-    }
-    
-    // Sort by strength and pattern confidence
-    const strengthOrder = { critical: 4, strong: 3, moderate: 2, weak: 1 };
-    const sortedSignals = overUnderSignals.sort((a, b) => {
-      const strengthDiff = strengthOrder[b.strength] - strengthOrder[a.strength];
-      if (strengthDiff !== 0) return strengthDiff;
-      return b.patternConfidence - a.patternConfidence;
+    if (selectedGroup === 'all') return ALL_MARKETS;
+    return ALL_MARKETS.filter(m => {
+      if (selectedGroup === 'vol') return VOLATILITIES.vol.includes(m.symbol);
+      if (selectedGroup === 'jump') return VOLATILITIES.jump.includes(m.symbol);
+      if (selectedGroup === 'bull') return VOLATILITIES.bull.includes(m.symbol);
+      if (selectedGroup === 'bear') return VOLATILITIES.bear.includes(m.symbol);
+      return false;
     });
-    
-    // Return exactly 3 signals (or all if less than 3)
-    return sortedSignals.slice(0, 3);
-  }, [tickCount, patternLength, calculatePercentages, analyzePatterns]);
+  }, [selectedGroup]);
 
-  // Check for odd/even signals
-  const checkOddEvenSignals = useCallback((
-    markets: typeof ALL_MARKETS[],
-    ticksData: Record<string, number[]>
-  ): Omit<Signal, 'id' | 'timestamp' | 'priority' | 'recentDigits' | 'patternLength' | 'threshold'>[] => {
-    const signals: Omit<Signal, 'id' | 'timestamp' | 'priority' | 'recentDigits' | 'patternLength' | 'threshold'>[] = [];
-    
-    for (const market of markets) {
-      const ticks = ticksData[market.symbol];
-      if (!ticks || ticks.length < 100) continue;
-      
-      const percentages = calculatePercentages(ticks.slice(-tickCount), 5);
-      if (!percentages) continue;
-      
-      // Odd signal
-      if (percentages.oddPct >= 55) {
-        let strength: SignalStrength = 'weak';
-        let conditionMet = '';
-        
-        if (percentages.oddPct >= 75) {
-          strength = 'critical';
-          conditionMet = `CRITICAL: Odd digits at ${percentages.oddPct.toFixed(1)}% (75%+) → Extreme odd bias! 🔥`;
-        } else if (percentages.oddPct >= 65) {
-          strength = 'strong';
-          conditionMet = `STRONG: Odd digits at ${percentages.oddPct.toFixed(1)}% (65%+) → Strong odd bias`;
-        } else if (percentages.oddPct >= 55) {
-          strength = 'moderate';
-          conditionMet = `MODERATE: Odd digits at ${percentages.oddPct.toFixed(1)}% (55%+) → Odd bias confirmed`;
-        } else {
-          conditionMet = `WEAK: Odd digits at ${percentages.oddPct.toFixed(1)}% → Approaching odd threshold`;
-        }
-        
-        signals.push({
-          market,
-          type: 'odd',
-          strength,
-          percentage: percentages.oddPct,
-          timeframe: '1m',
-          conditionMet,
-        });
-      }
-      
-      // Even signal
-      if (percentages.evenPct >= 55) {
-        let strength: SignalStrength = 'weak';
-        let conditionMet = '';
-        
-        if (percentages.evenPct >= 75) {
-          strength = 'critical';
-          conditionMet = `CRITICAL: Even digits at ${percentages.evenPct.toFixed(1)}% (75%+) → Extreme even bias! 🔥`;
-        } else if (percentages.evenPct >= 65) {
-          strength = 'strong';
-          conditionMet = `STRONG: Even digits at ${percentages.evenPct.toFixed(1)}% (65%+) → Strong even bias`;
-        } else if (percentages.evenPct >= 55) {
-          strength = 'moderate';
-          conditionMet = `MODERATE: Even digits at ${percentages.evenPct.toFixed(1)}% (55%+) → Even bias confirmed`;
-        } else {
-          conditionMet = `WEAK: Even digits at ${percentages.evenPct.toFixed(1)}% → Approaching even threshold`;
-        }
-        
-        signals.push({
-          market,
-          type: 'even',
-          strength,
-          percentage: percentages.evenPct,
-          timeframe: '1m',
-          conditionMet,
-        });
-      }
-    }
-    
-    return signals;
-  }, [tickCount, calculatePercentages]);
-
-  // Generate final signals (exactly 3 over/under + up to 3 odd/even)
-  const generateSignals = useCallback(() => {
-    const marketsToScan = selectedGroup === 'all' 
-      ? ALL_MARKETS 
-      : ALL_MARKETS.filter(m => {
-          if (selectedGroup === 'vol') return VOLATILITIES.vol.includes(m.symbol);
-          if (selectedGroup === 'jump') return VOLATILITIES.jump.includes(m.symbol);
-          if (selectedGroup === 'bull') return VOLATILITIES.bull.includes(m.symbol);
-          if (selectedGroup === 'bear') return VOLATILITIES.bear.includes(m.symbol);
-          return false;
-        });
-    
-    // Get exactly 3 over/under signals
-    const overUnderSignals = checkOverUnderSignals(marketsToScan, ticksMap.current, selectedDigitThreshold);
-    
-    // Get odd/even signals for additional slots
-    const oddEvenSignals = checkOddEvenSignals(marketsToScan, ticksMap.current);
-    
-    // Combine: first 3 are over/under, then fill with odd/even up to 6 total
-    const combinedSignals: Omit<Signal, 'id' | 'timestamp' | 'priority'>[] = [];
-    
-    overUnderSignals.forEach(signal => {
-      combinedSignals.push({
-        market: signal.market,
-        type: signal.type,
-        strength: signal.strength,
-        percentage: signal.percentage,
-        threshold: signal.threshold,
-        timeframe: '1m',
-        conditionMet: `${signal.type.toUpperCase()} SIGNAL: ${signal.percentage.toFixed(1)}% of digits ${signal.type === 'over' ? '>' : '<'} ${signal.threshold}. Pattern confidence: ${signal.patternConfidence.toFixed(1)}%`,
-        recentDigits: signal.recentDigits,
-        patternLength: typeof patternLength === 'number' ? patternLength : 3,
-      });
-    });
-    
-    // Add odd/even signals up to 6 total
-    const remainingSlots = Math.max(0, 6 - combinedSignals.length);
-    const oddEvenToAdd = oddEvenSignals.slice(0, remainingSlots);
-    oddEvenToAdd.forEach(signal => {
-      combinedSignals.push({
-        ...signal,
-        threshold: 5,
-        recentDigits: ticksMap.current[signal.market.symbol]?.slice(-30) || [],
-        patternLength: 0,
-      });
-    });
-    
-    // Add priority numbers
-    return combinedSignals.map((signal, idx) => ({
-      ...signal,
-      id: `${signal.market.symbol}-${Date.now()}-${idx}`,
-      timestamp: Date.now(),
-      priority: idx + 1,
-    }));
-  }, [selectedGroup, checkOverUnderSignals, checkOddEvenSignals, selectedDigitThreshold, patternLength]);
-
-  // Scan all markets
+  // Scan all markets for signals (exactly 4 over/under signals)
   const scanMarkets = useCallback(() => {
     setIsScanning(true);
     
     setTimeout(() => {
-      const signals = generateSignals();
-      setActiveSignals(signals);
+      const marketsToScan = getFilteredMarkets();
+      const allSignals: Omit<Signal, 'id' | 'timestamp' | 'priority'>[] = [];
+      
+      marketsToScan.forEach(market => {
+        const ticks = ticksMap.current[market.symbol];
+        if (ticks && ticks.length >= 1000) {
+          const signals = generateSignals(market, ticks);
+          allSignals.push(...signals);
+        }
+      });
+      
+      // Sort by confidence (highest first)
+      const sortedSignals = allSignals.sort((a, b) => b.confidence - a.confidence);
+      
+      // Take exactly 4 signals for over/under
+      const overUnderSignals = sortedSignals.filter(s => 
+        s.type === 'over_4' || s.type === 'under_5' || 
+        s.type === 'reversal_over' || s.type === 'reversal_under'
+      );
+      
+      // Ensure exactly 4 signals (or less if not enough)
+      const selectedSignals = overUnderSignals.slice(0, 4);
+      
+      // Add metadata
+      const finalSignals: Signal[] = selectedSignals.map((signal, idx) => ({
+        ...signal,
+        id: `${signal.market.symbol}-${Date.now()}-${idx}`,
+        timestamp: Date.now(),
+        priority: idx + 1,
+      }));
+      
+      setActiveSignals(finalSignals);
       
       // Add to historical
       setHistoricalSignals(prev => {
-        const combined = [...signals, ...prev];
+        const combined = [...finalSignals, ...prev];
         return combined.slice(0, 30);
       });
       
       setLastUpdate(new Date());
       setIsScanning(false);
       
-      const overUnderCount = signals.filter(s => s.type === 'over' || s.type === 'under').length;
-      const criticalCount = signals.filter(s => s.strength === 'critical').length;
-      
-      if (signals.length > 0) {
+      if (finalSignals.length > 0) {
+        const criticalCount = finalSignals.filter(s => s.strength === 'critical').length;
         toast.success(
-          `📡 ${signals.length} signal${signals.length > 1 ? 's' : ''} detected! ` +
-          `(${overUnderCount} over/under, ${criticalCount > 0 ? `${criticalCount} critical 🔥` : ''})`
+          `📡 ${finalSignals.length} over/under signal${finalSignals.length > 1 ? 's' : ''} detected! ` +
+          `${criticalCount > 0 ? `${criticalCount} critical 🔥 ` : ''}Based on 1000 ticks analysis`
         );
       } else {
-        toast.info('No signals detected in this scan cycle');
+        toast.info('No strong signals detected. Waiting for market imbalance...');
       }
     }, 500);
-  }, [generateSignals]);
+  }, [getFilteredMarkets]);
 
   // Auto-scan interval
   useEffect(() => {
@@ -418,7 +576,7 @@ export default function SignalPage() {
       const ticks: number[] = [];
       
       ws.onopen = () => {
-        ws.send(JSON.stringify({ ticks_history: symbol, count: tickCount, end: "latest", style: "ticks" }));
+        ws.send(JSON.stringify({ ticks_history: symbol, count: 1000, end: "latest", style: "ticks" }));
       };
       
       ws.onmessage = (msg) => {
@@ -436,7 +594,7 @@ export default function SignalPage() {
         if (data.tick?.quote) {
           const digit = getLastDigit(data.tick.quote);
           if (!isNaN(digit)) {
-            if (ticks.length >= 4000) ticks.shift();
+            if (ticks.length >= 2000) ticks.shift();
             ticks.push(digit);
             ticksMap.current[symbol] = [...ticks];
           }
@@ -452,42 +610,36 @@ export default function SignalPage() {
       wsConnections.current[symbol] = ws;
     };
     
-    // Connect to all markets
-    const allSymbols = selectedGroup === 'all' 
-      ? ALL_MARKETS.map(m => m.symbol)
-      : ALL_MARKETS.filter(m => {
-          if (selectedGroup === 'vol') return VOLATILITIES.vol.includes(m.symbol);
-          if (selectedGroup === 'jump') return VOLATILITIES.jump.includes(m.symbol);
-          if (selectedGroup === 'bull') return VOLATILITIES.bull.includes(m.symbol);
-          if (selectedGroup === 'bear') return VOLATILITIES.bear.includes(m.symbol);
-          return false;
-        }).map(m => m.symbol);
-    
-    allSymbols.forEach(connectMarket);
+    const markets = getFilteredMarkets();
+    markets.forEach(m => connectMarket(m.symbol));
     
     return () => {
       Object.values(wsConnections.current).forEach(ws => ws.close());
       wsConnections.current = {};
     };
-  }, [selectedGroup, tickCount]);
-
-  // Update thresholds for individual markets
-  const updateThreshold = (symbol: string, value: number) => {
-    setSelectedDigitThreshold(prev => ({ ...prev, [symbol]: value }));
-  };
+  }, [selectedGroup]);
 
   const getSignalStats = useMemo(() => {
     const total = activeSignals.length;
     const critical = activeSignals.filter(s => s.strength === 'critical').length;
     const strong = activeSignals.filter(s => s.strength === 'strong').length;
     const moderate = activeSignals.filter(s => s.strength === 'moderate').length;
-    const weak = activeSignals.filter(s => s.strength === 'weak').length;
-    const overUnder = activeSignals.filter(s => s.type === 'over' || s.type === 'under').length;
-    return { total, critical, strong, moderate, weak, overUnder };
+    const over4 = activeSignals.filter(s => s.type === 'over_4').length;
+    const under5 = activeSignals.filter(s => s.type === 'under_5').length;
+    const reversal = activeSignals.filter(s => s.type === 'reversal_over' || s.type === 'reversal_under').length;
+    return { total, critical, strong, moderate, over4, under5, reversal };
   }, [activeSignals]);
 
-  // Get market groups for filter
+  // Calculate suggested stake based on balance and martingale
+  const suggestedStake = useMemo(() => {
+    const baseStake = (balance * stakePercent) / 100;
+    const multiplier = Math.pow(2, martingaleLevel);
+    return (baseStake * multiplier).toFixed(2);
+  }, [balance, stakePercent, martingaleLevel]);
+
+  // Groups for filter
   const groups = [
+    { value: 'recommended', label: '⭐ Recommended (Vol 25/50)' },
     { value: 'all', label: 'All Markets' },
     { value: 'vol', label: 'Volatility' },
     { value: 'jump', label: 'Jump' },
@@ -498,17 +650,14 @@ export default function SignalPage() {
   // Signal Card Component
   const SignalCard: React.FC<{ signal: Signal; index: number }> = ({ signal, index }) => {
     const getSignalIcon = () => {
-      if (signal.type === 'over') return <ArrowUp className="w-5 h-5" />;
-      if (signal.type === 'under') return <ArrowDown className="w-5 h-5" />;
-      if (signal.type === 'odd') return <Activity className="w-5 h-5" />;
+      if (signal.type === 'over_4' || signal.type === 'reversal_over') return <ArrowUp className="w-5 h-5" />;
+      if (signal.type === 'under_5' || signal.type === 'reversal_under') return <ArrowDown className="w-5 h-5" />;
       return <Target className="w-5 h-5" />;
     };
 
     const getSignalColor = () => {
-      if (signal.type === 'over') return 'from-emerald-500 to-green-600';
-      if (signal.type === 'under') return 'from-rose-500 to-red-600';
-      if (signal.type === 'odd') return 'from-amber-500 to-orange-600';
-      return 'from-sky-500 to-blue-600';
+      if (signal.type === 'over_4' || signal.type === 'reversal_over') return 'from-emerald-500 to-green-600';
+      return 'from-rose-500 to-red-600';
     };
 
     const getStrengthColor = () => {
@@ -522,10 +671,20 @@ export default function SignalPage() {
 
     const getStrengthText = () => {
       switch (signal.strength) {
-        case 'critical': return '🔥 Critical';
-        case 'strong': return '⚡ Strong';
-        case 'moderate': return '📊 Moderate';
-        default: return '⚠️ Weak';
+        case 'critical': return '🔥 CRITICAL';
+        case 'strong': return '⚡ STRONG';
+        case 'moderate': return '📊 MODERATE';
+        default: return '⚠️ WEAK';
+      }
+    };
+
+    const getEntryDisplay = () => {
+      switch (signal.type) {
+        case 'over_4': return 'BUY OVER 4';
+        case 'under_5': return 'BUY UNDER 5';
+        case 'reversal_over': return signal.entryPrice;
+        case 'reversal_under': return signal.entryPrice;
+        default: return signal.entryPrice;
       }
     };
 
@@ -566,21 +725,41 @@ export default function SignalPage() {
             </div>
 
             <div className="space-y-3">
+              {/* Entry Price Display */}
+              <div className="bg-primary/10 rounded-lg p-3 text-center">
+                <div className="text-xs text-muted-foreground mb-1">RECOMMENDED ENTRY</div>
+                <div className="font-mono text-xl font-bold text-primary">{getEntryDisplay()}</div>
+                <div className="text-xs text-muted-foreground mt-1">Confidence: {signal.confidence}%</div>
+              </div>
+
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground capitalize">
-                  {signal.type.toUpperCase()} Signal
-                  {signal.type === 'over' || signal.type === 'under' ? ` (Threshold: ${signal.threshold})` : ''}
+                <span className="text-muted-foreground">Market Imbalance</span>
+                <span className="font-mono font-bold">
+                  Upper: {signal.stats.upperCount} | Lower: {signal.stats.lowerCount}
                 </span>
-                <span className="font-mono font-bold text-lg">{signal.percentage.toFixed(1)}%</span>
               </div>
               
               <div className="relative h-2 bg-muted rounded-full overflow-hidden">
+                <div className="absolute inset-y-0 left-0 w-1/2 bg-emerald-500/30 rounded-l-full" />
+                <div className="absolute inset-y-0 right-0 w-1/2 bg-rose-500/30 rounded-r-full" />
                 <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: `${Math.min(100, signal.percentage)}%` }}
-                  transition={{ duration: 0.8 }}
-                  className={`absolute inset-y-0 left-0 rounded-full bg-gradient-to-r ${getSignalColor()}`}
+                  initial={{ x: 0 }}
+                  animate={{ x: `${(signal.stats.upperCount / (signal.stats.upperCount + signal.stats.lowerCount)) * 100}%` }}
+                  className="absolute w-1 h-4 bg-primary rounded-full -top-1"
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-emerald-500/10 rounded p-2 text-center">
+                  <div className="text-emerald-400">Upper Zone (5-9)</div>
+                  <div className="font-mono font-bold">{signal.stats.upperCount}</div>
+                  <div className="text-[10px]">{((signal.stats.upperCount / 1000) * 100).toFixed(1)}%</div>
+                </div>
+                <div className="bg-rose-500/10 rounded p-2 text-center">
+                  <div className="text-rose-400">Lower Zone (0-4)</div>
+                  <div className="font-mono font-bold">{signal.stats.lowerCount}</div>
+                  <div className="text-[10px]">{((signal.stats.lowerCount / 1000) * 100).toFixed(1)}%</div>
+                </div>
               </div>
 
               <div className="flex items-center gap-2 text-xs bg-muted/30 rounded-lg p-2">
@@ -588,25 +767,14 @@ export default function SignalPage() {
                 <span className="text-muted-foreground">{signal.conditionMet}</span>
               </div>
 
-              {/* Recent digits display */}
-              {'recentDigits' in signal && signal.recentDigits && (
-                <div className="flex flex-wrap gap-1 justify-center">
-                  {signal.recentDigits.slice(-15).map((d, i) => {
-                    const isOver = d > signal.threshold;
-                    const isUnder = d < signal.threshold;
-                    return (
-                      <span
-                        key={i}
-                        className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-mono font-bold ${
-                          isOver ? 'bg-emerald-500/20 text-emerald-400' :
-                          isUnder ? 'bg-rose-500/20 text-rose-400' :
-                          'bg-muted text-muted-foreground'
-                        }`}
-                      >
-                        {d}
-                      </span>
-                    );
-                  })}
+              {showAdvancedStats && (
+                <div className="grid grid-cols-2 gap-2 text-[10px] bg-muted/20 rounded-lg p-2">
+                  <div>Difference: {signal.stats.difference} ticks</div>
+                  <div>Last 20: {signal.stats.last20OverPct.toFixed(0)}% over</div>
+                  <div>Strong digits: {signal.stats.strongDigits.join(',') || 'none'}</div>
+                  <div>Weak digits: {signal.stats.weakDigits.join(',') || 'none'}</div>
+                  <div>Most frequent: {signal.stats.dominantDigit}</div>
+                  <div>Least frequent: {signal.stats.weakestDigit}</div>
                 </div>
               )}
 
@@ -614,9 +782,12 @@ export default function SignalPage() {
                 <div className="flex items-center gap-1 text-xs">
                   <Gauge className="w-3 h-3 text-muted-foreground" />
                   <span>Volatility: {signal.market.baseVol}</span>
+                  {signal.market.recommended && (
+                    <Badge className="bg-emerald-500/20 text-emerald-400 text-[8px]">⭐ Recommended</Badge>
+                  )}
                 </div>
                 <div className="flex items-center gap-1">
-                  <span className="text-[10px] text-muted-foreground">Priority: {signal.priority}/6</span>
+                  <span className="text-[10px] text-muted-foreground">Priority: {signal.priority}/4</span>
                   <Signal className="w-4 h-4 text-primary" />
                 </div>
               </div>
@@ -643,10 +814,10 @@ export default function SignalPage() {
               </div>
               <div>
                 <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-                  Volatility Signal Scanner
+                  1000 Ticks Over/Under Strategy
                 </h1>
                 <p className="text-sm text-muted-foreground">
-                  Exactly 3 over/under signals | Real-time digit analysis | Pattern detection
+                  High accuracy | Zone imbalance detection | Reversal strategy | Exactly 4 signals
                 </p>
               </div>
             </div>
@@ -674,65 +845,58 @@ export default function SignalPage() {
             </div>
           </motion.div>
 
-          {/* Settings Panel */}
+          {/* Money Management Panel */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6"
+            className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6 p-4 bg-gradient-to-r from-emerald-500/10 to-rose-500/10 rounded-xl border border-border/50"
           >
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Contract Type</label>
-              <Select value={contractType} onValueChange={(v: any) => setContractType(v)}>
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="overunder">Over/Under</SelectItem>
-                  <SelectItem value="evenodd">Even/Odd</SelectItem>
-                  <SelectItem value="risefall">Rise/Fall</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Pattern Length</label>
-              <Select value={patternLength === 'all' ? 'all' : String(patternLength)} onValueChange={(v) => setPatternLength(v === 'all' ? 'all' : parseInt(v))}>
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Lengths</SelectItem>
-                  <SelectItem value="1">1 Digit</SelectItem>
-                  <SelectItem value="2">2 Digits</SelectItem>
-                  <SelectItem value="3">3 Digits</SelectItem>
-                  <SelectItem value="4">4 Digits</SelectItem>
-                  <SelectItem value="5">5 Digits</SelectItem>
-                  <SelectItem value="6">6 Digits</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Tick Count</label>
+              <label className="text-xs text-muted-foreground mb-1 block">Account Balance</label>
               <Input
                 type="number"
-                value={tickCount}
-                onChange={(e) => setTickCount(parseInt(e.target.value) || 1000)}
-                className="h-9 text-sm"
-                min={100}
-                max={5000}
+                value={balance}
+                onChange={(e) => setBalance(parseFloat(e.target.value) || 0)}
+                className="h-9 text-sm font-mono"
+                prefix="$"
               />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Show Patterns</label>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowPatterns(!showPatterns)}
-                className="w-full h-9 gap-2"
-              >
-                {showPatterns ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                {showPatterns ? 'Hide' : 'Show'} Patterns
-              </Button>
+              <label className="text-xs text-muted-foreground mb-1 block">Risk % per Trade</label>
+              <Input
+                type="number"
+                value={stakePercent}
+                onChange={(e) => setStakePercent(parseFloat(e.target.value) || 2)}
+                className="h-9 text-sm"
+                min={1}
+                max={10}
+                step={0.5}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Martingale Level</label>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setMartingaleLevel(Math.max(0, martingaleLevel - 1))}
+                  className="h-9 w-9"
+                >-</Button>
+                <span className="font-mono font-bold w-8 text-center">{martingaleLevel}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setMartingaleLevel(Math.min(2, martingaleLevel + 1))}
+                  className="h-9 w-9"
+                >+</Button>
+                <span className="text-xs text-muted-foreground ml-2">Max 2 levels</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Suggested Stake</label>
+              <div className="text-2xl font-bold text-primary">${suggestedStake}</div>
+              <div className="text-[10px] text-muted-foreground">{stakePercent}% of balance × {Math.pow(2, martingaleLevel)}x</div>
             </div>
           </motion.div>
 
@@ -741,7 +905,7 @@ export default function SignalPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="grid grid-cols-2 md:grid-cols-6 gap-4 mt-6"
+            className="grid grid-cols-2 md:grid-cols-7 gap-4 mt-6"
           >
             <div className="bg-card/50 rounded-xl border border-border/50 p-3">
               <div className="flex items-center gap-2 text-muted-foreground mb-1">
@@ -749,7 +913,7 @@ export default function SignalPage() {
                 <span className="text-xs">Active Signals</span>
               </div>
               <div className="text-2xl font-bold">{getSignalStats.total}</div>
-              <div className="text-[10px] text-muted-foreground">Max 6 signals</div>
+              <div className="text-[10px] text-muted-foreground">Exactly 4 signals</div>
             </div>
             <div className="bg-card/50 rounded-xl border border-border/50 p-3">
               <div className="flex items-center gap-2 text-red-400 mb-1">
@@ -767,23 +931,28 @@ export default function SignalPage() {
             </div>
             <div className="bg-card/50 rounded-xl border border-border/50 p-3">
               <div className="flex items-center gap-2 text-amber-400 mb-1">
-                <Activity className="w-4 h-4" />
-                <span className="text-xs">Moderate</span>
+                <ArrowUp className="w-4 h-4" />
+                <span className="text-xs">Over 4</span>
               </div>
-              <div className="text-2xl font-bold text-amber-400">{getSignalStats.moderate}</div>
+              <div className="text-2xl font-bold text-amber-400">{getSignalStats.over4}</div>
             </div>
             <div className="bg-card/50 rounded-xl border border-border/50 p-3">
-              <div className="flex items-center gap-2 text-primary mb-1">
-                <ArrowUp className="w-4 h-4" />
-                <ArrowDown className="w-4 h-4 -ml-1" />
-                <span className="text-xs">Over/Under</span>
+              <div className="flex items-center gap-2 text-rose-400 mb-1">
+                <ArrowDown className="w-4 h-4" />
+                <span className="text-xs">Under 5</span>
               </div>
-              <div className="text-2xl font-bold">{getSignalStats.overUnder}</div>
-              <div className="text-[10px] text-muted-foreground">Exactly 3 guaranteed</div>
+              <div className="text-2xl font-bold text-rose-400">{getSignalStats.under5}</div>
+            </div>
+            <div className="bg-card/50 rounded-xl border border-border/50 p-3">
+              <div className="flex items-center gap-2 text-purple-400 mb-1">
+                <RefreshCw className="w-4 h-4" />
+                <span className="text-xs">Reversal</span>
+              </div>
+              <div className="text-2xl font-bold text-purple-400">{getSignalStats.reversal}</div>
             </div>
             <div className="bg-card/50 rounded-xl border border-border/50 p-3">
               <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                <Clock className="w-4 h-4" />
+                <Timer className="w-4 h-4" />
                 <span className="text-xs">Last Scan</span>
               </div>
               <div className="text-sm font-mono">{lastUpdate.toLocaleTimeString()}</div>
@@ -796,22 +965,27 @@ export default function SignalPage() {
       <div className="container mx-auto px-4 py-6">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-2 flex-wrap">
-            <Badge variant="outline" className="gap-1">
-              <BarChart3 className="w-3 h-3" />
-              Markets: {selectedGroup === 'all' ? ALL_MARKETS.length : 
-                selectedGroup === 'vol' ? VOLATILITIES.vol.length :
-                selectedGroup === 'jump' ? VOLATILITIES.jump.length :
-                selectedGroup === 'bull' ? VOLATILITIES.bull.length :
-                VOLATILITIES.bear.length}
-            </Badge>
             <Badge variant="outline" className="gap-1 bg-emerald-500/10 border-emerald-500/30">
-              <ArrowUp className="w-3 h-3 text-emerald-400" />
-              Over: > threshold (≥55%)
+              <Brain className="w-3 h-3 text-emerald-400" />
+              1000 Ticks Analysis
             </Badge>
-            <Badge variant="outline" className="gap-1 bg-rose-500/10 border-rose-500/30">
-              <ArrowDown className="w-3 h-3 text-rose-400" />
-              Under: < threshold (≥55%)
+            <Badge variant="outline" className="gap-1">
+              <Layers className="w-3 h-3" />
+              Zone: Upper (5-9) vs Lower (0-4)
             </Badge>
+            <Badge variant="outline" className="gap-1">
+              <Shield className="w-3 h-3" />
+              Min difference: 60 ticks
+            </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowAdvancedStats(!showAdvancedStats)}
+              className="text-xs gap-1"
+            >
+              {showAdvancedStats ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+              {showAdvancedStats ? 'Hide' : 'Show'} Advanced Stats
+            </Button>
           </div>
           
           <div className="flex gap-2 flex-wrap">
@@ -823,43 +997,39 @@ export default function SignalPage() {
                 onClick={() => setSelectedGroup(group.value)}
                 className="text-xs"
               >
+                {group.value === 'recommended' && <Star className="w-3 h-3 mr-1" />}
                 {group.label}
               </Button>
             ))}
           </div>
         </div>
 
-        {/* Threshold Settings for Each Market */}
-        <div className="mb-6 p-4 bg-card/30 rounded-xl border border-border/50">
-          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-            <Target className="w-4 h-4 text-primary" />
-            Digit Threshold Settings (Over/Under detection)
-          </h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
-            {ALL_MARKETS.slice(0, 12).map(market => (
-              <div key={market.symbol} className="flex items-center gap-2">
-                <span className="text-[10px] font-mono truncate max-w-[60px]">{market.symbol}</span>
-                <Input
-                  type="number"
-                  min="0"
-                  max="9"
-                  value={selectedDigitThreshold[market.symbol] ?? 5}
-                  onChange={(e) => updateThreshold(market.symbol, parseInt(e.target.value) || 5)}
-                  className="h-7 w-14 text-xs text-center"
-                />
+        {/* Strategy Info Banner */}
+        <div className="mb-6 p-4 bg-gradient-to-r from-primary/5 to-primary/10 rounded-xl border border-primary/20">
+          <div className="flex items-start gap-3">
+            <Award className="w-8 h-8 text-primary" />
+            <div>
+              <h3 className="font-semibold text-sm">🎯 1000 Ticks Over/Under Strategy</h3>
+              <div className="text-xs text-muted-foreground mt-1 grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div>✅ Entry: Upper/Lower zone difference ≥ 60 ticks</div>
+                <div>✅ Confirmation: Last 20 ticks majority in direction</div>
+                <div>✅ Reversal: Extreme digit appearance (overbought/oversold)</div>
+                <div>✅ Avoid: Volatility 100 & 1s indices (too random)</div>
+                <div>✅ Money Management: 2-5% stake, max 2 martingale levels</div>
+                <div>✅ Timing: Wait for tick pause or repeated patterns</div>
               </div>
-            ))}
+            </div>
           </div>
         </div>
         
-        {/* Active Signals Grid */}
+        {/* Active Signals Grid - Exactly 4 Over/Under Signals */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <Zap className="w-5 h-5 text-primary" />
-              Active Signals
+              Over/Under Signals
               <Badge variant="secondary" className="ml-2">
-                {activeSignals.length}/6 signals | {activeSignals.filter(s => s.type === 'over' || s.type === 'under').length} over/under
+                {activeSignals.length}/4 signals | Based on 1000 ticks
               </Badge>
             </h2>
             {isScanning && (
@@ -876,11 +1046,12 @@ export default function SignalPage() {
               className="text-center py-12 bg-card/30 rounded-xl border border-dashed border-border"
             >
               <Signal className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-50" />
-              <p className="text-muted-foreground">No active signals at the moment</p>
-              <p className="text-xs text-muted-foreground mt-1">Scanning markets for over/under patterns...</p>
+              <p className="text-muted-foreground">No strong signals at the moment</p>
+              <p className="text-xs text-muted-foreground mt-1">Waiting for zone imbalance ≥ 60 ticks...</p>
+              <p className="text-xs text-muted-foreground">Recommended: Volatility 25/50 markets for best results</p>
             </motion.div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
               <AnimatePresence mode="wait">
                 {activeSignals.map((signal, idx) => (
                   <SignalCard key={signal.id} signal={signal} index={idx} />
@@ -895,10 +1066,10 @@ export default function SignalPage() {
           <div>
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
               <Clock className="w-5 h-5 text-muted-foreground" />
-              Recent Signals
+              Recent Signals History
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {historicalSignals.slice(0, 9).map((signal, idx) => (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              {historicalSignals.slice(0, 8).map((signal, idx) => (
                 <motion.div
                   key={signal.id}
                   initial={{ opacity: 0, x: -20 }}
@@ -911,31 +1082,33 @@ export default function SignalPage() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs ${
-                        signal.type === 'over' ? 'bg-emerald-500/20 text-emerald-400' :
-                        signal.type === 'under' ? 'bg-rose-500/20 text-rose-400' :
-                        signal.type === 'odd' ? 'bg-amber-500/20 text-amber-400' :
-                        'bg-sky-500/20 text-sky-400'
+                        signal.type === 'over_4' || signal.type === 'reversal_over' ? 'bg-emerald-500/20 text-emerald-400' :
+                        'bg-rose-500/20 text-rose-400'
                       }`}>
-                        {signal.type === 'over' ? '↑' : signal.type === 'under' ? '↓' : signal.type === 'odd' ? 'O' : 'E'}
+                        {signal.type === 'over_4' || signal.type === 'reversal_over' ? '↑' : '↓'}
                       </div>
-                      <span className="font-mono text-xs font-medium truncate max-w-[100px]">{signal.market.name}</span>
+                      <span className="font-mono text-xs font-medium truncate max-w-[80px]">{signal.market.name}</span>
                     </div>
                     <Badge className={`text-[8px] ${
                       signal.strength === 'critical' ? 'bg-red-500/20 text-red-400' :
                       signal.strength === 'strong' ? 'bg-emerald-500/20 text-emerald-400' :
-                      signal.strength === 'moderate' ? 'bg-amber-500/20 text-amber-400' :
-                      'bg-rose-500/20 text-rose-400'
+                      'bg-amber-500/20 text-amber-400'
                     }`}>
                       {signal.strength === 'critical' ? '🔥' : ''}{signal.strength}
                     </Badge>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-xs capitalize text-muted-foreground">
-                      {signal.type.toUpperCase()} • {signal.percentage.toFixed(0)}%
+                    <span className="text-xs font-mono font-bold text-primary">
+                      {signal.type === 'over_4' ? 'OVER 4' : 
+                       signal.type === 'under_5' ? 'UNDER 5' : 
+                       signal.type === 'reversal_over' ? 'OVER REV' : 'UNDER REV'}
                     </span>
                     <span className="text-[10px] text-muted-foreground">
                       {new Date(signal.timestamp).toLocaleTimeString()}
                     </span>
+                  </div>
+                  <div className="text-[9px] text-muted-foreground mt-1">
+                    Diff: {signal.stats.difference} | Conf: {signal.confidence}%
                   </div>
                 </motion.div>
               ))}
@@ -943,62 +1116,67 @@ export default function SignalPage() {
           </div>
         )}
         
-        {/* Signal Conditions Legend */}
+        {/* Strategy Guide */}
         <div className="mt-8 p-4 bg-card/30 rounded-xl border border-border/50">
           <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-primary" />
-            Signal Conditions
+            📊 1000 Ticks Over/Under Strategy Guide
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <div className="flex items-start gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5" />
                 <div>
-                  <span className="font-medium">OVER Signal:</span>
+                  <span className="font-medium">STRATEGY 1: OVER 4</span>
                   <div className="text-muted-foreground text-xs">
-                    <div>• Digits above threshold ≥ 55%</div>
-                    <div>• Pattern analysis for confirmation</div>
-                    <div>• Exactly 3 over/under signals guaranteed</div>
+                    <div>• Upper zone (5-9) > Lower zone (0-4)</div>
+                    <div>• Difference ≥ 60 ticks</div>
+                    <div>• Digits 7,8,9 increasing, digit 0/1 weak</div>
+                    <div>• Last 20 ticks: majority above 4</div>
                   </div>
                 </div>
               </div>
               <div className="flex items-start gap-2">
                 <XCircle className="w-4 h-4 text-rose-400 mt-0.5" />
                 <div>
-                  <span className="font-medium">UNDER Signal:</span>
+                  <span className="font-medium">STRATEGY 2: UNDER 5</span>
                   <div className="text-muted-foreground text-xs">
-                    <div>• Digits below threshold ≥ 55%</div>
-                    <div>• Pattern analysis for confirmation</div>
-                    <div>• Sorted by strength and pattern confidence</div>
+                    <div>• Lower zone (0-4) > Upper zone (5-9)</div>
+                    <div>• Difference ≥ 60 ticks</div>
+                    <div>• Digits 0,1,2 strong, digits 8,9 weak</div>
+                    <div>• Last 20 ticks: majority below 5</div>
                   </div>
                 </div>
               </div>
             </div>
             <div className="space-y-2">
               <div className="flex items-start gap-2">
-                <Activity className="w-4 h-4 text-amber-400 mt-0.5" />
+                <RefreshCw className="w-4 h-4 text-purple-400 mt-0.5" />
                 <div>
-                  <span className="font-medium">ODD/EVEN Signals:</span>
+                  <span className="font-medium">REVERSAL STRATEGY</span>
                   <div className="text-muted-foreground text-xs">
-                    <div>• Odd/Even digits ≥ 55%</div>
-                    <div>• Fills remaining slots up to 6 total</div>
+                    <div>• Digit 9 overbought → BUY UNDER 9</div>
+                    <div>• Digit 0 oversold → BUY OVER 0</div>
+                    <div>• Market always balances after extremes</div>
                   </div>
                 </div>
               </div>
               <div className="flex items-start gap-2">
-                <BarChart className="w-4 h-4 text-primary mt-0.5" />
+                <Shield className="w-4 h-4 text-primary mt-0.5" />
                 <div>
-                  <span className="font-medium">Pattern Detection:</span>
+                  <span className="font-medium">RISK MANAGEMENT</span>
                   <div className="text-muted-foreground text-xs">
-                    <div>• Analyzes {patternLength === 'all' ? '1-6' : patternLength}-digit patterns</div>
-                    <div>• Win rate analysis for signal confirmation</div>
+                    <div>• Stake: 2-5% of balance</div>
+                    <div>• Martingale: Max 2 levels only</div>
+                    <div>• Avoid: Volatility 100, 1s indices</div>
+                    <div>• Wait for tick pause or pattern confirmation</div>
                   </div>
                 </div>
               </div>
             </div>
           </div>
           <div className="mt-3 pt-3 border-t border-border/50 text-xs text-muted-foreground text-center">
-            📊 Exactly 3 over/under signals per scan | Up to 6 total signals | Auto-scans every 30 seconds
+            🎯 Exactly 4 over/under signals per scan | Based on 1000 ticks market memory | High probability trades
           </div>
         </div>
       </div>
