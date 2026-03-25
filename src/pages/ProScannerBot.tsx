@@ -1091,13 +1091,13 @@ export default function ProScannerBot() {
                         
                       </div>
                       <div className="grid grid-cols-3 gap-1">
+                        <Input type="number" min="0" max="9" value={m2DigitCompare} onChange={e => setM2DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                         <Select value={m2DigitCondition} onValueChange={setM2DigitCondition} disabled={isRunning}>
                           <SelectTrigger className="h-6 text-[10px]"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                           </SelectContent>
                         </Select>
-                        <Input type="number" min="0" max="9" value={m2DigitCompare} onChange={e => setM2DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                         <Input type="number" min="1" max="50" value={m2DigitWindow} onChange={e => setM2DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                       </div>
                     </>
