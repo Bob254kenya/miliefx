@@ -13,13 +13,12 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  TrendingUp, TrendingDown, Activity, BarChart3, ArrowUp, ArrowDown, Minus,
-  Target, ShieldAlert, Gauge, Volume2, VolumeX, Clock, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, Bot, RefreshCw, Globe, Search,
+  TrendingUp, TrendingDown, Activity, BarChart3, ArrowUp, ArrowDown,
+  Target, ShieldAlert, Volume2, VolumeX, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, Bot, RefreshCw, Globe, Search,
 } from 'lucide-react';
 
 /* ── Markets ── */
 const ALL_MARKETS = [
-  // Vol 1s
   { symbol: '1HZ10V', name: 'Volatility 10 (1s)', group: 'vol1s' },
   { symbol: '1HZ15V', name: 'Volatility 15 (1s)', group: 'vol1s' },
   { symbol: '1HZ25V', name: 'Volatility 25 (1s)', group: 'vol1s' },
@@ -27,24 +26,19 @@ const ALL_MARKETS = [
   { symbol: '1HZ50V', name: 'Volatility 50 (1s)', group: 'vol1s' },
   { symbol: '1HZ75V', name: 'Volatility 75 (1s)', group: 'vol1s' },
   { symbol: '1HZ100V', name: 'Volatility 100 (1s)', group: 'vol1s' },
-  // Vol
   { symbol: 'R_10', name: 'Volatility 10', group: 'vol' },
   { symbol: 'R_25', name: 'Volatility 25', group: 'vol' },
   { symbol: 'R_50', name: 'Volatility 50', group: 'vol' },
   { symbol: 'R_75', name: 'Volatility 75', group: 'vol' },
   { symbol: 'R_100', name: 'Volatility 100', group: 'vol' },
-  // Jump
   { symbol: 'JD10', name: 'Jump 10', group: 'jump' },
   { symbol: 'JD25', name: 'Jump 25', group: 'jump' },
   { symbol: 'JD50', name: 'Jump 50', group: 'jump' },
   { symbol: 'JD75', name: 'Jump 75', group: 'jump' },
   { symbol: 'JD100', name: 'Jump 100', group: 'jump' },
-  // Bear/Bull
   { symbol: 'RDBEAR', name: 'Bear Market', group: 'bear' },
   { symbol: 'RDBULL', name: 'Bull Market', group: 'bull' },
-  // Step
   { symbol: 'stpRNG', name: 'Step Index', group: 'step' },
-  // Range Break
   { symbol: 'RBRK100', name: 'Range Break 100', group: 'range' },
   { symbol: 'RBRK200', name: 'Range Break 200', group: 'range' },
 ];
@@ -60,9 +54,9 @@ const GROUPS = [
   { value: 'range', label: 'Range' },
 ];
 
-const TIMEFRAMES = ['1m','3m','5m','15m','30m','1h','4h','12h','1d'];
-const TF_TICKS: Record<string,number> = {
-  '1m':1000,'3m':2000,'5m':3000,'15m':4000,'30m':4500,'1h':5000,'4h':5000,'12h':5000,'1d':5000,
+const TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '12h', '1d'];
+const TF_TICKS: Record<string, number> = {
+  '1m': 1000, '3m': 2000, '5m': 3000, '15m': 4000, '30m': 4500, '1h': 5000, '4h': 5000, '12h': 5000, '1d': 5000,
 };
 
 const CONTRACT_TYPES = [
@@ -76,15 +70,14 @@ const CONTRACT_TYPES = [
   { value: 'DIGITUNDER', label: 'Digits Under' },
 ];
 
-/* ── Candle builder ── */
 interface Candle {
   open: number; high: number; low: number; close: number; time: number;
 }
 
 function buildCandles(prices: number[], times: number[], tf: string): Candle[] {
   if (prices.length === 0) return [];
-  const seconds: Record<string,number> = {
-    '1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'12h':43200,'1d':86400,
+  const seconds: Record<string, number> = {
+    '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '12h': 43200, '1d': 86400,
   };
   const interval = seconds[tf] || 60;
   const candles: Candle[] = [];
@@ -92,7 +85,7 @@ function buildCandles(prices: number[], times: number[], tf: string): Candle[] {
 
   for (let i = 0; i < prices.length; i++) {
     const p = prices[i];
-    const t = times[i] || Date.now()/1000 + i;
+    const t = times[i] || Date.now() / 1000 + i;
     const bucket = Math.floor(t / interval) * interval;
 
     if (!current || current.time !== bucket) {
@@ -108,7 +101,6 @@ function buildCandles(prices: number[], times: number[], tf: string): Candle[] {
   return candles;
 }
 
-/* ── EMA helper ── */
 function calcEMA(prices: number[], period: number): number {
   if (prices.length < period) return prices[prices.length - 1] || 0;
   const k = 2 / (period + 1);
@@ -119,7 +111,6 @@ function calcEMA(prices: number[], period: number): number {
   return ema;
 }
 
-/* ── Per-candle indicator series ── */
 function calcEMASeries(prices: number[], period: number): (number | null)[] {
   const result: (number | null)[] = [];
   if (prices.length < period) return prices.map(() => null);
@@ -183,10 +174,9 @@ function calcRSISeries(prices: number[], period: number = 14): (number | null)[]
   return result;
 }
 
-/* ── Map candle index back to price-series index for indicators ── */
 function mapCandlesToPriceIndices(prices: number[], times: number[], tf: string): number[] {
   const seconds: Record<string, number> = {
-    '1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'12h':43200,'1d':86400,
+    '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '12h': 43200, '1d': 86400,
   };
   const interval = seconds[tf] || 60;
   const indices: number[] = [];
@@ -203,7 +193,6 @@ function mapCandlesToPriceIndices(prices: number[], times: number[], tf: string)
   return indices;
 }
 
-/* ── Support/Resistance ── */
 function calcSR(prices: number[]) {
   if (prices.length < 10) return { support: 0, resistance: 0 };
   const sorted = [...prices].sort((a, b) => a - b);
@@ -212,7 +201,6 @@ function calcSR(prices: number[]) {
   return { support: sorted[p5], resistance: sorted[Math.min(p95, sorted.length - 1)] };
 }
 
-/* ── MACD proper ── */
 function calcMACDFull(prices: number[]) {
   const ema12 = calcEMA(prices, 12);
   const ema26 = calcEMA(prices, 26);
@@ -233,7 +221,6 @@ interface TradeRecord {
   botId?: string;
 }
 
-// Tick storage for pattern/digit strategy
 const tickHistoryRef: { [symbol: string]: number[] } = {};
 
 function getTickHistory(symbol: string): number[] {
@@ -246,7 +233,6 @@ function addTick(symbol: string, digit: number) {
   if (tickHistoryRef[symbol].length > 200) tickHistoryRef[symbol].shift();
 }
 
-// Bot configuration interface
 interface BotConfig {
   botSymbol: string;
   stake: string;
@@ -291,7 +277,6 @@ export default function TradingChart() {
   const subscribedRef = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Zoom & pan state
   const [candleWidth, setCandleWidth] = useState(7);
   const [scrollOffset, setScrollOffset] = useState(0);
   const isDragging = useRef(false);
@@ -301,7 +286,6 @@ export default function TradingChart() {
   const priceAxisStartY = useRef(0);
   const priceAxisStartWidth = useRef(7);
 
-  // Trade panel
   const [contractType, setContractType] = useState('CALL');
   const [prediction, setPrediction] = useState('5');
   const [duration, setDuration] = useState('1');
@@ -310,12 +294,10 @@ export default function TradingChart() {
   const [selectedDigit, setSelectedDigit] = useState<number | null>(null);
   const [isTrading, setIsTrading] = useState(false);
 
-  // Bot progress
   const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const lastSpokenSignal = useRef('');
 
-  // Bot 1 (Main Bot)
   const [bot1Running, setBot1Running] = useState(false);
   const [bot1Paused, setBot1Paused] = useState(false);
   const bot1RunningRef = useRef(false);
@@ -343,10 +325,8 @@ export default function TradingChart() {
     digitWindow: '3',
   });
 
-  // Global Strategy Toggle
   const [globalStrategyEnabled, setGlobalStrategyEnabled] = useState(false);
 
-  // Recovery Bot (Bot 2)
   const [recoveryEnabled, setRecoveryEnabled] = useState(false);
   const [recoveryActive, setRecoveryActive] = useState(false);
   const [recoveryConfig, setRecoveryConfig] = useState({
@@ -364,15 +344,23 @@ export default function TradingChart() {
   });
   const [recoveryAttempts, setRecoveryAttempts] = useState(0);
   const [recoveryCurrentStake, setRecoveryCurrentStake] = useState(0);
-  const [recoveryConsecutiveLosses, setRecoveryConsecutiveLosses] = useState(0);
-  
-  // Recovery Market Scanner
   const [recoveryScanMarkets, setRecoveryScanMarkets] = useState(false);
   const [scanningMarkets, setScanningMarkets] = useState(false);
   const [foundMarket, setFoundMarket] = useState<string | null>(null);
   const [scanResults, setScanResults] = useState<{ symbol: string; name: string; matches: boolean }[]>([]);
 
-  // Function to scan all markets for pattern/digit condition
+  const speak = useCallback((text: string) => {
+    if (!voiceEnabled || !window.speechSynthesis) return;
+    if (lastSpokenSignal.current === text) return;
+    lastSpokenSignal.current = text;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.1;
+    utterance.pitch = 1;
+    utterance.volume = 0.8;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  }, [voiceEnabled]);
+
   const scanMarketsForCondition = useCallback(async () => {
     if (!recoveryStrategy.enabled) {
       toast.warning('Please enable pattern/digit strategy first');
@@ -449,7 +437,12 @@ export default function TradingChart() {
     }
   }, [recoveryStrategy, voiceEnabled, speak]);
 
-  /* ── Load history + subscribe ── */
+  useEffect(() => {
+    if (recoveryScanMarkets && recoveryStrategy.enabled && !scanningMarkets) {
+      scanMarketsForCondition();
+    }
+  }, [recoveryScanMarkets, recoveryStrategy.enabled, recoveryStrategy.patternInput, recoveryStrategy.digitCondition, recoveryStrategy.digitCompare, recoveryStrategy.digitWindow, scanMarketsForCondition]);
+
   useEffect(() => {
     let active = true;
     subscribedRef.current = false;
@@ -492,7 +485,6 @@ export default function TradingChart() {
     };
   }, [symbol]);
 
-  /* ── Derived data ── */
   const tfTicks = TF_TICKS[timeframe] || 60;
   const tfPrices = useMemo(() => prices.slice(-tfTicks), [prices, tfTicks]);
   const tfTimes = useMemo(() => times.slice(-tfTicks), [times, tfTicks]);
@@ -506,14 +498,12 @@ export default function TradingChart() {
   }, [symbol, prices]);
   const { frequency, percentages, mostCommon, leastCommon } = useMemo(() => analyzeDigits(tfPrices), [tfPrices]);
 
-  // Indicators
   const bb = useMemo(() => calculateBollingerBands(tfPrices, 20), [tfPrices]);
   const ema50 = useMemo(() => calcEMA(tfPrices, 50), [tfPrices]);
   const { support, resistance } = useMemo(() => calcSR(tfPrices), [tfPrices]);
   const rsi = useMemo(() => calculateRSI(tfPrices, 14), [tfPrices]);
   const macd = useMemo(() => calcMACDFull(tfPrices), [tfPrices]);
 
-  // Digit stats
   const evenCount = useMemo(() => digits.filter(d => d % 2 === 0).length, [digits]);
   const oddCount = digits.length - evenCount;
   const evenPct = digits.length > 0 ? (evenCount / digits.length * 100) : 50;
@@ -523,11 +513,9 @@ export default function TradingChart() {
   const overPct = digits.length > 0 ? (overCount / digits.length * 100) : 50;
   const underPct = 100 - overPct;
 
-  // BB position
   const bbRange = bb.upper - bb.lower || 1;
   const bbPosition = ((currentPrice - bb.lower) / bbRange * 100);
 
-  // Signals
   const riseSignal = useMemo(() => {
     const conf = rsi < 30 ? 85 : rsi > 70 ? 25 : 50 + (50 - rsi);
     return { direction: rsi < 45 ? 'Rise' : 'Fall', confidence: Math.min(95, Math.max(10, Math.round(conf))) };
@@ -548,7 +536,6 @@ export default function TradingChart() {
     return { digit: mostCommon, confidence: Math.min(90, Math.round(bestPct * 3)) };
   }, [percentages, mostCommon]);
 
-  // Strategy Helpers for Bot 1
   const cleanPattern1 = bot1Strategy.patternInput.toUpperCase().replace(/[^EO]/g, '');
   const patternValid1 = cleanPattern1.length >= 2;
 
@@ -617,7 +604,6 @@ export default function TradingChart() {
     }
   }, [bot1Config.botSymbol, bot1Strategy, recoveryStrategy, globalStrategyEnabled]);
 
-  // Strategy Helpers for Recovery Bot
   const cleanPatternRecovery = recoveryStrategy.patternInput.toUpperCase().replace(/[^EO]/g, '');
   const patternValidRecovery = cleanPatternRecovery.length >= 2;
 
@@ -655,7 +641,6 @@ export default function TradingChart() {
     }
   }, [recoveryConfig.recoverySymbol, recoveryStrategy, bot1Strategy, globalStrategyEnabled]);
 
-  /* ── Canvas Chart ── */
   const candleEndIndices = useMemo(() => mapCandlesToPriceIndices(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
   const emaSeries = useMemo(() => calcEMASeries(tfPrices, 50), [tfPrices]);
   const smaSeries = useMemo(() => calcSMASeries(tfPrices, 20), [tfPrices]);
@@ -976,20 +961,6 @@ export default function TradingChart() {
   const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
   const marketName = ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol;
 
-  // Voice AI announcements
-  const speak = useCallback((text: string) => {
-    if (!voiceEnabled || !window.speechSynthesis) return;
-    if (lastSpokenSignal.current === text) return;
-    lastSpokenSignal.current = text;
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 1.1;
-    utterance.pitch = 1;
-    utterance.volume = 0.8;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
-  }, [voiceEnabled]);
-
-  // Trade execution
   const handleBuy = async (side: 'buy' | 'sell') => {
     if (!isAuthorized) { toast.error('Please login to your Deriv account first'); return; }
     if (isTrading) return;
@@ -1011,7 +982,6 @@ export default function TradingChart() {
     finally { setIsTrading(false); }
   };
 
-  // Recovery Bot Execution with Martingale from Bot 1
   const executeRecoveryTrade = useCallback(async (stake: number): Promise<boolean> => {
     const ct = recoveryConfig.contractType;
     const params: any = { 
@@ -1056,7 +1026,6 @@ export default function TradingChart() {
     }
   }, [recoveryConfig, bot1Config.duration, bot1Config.durationUnit, voiceEnabled, speak]);
 
-  // Bot 1 Execution with Recovery Trigger
   const startBot1 = useCallback(async () => {
     if (!isAuthorized) { toast.error('Login to Deriv first'); return; }
     setBot1Running(true); setBot1Paused(false);
@@ -1081,7 +1050,6 @@ export default function TradingChart() {
         break;
       }
 
-      // Check strategy condition
       if (globalStrategyEnabled ? (bot1Strategy.enabled || recoveryStrategy.enabled) : bot1Strategy.enabled) {
         let conditionMet = false;
         while (bot1RunningRef.current && !conditionMet) {
@@ -1114,24 +1082,20 @@ export default function TradingChart() {
         } else {
           losses++; consLosses++;
           
-          // Check if recovery is enabled and trigger recovery
           if (recoveryEnabled && !recoveryActive) {
             toast.warning(`🔄 Loss detected! Activating Recovery Bot on ${recoveryConfig.recoverySymbol}`);
             if (voiceEnabled) speak(`Loss detected. Activating recovery bot on ${recoveryConfig.recoverySymbol}`);
             setRecoveryActive(true);
             setRecoveryAttempts(1);
-            setRecoveryConsecutiveLosses(0);
             
-            // Use Bot 1's martingale settings for recovery stake
             let recoveryStake = parseFloat(bot1Config.stake);
             if (mart) {
               recoveryStake = recoveryStake * mult;
             } else {
-              recoveryStake = recoveryStake * 2; // Default 2x for recovery if martingale off
+              recoveryStake = recoveryStake * 2;
             }
             setRecoveryCurrentStake(recoveryStake);
             
-            // Check recovery strategy condition before trading
             if (globalStrategyEnabled ? (recoveryStrategy.enabled || bot1Strategy.enabled) : recoveryStrategy.enabled) {
               let recoveryConditionMet = false;
               while (bot1RunningRef.current && !recoveryConditionMet) {
@@ -1143,27 +1107,21 @@ export default function TradingChart() {
               if (!bot1RunningRef.current) break;
             }
             
-            // Execute recovery trade
             const recoveryWon = await executeRecoveryTrade(recoveryStake);
             
             if (recoveryWon) {
-              // Recovery successful - return to main bot
               toast.success(`🎉 Recovery successful! Returning to main bot on ${bot1Config.botSymbol}`);
               if (voiceEnabled) speak(`Recovery successful. Returning to main bot.`);
               setRecoveryActive(false);
               setRecoveryAttempts(0);
               setRecoveryCurrentStake(0);
-              setRecoveryConsecutiveLosses(0);
               stake = baseStake;
             } else {
-              // Recovery lost - use Bot 1's martingale for subsequent attempts
-              setRecoveryConsecutiveLosses(1);
               let newAttempts = 2;
               let recoveryStakeAmount = recoveryStake;
               let recoverySuccess = false;
               
               while (newAttempts <= 5 && !recoverySuccess && bot1RunningRef.current) {
-                // Apply martingale if enabled in Bot 1
                 if (mart) {
                   recoveryStakeAmount = recoveryStakeAmount * mult;
                 } else {
@@ -1176,7 +1134,6 @@ export default function TradingChart() {
                 toast.warning(`🔄 Recovery Attempt ${newAttempts}/5 - Stake: $${recoveryStakeAmount.toFixed(2)} on ${recoveryConfig.recoverySymbol}`);
                 if (voiceEnabled) speak(`Recovery attempt ${newAttempts}. Stake ${recoveryStakeAmount.toFixed(2)} dollars`);
                 
-                // Check recovery strategy condition before each attempt
                 if (globalStrategyEnabled ? (recoveryStrategy.enabled || bot1Strategy.enabled) : recoveryStrategy.enabled) {
                   let recoveryConditionMet = false;
                   while (bot1RunningRef.current && !recoveryConditionMet) {
@@ -1204,7 +1161,6 @@ export default function TradingChart() {
                 setRecoveryActive(false);
                 setRecoveryAttempts(0);
                 setRecoveryCurrentStake(0);
-                setRecoveryConsecutiveLosses(0);
                 stake = baseStake;
               } else {
                 toast.error(`❌ Recovery failed after 5 attempts! Stopping both bots.`);
@@ -1247,7 +1203,6 @@ export default function TradingChart() {
     setBot1Paused(bot1PausedRef.current); 
   }, []);
 
-  // Combined stats
   const totalTrades = tradeHistory.filter(t => t.status !== 'open').length;
   const wins = tradeHistory.filter(t => t.status === 'won').length;
   const losses = tradeHistory.filter(t => t.status === 'lost').length;
@@ -1256,7 +1211,6 @@ export default function TradingChart() {
 
   return (
     <div className="space-y-4 max-w-[1920px] mx-auto">
-      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
@@ -1265,22 +1219,14 @@ export default function TradingChart() {
           <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {tfPrices.length} ticks</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            onClick={() => setShowChart(!showChart)}
-            variant="outline"
-            size="sm"
-            className="gap-1"
-          >
+          <Button onClick={() => setShowChart(!showChart)} variant="outline" size="sm" className="gap-1">
             {showChart ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             {showChart ? "Hide Chart" : "Show Chart"}
           </Button>
-          <Badge className="font-mono text-sm" variant="outline">
-            {currentPrice.toFixed(4)}
-          </Badge>
+          <Badge className="font-mono text-sm" variant="outline">{currentPrice.toFixed(4)}</Badge>
         </div>
       </div>
 
-      {/* Market Selector */}
       <div className="bg-card border border-border rounded-xl p-3">
         <div className="flex flex-wrap gap-1 mb-2">
           {GROUPS.map(g => (
@@ -1302,7 +1248,6 @@ export default function TradingChart() {
         </div>
       </div>
 
-      {/* Timeframe */}
       <div className="flex flex-wrap gap-1">
         {TIMEFRAMES.map(tf => (
           <Button key={tf} size="sm" variant={timeframe === tf ? 'default' : 'outline'}
@@ -1314,9 +1259,7 @@ export default function TradingChart() {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        {/* ═══ LEFT: Chart + Info ═══ */}
         <div className="xl:col-span-7 space-y-3">
-          {/* Candlestick Chart - Hideable */}
           <AnimatePresence mode="wait">
             {showChart && (
               <motion.div
@@ -1333,7 +1276,6 @@ export default function TradingChart() {
             )}
           </AnimatePresence>
 
-          {/* Price Info Panel */}
           <div className="grid grid-cols-3 md:grid-cols-7 gap-2">
             {[
               { label: 'Price', value: currentPrice.toFixed(4), color: 'text-foreground' },
@@ -1351,10 +1293,8 @@ export default function TradingChart() {
             ))}
           </div>
 
-          {/* Digit Analysis */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-3">
             <h3 className="text-xs font-semibold text-foreground">Digit Analysis</h3>
-
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
                 <div className="text-[9px] text-[#D29922]">Odd</div>
@@ -1400,19 +1340,14 @@ export default function TradingChart() {
                     <div className="h-1 bg-muted rounded-full mt-1">
                       <div className={`h-full rounded-full ${isHot ? 'bg-loss' : isWarm ? 'bg-warning' : 'bg-primary'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
                     </div>
-                    {isBestMatch && (
-                      <Badge className="absolute -top-1 -right-1 text-[7px] px-1 bg-profit text-profit-foreground">Match Digit</Badge>
-                    )}
-                    {isBestDiffer && (
-                      <Badge className="absolute -top-1 -left-1 text-[7px] px-1 bg-loss text-loss-foreground">Differ</Badge>
-                    )}
+                    {isBestMatch && <Badge className="absolute -top-1 -right-1 text-[7px] px-1 bg-profit text-profit-foreground">Match Digit</Badge>}
+                    {isBestDiffer && <Badge className="absolute -top-1 -left-1 text-[7px] px-1 bg-loss text-loss-foreground">Differ</Badge>}
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* Strategic Recommendations */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <div className="bg-card border border-profit/30 rounded-lg p-2">
               <div className="text-[9px] text-muted-foreground">Best Match</div>
@@ -1441,18 +1376,13 @@ export default function TradingChart() {
           </div>
         </div>
 
-        {/* ═══ RIGHT: Signals + Trade + Tech ═══ */}
         <div className="xl:col-span-5 space-y-3">
-          {/* Voice AI Toggle */}
           <div className="bg-card border border-primary/30 rounded-xl p-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
                 <Zap className="w-3.5 h-3.5 text-primary" /> AI Voice Signals
               </h3>
-              <Button
-                size="sm"
-                variant={voiceEnabled ? 'default' : 'outline'}
-                className="h-7 text-[10px] gap-1"
+              <Button size="sm" variant={voiceEnabled ? 'default' : 'outline'} className="h-7 text-[10px] gap-1"
                 onClick={() => {
                   setVoiceEnabled(!voiceEnabled);
                   if (!voiceEnabled) {
@@ -1462,18 +1392,13 @@ export default function TradingChart() {
                   } else {
                     window.speechSynthesis?.cancel();
                   }
-                }}
-              >
+                }}>
                 {voiceEnabled ? <Volume2 className="w-3 h-3" /> : <VolumeX className="w-3 h-3" />}
                 {voiceEnabled ? 'ON' : 'OFF'}
               </Button>
             </div>
-            {voiceEnabled && (
-              <p className="text-[9px] text-muted-foreground mt-1">🔊 AI will announce trade results</p>
-            )}
           </div>
 
-          {/* Global Strategy Toggle */}
           <div className="bg-card border border-warning/30 rounded-xl p-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
@@ -1485,66 +1410,50 @@ export default function TradingChart() {
               </div>
             </div>
             {globalStrategyEnabled && (
-              <p className="text-[8px] text-warning mt-1">
-                ⚡ Strategy from {bot1Strategy.enabled ? 'Main Bot' : 'Recovery Bot'} will be used for both markets
-              </p>
+              <p className="text-[8px] text-warning mt-1">⚡ Strategy from {bot1Strategy.enabled ? 'Main Bot' : 'Recovery Bot'} will be used for both markets</p>
             )}
           </div>
 
-          {/* Trading Signals */}
           <div className="grid grid-cols-2 gap-2">
-            {/* Rise/Fall */}
             <div className="bg-card border border-border rounded-xl p-3">
               <div className="flex items-center gap-1 mb-1">
                 {riseSignal.direction === 'Rise' ? <TrendingUp className="w-3.5 h-3.5 text-profit" /> : <TrendingDown className="w-3.5 h-3.5 text-loss" />}
                 <span className="text-[10px] font-semibold">Rise/Fall</span>
               </div>
-              <div className={`font-mono text-sm font-bold ${riseSignal.direction === 'Rise' ? 'text-profit' : 'text-loss'}`}>
-                {riseSignal.direction}
-              </div>
+              <div className={`font-mono text-sm font-bold ${riseSignal.direction === 'Rise' ? 'text-profit' : 'text-loss'}`}>{riseSignal.direction}</div>
               <div className="text-[8px] text-muted-foreground mb-1">RSI: {rsi.toFixed(1)}</div>
               <div className="h-1.5 bg-muted rounded-full">
-                <div className={`h-full rounded-full ${riseSignal.direction === 'Rise' ? 'bg-profit' : 'bg-loss'}`}
-                  style={{ width: `${riseSignal.confidence}%` }} />
+                <div className={`h-full rounded-full ${riseSignal.direction === 'Rise' ? 'bg-profit' : 'bg-loss'}`} style={{ width: `${riseSignal.confidence}%` }} />
               </div>
               <div className="text-[8px] text-right text-muted-foreground mt-0.5">{riseSignal.confidence}%</div>
             </div>
 
-            {/* Even/Odd */}
             <div className="bg-card border border-border rounded-xl p-3">
               <div className="flex items-center gap-1 mb-1">
                 <Activity className="w-3.5 h-3.5 text-primary" />
                 <span className="text-[10px] font-semibold">Even/Odd</span>
               </div>
-              <div className={`font-mono text-sm font-bold ${eoSignal.direction === 'Even' ? 'text-[#3FB950]' : 'text-[#D29922]'}`}>
-                {eoSignal.direction}
-              </div>
+              <div className={`font-mono text-sm font-bold ${eoSignal.direction === 'Even' ? 'text-[#3FB950]' : 'text-[#D29922]'}`}>{eoSignal.direction}</div>
               <div className="text-[8px] text-muted-foreground mb-1">{evenPct.toFixed(1)}% even</div>
               <div className="h-1.5 bg-muted rounded-full">
-                <div className={`h-full rounded-full ${eoSignal.direction === 'Even' ? 'bg-[#3FB950]' : 'bg-[#D29922]'}`}
-                  style={{ width: `${eoSignal.confidence}%` }} />
+                <div className={`h-full rounded-full ${eoSignal.direction === 'Even' ? 'bg-[#3FB950]' : 'bg-[#D29922]'}`} style={{ width: `${eoSignal.confidence}%` }} />
               </div>
               <div className="text-[8px] text-right text-muted-foreground mt-0.5">{eoSignal.confidence}%</div>
             </div>
 
-            {/* Over/Under */}
             <div className="bg-card border border-border rounded-xl p-3">
               <div className="flex items-center gap-1 mb-1">
                 <ArrowUp className="w-3.5 h-3.5 text-primary" />
                 <span className="text-[10px] font-semibold">Over/Under</span>
               </div>
-              <div className={`font-mono text-sm font-bold ${ouSignal.direction === 'Over' ? 'text-primary' : 'text-[#D29922]'}`}>
-                {ouSignal.direction}
-              </div>
+              <div className={`font-mono text-sm font-bold ${ouSignal.direction === 'Over' ? 'text-primary' : 'text-[#D29922]'}`}>{ouSignal.direction}</div>
               <div className="text-[8px] text-muted-foreground mb-1">{overPct.toFixed(1)}% over</div>
               <div className="h-1.5 bg-muted rounded-full">
-                <div className={`h-full rounded-full ${ouSignal.direction === 'Over' ? 'bg-primary' : 'bg-[#D29922]'}`}
-                  style={{ width: `${ouSignal.confidence}%` }} />
+                <div className={`h-full rounded-full ${ouSignal.direction === 'Over' ? 'bg-primary' : 'bg-[#D29922]'}`} style={{ width: `${ouSignal.confidence}%` }} />
               </div>
               <div className="text-[8px] text-right text-muted-foreground mt-0.5">{ouSignal.confidence}%</div>
             </div>
 
-            {/* Match */}
             <div className="bg-card border border-border rounded-xl p-3">
               <div className="flex items-center gap-1 mb-1">
                 <Target className="w-3.5 h-3.5 text-profit" />
@@ -1559,7 +1468,6 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* Last 26 Digits */}
           <div className="bg-card border border-border rounded-xl p-3">
             <h3 className="text-xs font-semibold text-foreground mb-2">Last 26 Digits</h3>
             <div className="flex gap-1 flex-wrap justify-center">
@@ -1586,34 +1494,24 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* Main Bot Panel */}
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${bot1Running ? 'border-profit glow-profit' : 'border-border'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
                 <Bot className="w-3.5 h-3.5 text-primary" /> Ramzfx Speed Bot (Main)
               </h3>
-              <div className="flex items-center gap-2">
-                {bot1Running && (
-                  <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ repeat: Infinity, duration: 1.5 }}>
-                    <Badge className="text-[8px] bg-profit text-profit-foreground">RUNNING</Badge>
-                  </motion.div>
-                )}
-              </div>
+              {bot1Running && (
+                <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ repeat: Infinity, duration: 1.5 }}>
+                  <Badge className="text-[8px] bg-profit text-profit-foreground">RUNNING</Badge>
+                </motion.div>
+              )}
             </div>
 
-            {/* Market Selector */}
             <div>
               <label className="text-[9px] text-muted-foreground">Market</label>
               <Select value={bot1Config.botSymbol} onValueChange={(v) => setBot1Config(prev => ({ ...prev, botSymbol: v }))} disabled={bot1Running}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent className="max-h-60">
-                  {ALL_MARKETS.map(m => (
-                    <SelectItem key={m.symbol} value={m.symbol}>
-                      {m.name}
-                    </SelectItem>
-                  ))}
+                  {ALL_MARKETS.map(m => (<SelectItem key={m.symbol} value={m.symbol}>{m.name}</SelectItem>))}
                 </SelectContent>
               </Select>
             </div>
@@ -1675,7 +1573,6 @@ export default function TradingChart() {
               </div>
             </div>
 
-            {/* Strategy Section */}
             <div className="border-t border-border pt-2 mt-1">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-[10px] font-semibold text-warning flex items-center gap-1">
@@ -1687,51 +1584,31 @@ export default function TradingChart() {
               {bot1Strategy.enabled && (
                 <div className="space-y-2">
                   <div className="flex gap-1">
-                    <Button
-                      size="sm"
-                      variant={bot1Strategy.mode === 'pattern' ? 'default' : 'outline'}
-                      className="text-[9px] h-6 px-2 flex-1"
-                      onClick={() => setBot1Strategy(prev => ({ ...prev, mode: 'pattern' }))}
-                      disabled={bot1Running}
-                    >
-                      Pattern (E/O)
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={bot1Strategy.mode === 'digit' ? 'default' : 'outline'}
-                      className="text-[9px] h-6 px-2 flex-1"
-                      onClick={() => setBot1Strategy(prev => ({ ...prev, mode: 'digit' }))}
-                      disabled={bot1Running}
-                    >
-                      Digit Condition 
-                    </Button>
+                    <Button size="sm" variant={bot1Strategy.mode === 'pattern' ? 'default' : 'outline'} className="text-[9px] h-6 px-2 flex-1"
+                      onClick={() => setBot1Strategy(prev => ({ ...prev, mode: 'pattern' }))} disabled={bot1Running}>Pattern (E/O)</Button>
+                    <Button size="sm" variant={bot1Strategy.mode === 'digit' ? 'default' : 'outline'} className="text-[9px] h-6 px-2 flex-1"
+                      onClick={() => setBot1Strategy(prev => ({ ...prev, mode: 'digit' }))} disabled={bot1Running}>Digit Condition</Button>
                   </div>
 
                   {bot1Strategy.mode === 'pattern' ? (
                     <div>
                       <label className="text-[8px] text-muted-foreground">Pattern (E=Even, O=Odd)</label>
-                      <Textarea
-                        placeholder="e.g., EEEOE or OOEEO"
-                        value={bot1Strategy.patternInput}
+                      <Textarea placeholder="e.g., EEEOE or OOEEO" value={bot1Strategy.patternInput}
                         onChange={e => setBot1Strategy(prev => ({ ...prev, patternInput: e.target.value.toUpperCase().replace(/[^EO]/g, '') }))}
-                        disabled={bot1Running}
-                        className="h-12 text-[10px] font-mono min-h-0 mt-1"
-                      />
+                        disabled={bot1Running} className="h-12 text-[10px] font-mono min-h-0 mt-1" />
                       <div className={`text-[9px] font-mono mt-1 ${patternValid1 ? 'text-profit' : 'text-loss'}`}>
-                        {cleanPattern1.length === 0 ? 'Enter pattern (min 2 characters)' :
-                          patternValid1 ? `✓ Pattern: ${cleanPattern1}` : `✗ Need at least 2 characters (E/O)`}
+                        {cleanPattern1.length === 0 ? 'Enter pattern (min 2 characters)' : patternValid1 ? `✓ Pattern: ${cleanPattern1}` : `✗ Need at least 2 characters (E/O)`}
                       </div>
                     </div>
                   ) : (
                     <div className="grid grid-cols-3 gap-1">
                       <div>
-                        <label className="text-[8px] text-muted-foreground">If last </label>
+                        <label className="text-[8px] text-muted-foreground">If last</label>
                         <Input type="number" min="1" max="50" value={bot1Strategy.digitWindow}
-                          onChange={e => setBot1Strategy(prev => ({ ...prev, digitWindow: e.target.value }))} disabled={bot1Running}
-                          className="h-7 text-[10px]" />
+                          onChange={e => setBot1Strategy(prev => ({ ...prev, digitWindow: e.target.value }))} disabled={bot1Running} className="h-7 text-[10px]" />
                       </div>
                       <div>
-                        <label className="text-[8px] text-muted-foreground">ticks are </label>
+                        <label className="text-[8px] text-muted-foreground">ticks are</label>
                         <Select value={bot1Strategy.digitCondition} onValueChange={(v) => setBot1Strategy(prev => ({ ...prev, digitCondition: v }))} disabled={bot1Running}>
                           <SelectTrigger className="h-7 text-[10px]"><SelectValue /></SelectTrigger>
                           <SelectContent>
@@ -1742,12 +1619,10 @@ export default function TradingChart() {
                       <div>
                         <label className="text-[8px] text-muted-foreground">Digit</label>
                         <Input type="number" min="0" max="9" value={bot1Strategy.digitCompare}
-                          onChange={e => setBot1Strategy(prev => ({ ...prev, digitCompare: e.target.value }))} disabled={bot1Running}
-                          className="h-7 text-[10px]" />
+                          onChange={e => setBot1Strategy(prev => ({ ...prev, digitCompare: e.target.value }))} disabled={bot1Running} className="h-7 text-[10px]" />
                       </div>
                     </div>
                   )}
-
                   <div className="text-[8px] text-muted-foreground text-center py-1">
                     Bot will wait for {bot1Strategy.mode === 'pattern' ? 'pattern match' : 'digit condition'} before each trade
                   </div>
@@ -1773,7 +1648,6 @@ export default function TradingChart() {
               </div>
             </div>
 
-            {/* Bot live stats */}
             {bot1Running && (
               <div className="grid grid-cols-3 gap-1 text-center">
                 <div className="bg-muted/30 rounded p-1">
@@ -1793,7 +1667,6 @@ export default function TradingChart() {
               </div>
             )}
 
-            {/* Start/Pause/Stop buttons */}
             <div className="flex gap-2">
               {!bot1Running ? (
                 <Button onClick={startBot1} disabled={!isAuthorized} className="flex-1 h-10 text-xs font-bold bg-profit hover:bg-profit/90 text-profit-foreground">
@@ -1812,7 +1685,6 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* Recovery Bot Panel */}
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${recoveryActive ? 'border-warning animate-pulse' : 'border-border'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
@@ -1837,36 +1709,20 @@ export default function TradingChart() {
                 <div>
                   <label className="text-[9px] text-muted-foreground">Recovery Market</label>
                   <Select value={recoveryConfig.recoverySymbol} onValueChange={(v) => setRecoveryConfig(prev => ({ ...prev, recoverySymbol: v }))} disabled={bot1Running}>
-                    <SelectTrigger className="h-8 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent className="max-h-60">
-                      {ALL_MARKETS.map(m => (
-                        <SelectItem key={m.symbol} value={m.symbol}>
-                          {m.name}
-                        </SelectItem>
-                      ))}
+                      {ALL_MARKETS.map(m => (<SelectItem key={m.symbol} value={m.symbol}>{m.name}</SelectItem>))}
                     </SelectContent>
                   </Select>
                 </div>
 
-                {/* Market Scanner Toggle */}
                 <div className="flex items-center justify-between border-t border-border pt-2 mt-1">
                   <div className="flex items-center gap-2">
                     <Search className="w-3.5 h-3.5 text-primary" />
                     <span className="text-[9px] text-foreground">Scan All Markets</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Switch 
-                      checked={recoveryScanMarkets} 
-                      onCheckedChange={(checked) => {
-                        setRecoveryScanMarkets(checked);
-                        if (checked) {
-                          scanMarketsForCondition();
-                        }
-                      }} 
-                      disabled={bot1Running || !recoveryStrategy.enabled}
-                    />
+                    <Switch checked={recoveryScanMarkets} onCheckedChange={setRecoveryScanMarkets} disabled={bot1Running || !recoveryStrategy.enabled} />
                     <span className="text-[8px] text-muted-foreground">Auto-scan for matching markets</span>
                   </div>
                 </div>
@@ -1915,7 +1771,6 @@ export default function TradingChart() {
                   </div>
                 )}
 
-                {/* Recovery Strategy Section */}
                 <div className="border-t border-border pt-2 mt-1">
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-[10px] font-semibold text-warning flex items-center gap-1">
@@ -1927,51 +1782,31 @@ export default function TradingChart() {
                   {recoveryStrategy.enabled && (
                     <div className="space-y-2">
                       <div className="flex gap-1">
-                        <Button
-                          size="sm"
-                          variant={recoveryStrategy.mode === 'pattern' ? 'default' : 'outline'}
-                          className="text-[9px] h-6 px-2 flex-1"
-                          onClick={() => setRecoveryStrategy(prev => ({ ...prev, mode: 'pattern' }))}
-                          disabled={bot1Running}
-                        >
-                          Pattern (E/O)
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant={recoveryStrategy.mode === 'digit' ? 'default' : 'outline'}
-                          className="text-[9px] h-6 px-2 flex-1"
-                          onClick={() => setRecoveryStrategy(prev => ({ ...prev, mode: 'digit' }))}
-                          disabled={bot1Running}
-                        >
-                          Digit Condition 
-                        </Button>
+                        <Button size="sm" variant={recoveryStrategy.mode === 'pattern' ? 'default' : 'outline'} className="text-[9px] h-6 px-2 flex-1"
+                          onClick={() => setRecoveryStrategy(prev => ({ ...prev, mode: 'pattern' }))} disabled={bot1Running}>Pattern (E/O)</Button>
+                        <Button size="sm" variant={recoveryStrategy.mode === 'digit' ? 'default' : 'outline'} className="text-[9px] h-6 px-2 flex-1"
+                          onClick={() => setRecoveryStrategy(prev => ({ ...prev, mode: 'digit' }))} disabled={bot1Running}>Digit Condition</Button>
                       </div>
 
                       {recoveryStrategy.mode === 'pattern' ? (
                         <div>
                           <label className="text-[8px] text-muted-foreground">Pattern (E=Even, O=Odd)</label>
-                          <Textarea
-                            placeholder="e.g., EEEOE or OOEEO"
-                            value={recoveryStrategy.patternInput}
+                          <Textarea placeholder="e.g., EEEOE or OOEEO" value={recoveryStrategy.patternInput}
                             onChange={e => setRecoveryStrategy(prev => ({ ...prev, patternInput: e.target.value.toUpperCase().replace(/[^EO]/g, '') }))}
-                            disabled={bot1Running}
-                            className="h-12 text-[10px] font-mono min-h-0 mt-1"
-                          />
+                            disabled={bot1Running} className="h-12 text-[10px] font-mono min-h-0 mt-1" />
                           <div className={`text-[9px] font-mono mt-1 ${patternValidRecovery ? 'text-profit' : 'text-loss'}`}>
-                            {cleanPatternRecovery.length === 0 ? 'Enter pattern (min 2 characters)' :
-                              patternValidRecovery ? `✓ Pattern: ${cleanPatternRecovery}` : `✗ Need at least 2 characters (E/O)`}
+                            {cleanPatternRecovery.length === 0 ? 'Enter pattern (min 2 characters)' : patternValidRecovery ? `✓ Pattern: ${cleanPatternRecovery}` : `✗ Need at least 2 characters (E/O)`}
                           </div>
                         </div>
                       ) : (
                         <div className="grid grid-cols-3 gap-1">
                           <div>
-                            <label className="text-[8px] text-muted-foreground">If last </label>
+                            <label className="text-[8px] text-muted-foreground">If last</label>
                             <Input type="number" min="1" max="50" value={recoveryStrategy.digitWindow}
-                              onChange={e => setRecoveryStrategy(prev => ({ ...prev, digitWindow: e.target.value }))} disabled={bot1Running}
-                              className="h-7 text-[10px]" />
+                              onChange={e => setRecoveryStrategy(prev => ({ ...prev, digitWindow: e.target.value }))} disabled={bot1Running} className="h-7 text-[10px]" />
                           </div>
                           <div>
-                            <label className="text-[8px] text-muted-foreground">ticks are </label>
+                            <label className="text-[8px] text-muted-foreground">ticks are</label>
                             <Select value={recoveryStrategy.digitCondition} onValueChange={(v) => setRecoveryStrategy(prev => ({ ...prev, digitCondition: v }))} disabled={bot1Running}>
                               <SelectTrigger className="h-7 text-[10px]"><SelectValue /></SelectTrigger>
                               <SelectContent>
@@ -1982,26 +1817,17 @@ export default function TradingChart() {
                           <div>
                             <label className="text-[8px] text-muted-foreground">Digit</label>
                             <Input type="number" min="0" max="9" value={recoveryStrategy.digitCompare}
-                              onChange={e => setRecoveryStrategy(prev => ({ ...prev, digitCompare: e.target.value }))} disabled={bot1Running}
-                              className="h-7 text-[10px]" />
+                              onChange={e => setRecoveryStrategy(prev => ({ ...prev, digitCompare: e.target.value }))} disabled={bot1Running} className="h-7 text-[10px]" />
                           </div>
                         </div>
                       )}
-
                       <div className="text-[8px] text-muted-foreground text-center py-1">
                         Recovery bot will wait for {recoveryStrategy.mode === 'pattern' ? 'pattern match' : 'digit condition'} before recovery trades
                       </div>
                       
                       {recoveryStrategy.enabled && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="w-full text-[8px] h-6"
-                          onClick={scanMarketsForCondition}
-                          disabled={bot1Running || scanningMarkets}
-                        >
-                          <Search className="w-3 h-3 mr-1" />
-                          Scan Markets Now
+                        <Button size="sm" variant="outline" className="w-full text-[8px] h-6" onClick={scanMarketsForCondition} disabled={bot1Running || scanningMarkets}>
+                          <Search className="w-3 h-3 mr-1" /> Scan Markets Now
                         </Button>
                       )}
                     </div>
@@ -2015,7 +1841,6 @@ export default function TradingChart() {
             )}
           </div>
 
-          {/* Combined Progress */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-2">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
@@ -2060,7 +1885,6 @@ export default function TradingChart() {
               </div>
             )}
 
-            {/* Trade History */}
             {tradeHistory.length > 0 && (
               <div className="max-h-40 overflow-auto space-y-1">
                 {tradeHistory.slice(0, 15).map(t => (
@@ -2093,7 +1917,6 @@ export default function TradingChart() {
             )}
           </div>
 
-          {/* Technical Status */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-2">
             <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
               <ShieldAlert className="w-3.5 h-3.5 text-primary" /> Technical Status
@@ -2130,4 +1953,4 @@ export default function TradingChart() {
       </div>
     </div>
   );
-                    }
+   }
