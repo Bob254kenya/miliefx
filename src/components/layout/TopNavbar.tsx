@@ -22,7 +22,7 @@ import ThemeToggle from './ThemeToggle';
 const navItems = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
   { title: 'Signal Centre', url: '/chart', icon: Activity },
-  { title: 'Ramz Analysistool', url: '/markets', icon: BarChart3 },
+  { title: 'Millie Analysistool', url: '/markets', icon: BarChart3 },
   { title: 'Free Bots', url: '/smart-bot', icon: Zap },
   { title: 'Advanced Tool $ Speed Bot', url: '/auto-trade', icon: Bot },
   { title: 'Copy Trading', url: '/copy-trading', icon: Users },
