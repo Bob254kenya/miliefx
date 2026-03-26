@@ -60,11 +60,22 @@ const GROUPS = [
 
 const TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '12h', '1d'];
 
-// Target candles - 600 for all timeframes
-const TARGET_CANDLES = 600;
+// Target candles - 800 for all timeframes
+const TARGET_CANDLES = 800;
 
-// Tick selector options
-const TICK_OPTIONS = [100, 200, 500, 1000, 2000, 3000, 5000, 10000, 20000, 50000];
+// Tick selector options (50 to 5000)
+const TICK_OPTIONS = [50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 4000, 5000];
+
+// Get required ticks for target candles (ensures enough data for 800 candles)
+const getRequiredTicksForTimeframe = (timeframe: string): number => {
+  const seconds: Record<string, number> = {
+    '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+    '1h': 3600, '4h': 14400, '12h': 43200, '1d': 86400,
+  };
+  const interval = seconds[timeframe] || 60;
+  // Calculate ticks needed for 800 candles with 50% buffer
+  return Math.ceil(TARGET_CANDLES * interval * 1.5);
+};
 
 const CONTRACT_TYPES = [
   { value: 'CALL', label: 'Rise' },
@@ -127,16 +138,6 @@ interface TradeRecord {
 /* ============================================
    HELPER FUNCTIONS
    ============================================ */
-
-// Get required ticks for target candles in each timeframe
-const getRequiredTicksForTimeframe = (timeframe: string): number => {
-  const seconds: Record<string, number> = {
-    '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
-    '1h': 3600, '4h': 14400, '12h': 43200, '1d': 86400,
-  };
-  const interval = seconds[timeframe] || 60;
-  return Math.ceil(TARGET_CANDLES * interval * 1.2);
-};
 
 // Build candles from tick data
 function buildCandles(prices: number[], times: number[], tf: string): Candle[] {
@@ -285,7 +286,7 @@ function calcParabolicSAR(highs: number[], lows: number[], step: number = 0.02, 
 // Support & Resistance Levels (3 each)
 function calcSupportResistanceLevels(prices: number[], candles: Candle[]): SupportResistanceLevel[] {
   const levels: SupportResistanceLevel[] = [];
-  const windowSize = Math.min(15, Math.floor(candles.length / 15));
+  const windowSize = Math.min(20, Math.floor(candles.length / 15));
   
   for (let i = windowSize; i < candles.length - windowSize; i++) {
     const candle = candles[i];
@@ -381,7 +382,7 @@ function getTickHistory(symbol: string): number[] {
 function addTick(symbol: string, digit: number) {
   if (!tickHistoryRef[symbol]) tickHistoryRef[symbol] = [];
   tickHistoryRef[symbol].push(digit);
-  if (tickHistoryRef[symbol].length > 5000) tickHistoryRef[symbol].shift();
+  if (tickHistoryRef[symbol].length > 10000) tickHistoryRef[symbol].shift();
 }
 
 /* ============================================
@@ -396,7 +397,7 @@ export default function TradingChart() {
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
   const [timeframe, setTimeframe] = useState('1m');
-  const [selectedTicks, setSelectedTicks] = useState(getRequiredTicksForTimeframe('1m'));
+  const [selectedTicks, setSelectedTicks] = useState(1000); // Default 1000 ticks
   
   // Data State
   const [prices, setPrices] = useState<number[]>([]);
@@ -407,8 +408,8 @@ export default function TradingChart() {
   const subscriptionRef = useRef<any>(null);
   const reconnectAttempts = useRef(0);
   
-  // Chart Interaction State
-  const [candleWidth, setCandleWidth] = useState(4);
+  // Chart Interaction State - NO CANDLE REMOVAL ON SCROLL
+  const [candleWidth, setCandleWidth] = useState(3);
   const [scrollOffset, setScrollOffset] = useState(0);
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
@@ -474,7 +475,7 @@ export default function TradingChart() {
   const [turboMode, setTurboMode] = useState(false);
   
   /* ============================================
-     DATA LOADING
+     DATA LOADING - TICKS DON'T AFFECT CANDLE COUNT
      ============================================ */
   
   useEffect(() => {
@@ -510,6 +511,7 @@ export default function TradingChart() {
         setPrices([]);
         setTimes([]);
         
+        // Load data based on selected ticks (does NOT affect candle count)
         const hist = await derivApi.getTickHistory(symbol as MarketSymbol, selectedTicks);
         if (!active) return;
         
@@ -533,12 +535,12 @@ export default function TradingChart() {
             
             setPrices(prev => {
               const newPrices = [...prev, quote];
-              return newPrices.slice(-20000);
+              return newPrices.slice(-30000);
             });
             
             setTimes(prev => {
               const newTimes = [...prev, epoch];
-              return newTimes.slice(-20000);
+              return newTimes.slice(-30000);
             });
           });
           subscribedRef.current = true;
@@ -572,11 +574,11 @@ export default function TradingChart() {
       const hist = await derivApi.getTickHistory(symbol as MarketSymbol, selectedTicks);
       setPrices(prev => {
         const newPrices = [...prev, ...hist.history.prices];
-        return newPrices.slice(-20000);
+        return newPrices.slice(-30000);
       });
       setTimes(prev => {
         const newTimes = [...prev, ...hist.history.times];
-        return newTimes.slice(-20000);
+        return newTimes.slice(-30000);
       });
       toast.success('Market data refreshed');
     } catch (err) {
@@ -590,8 +592,10 @@ export default function TradingChart() {
      DERIVED DATA & INDICATORS
      ============================================ */
   
-  const tfPrices = useMemo(() => prices.slice(-selectedTicks), [prices, selectedTicks]);
-  const tfTimes = useMemo(() => times.slice(-selectedTicks), [times, selectedTicks]);
+  // Use ALL available prices for candles (not limited by ticks)
+  // This ensures 800 candles regardless of tick selection
+  const tfPrices = useMemo(() => prices.slice(), [prices]);
+  const tfTimes = useMemo(() => times.slice(), [times]);
   const candles = useMemo(() => buildCandles(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
   const currentPrice = prices[prices.length - 1] || 0;
   const lastDigit = getLastDigit(currentPrice);
@@ -780,7 +784,7 @@ export default function TradingChart() {
   }, []);
   
   /* ============================================
-     CANVAS DRAWING
+     CANVAS DRAWING - NO CANDLE REMOVAL ON SCROLL
      ============================================ */
   
   useEffect(() => {
@@ -810,6 +814,7 @@ export default function TradingChart() {
     const gap = 1;
     const totalCandleW = candleWidth + gap;
     const maxVisible = Math.floor(chartW / totalCandleW);
+    // NO CANDLE REMOVAL - just shift visible window
     const endIdx = Math.min(candles.length, candles.length - scrollOffset);
     const startIdx = Math.max(0, endIdx - maxVisible);
     const visibleCandles = candles.slice(startIdx, endIdx);
@@ -1159,12 +1164,12 @@ export default function TradingChart() {
     
     ctx.fillStyle = '#484F58';
     ctx.font = '9px JetBrains Mono, monospace';
-    ctx.fillText(`${visibleCandles.length}/${TARGET_CANDLES} candles | ${selectedTicks} ticks | Drag to pan | Ctrl+wheel zoom`, 8, H - 6);
+    ctx.fillText(`${visibleCandles.length}/${candles.length} candles | ${selectedTicks} ticks | Drag to pan | Ctrl+wheel zoom`, 8, H - 6);
   }, [candles, candleEndIndices, candleWidth, scrollOffset, showChart, indicators, drawings, currentDrawing, 
       bbSeries, ema9Series, ema20Series, ema50Series, currentPrice, macd, rsiSeries, tfPrices, parabolicSAR, supportResistanceLevels, selectedTicks]);
   
   /* ============================================
-     MOUSE HANDLERS
+     MOUSE HANDLERS - NO CANDLE REMOVAL
      ============================================ */
   
   useEffect(() => {
@@ -1176,8 +1181,9 @@ export default function TradingChart() {
       if (e.ctrlKey || e.metaKey) {
         setCandleWidth(prev => Math.max(2, Math.min(12, prev - Math.sign(e.deltaY))));
       } else {
-        const delta = Math.sign(e.deltaY) * Math.max(3, Math.floor(candles.length * 0.03));
-        setScrollOffset(prev => Math.max(0, Math.min(candles.length - 10, prev + delta)));
+        // Scroll to pan WITHOUT removing candles
+        const delta = Math.sign(e.deltaY) * Math.max(5, Math.floor(candles.length * 0.05));
+        setScrollOffset(prev => Math.max(0, Math.min(candles.length - 15, prev + delta)));
       }
     };
     
@@ -1420,19 +1426,28 @@ export default function TradingChart() {
           <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {candles.length}/{TARGET_CANDLES} candles</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Tick Selector */}
-          <div className="flex items-center gap-2 bg-card border border-border rounded-lg px-2 py-1">
-            <Sliders className="w-4 h-4 text-muted-foreground" />
+          {/* Animated Tick Selector with Red Background */}
+          <motion.div 
+            className="flex items-center gap-2 rounded-lg px-3 py-1"
+            style={{ background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)' }}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <Sliders className="w-4 h-4 text-white animate-pulse" />
             <select 
               value={selectedTicks} 
               onChange={(e) => setSelectedTicks(parseInt(e.target.value))}
-              className="bg-transparent text-xs h-7 px-1 rounded focus:outline-none"
+              className="bg-transparent text-white text-sm h-8 px-2 rounded focus:outline-none cursor-pointer font-medium"
+              style={{ textShadow: '0 1px 1px rgba(0,0,0,0.2)' }}
             >
               {TICK_OPTIONS.map(ticks => (
-                <option key={ticks} value={ticks}>{ticks.toLocaleString()} ticks</option>
+                <option key={ticks} value={ticks} className="bg-gray-900 text-white">
+                  📊 {ticks.toLocaleString()} ticks
+                </option>
               ))}
             </select>
-          </div>
+          </motion.div>
+          
           <Button onClick={handleManualRefresh} variant="outline" size="sm" className="gap-1" disabled={isLoading}>
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh
@@ -1441,8 +1456,8 @@ export default function TradingChart() {
             {showChart ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             {showChart ? "Hide Chart" : "Show Chart"}
           </Button>
-          <Badge className="font-mono text-sm" variant="outline">
-            {currentPrice.toFixed(2)}
+          <Badge className="font-mono text-sm bg-gradient-to-r from-blue-500 to-purple-500" variant="default">
+            ${currentPrice.toFixed(2)}
           </Badge>
         </div>
       </div>
@@ -1481,26 +1496,44 @@ export default function TradingChart() {
       </div>
       
       {/* Multi-Indicator Strategy Signal Container */}
-      <div className="bg-gradient-to-r from-blue-950/30 to-purple-950/30 border border-primary/30 rounded-xl p-3">
+      <motion.div 
+        className="bg-gradient-to-r from-blue-950/30 to-purple-950/30 border border-primary/30 rounded-xl p-3"
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+      >
         <div className="flex items-center gap-2 mb-2">
-          <Zap className="w-4 h-4 text-yellow-500" />
+          <Zap className="w-4 h-4 text-yellow-500 animate-pulse" />
           <h3 className="text-sm font-bold text-foreground">Multi-Indicator Strategy Signal</h3>
           <Badge variant="outline" className="text-[10px]">Powered by AI</Badge>
         </div>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {/* Signal Display */}
-          <div className="bg-black/30 rounded-lg p-3 text-center">
+          <motion.div 
+            className="bg-black/30 rounded-lg p-3 text-center"
+            whileHover={{ scale: 1.02 }}
+            transition={{ duration: 0.2 }}
+          >
             <div className="text-[10px] text-muted-foreground mb-1">Predicted Direction</div>
-            <div className={`text-2xl font-bold ${combinedSignal.color}`}>
+            <motion.div 
+              className={`text-2xl font-bold ${combinedSignal.color}`}
+              animate={{ scale: [1, 1.05, 1] }}
+              transition={{ duration: 2, repeat: Infinity }}
+            >
               {combinedSignal.direction === 'Over' ? '📈 OVER' : combinedSignal.direction === 'Under' ? '📉 UNDER' : '⚡ NEUTRAL'}
-            </div>
+            </motion.div>
             <div className="text-[9px] text-muted-foreground mt-1">Confidence: {combinedSignal.confidence}%</div>
             <div className="w-full bg-muted rounded-full h-1.5 mt-2">
-              <div className={`h-full rounded-full ${combinedSignal.direction === 'Over' ? 'bg-profit' : combinedSignal.direction === 'Under' ? 'bg-loss' : 'bg-warning'}`} 
-                   style={{ width: `${combinedSignal.confidence}%` }} />
+              <motion.div 
+                className={`h-full rounded-full ${combinedSignal.direction === 'Over' ? 'bg-profit' : combinedSignal.direction === 'Under' ? 'bg-loss' : 'bg-warning'}`}
+                style={{ width: `${combinedSignal.confidence}%` }}
+                initial={{ width: 0 }}
+                animate={{ width: `${combinedSignal.confidence}%` }}
+                transition={{ duration: 0.5 }}
+              />
             </div>
-          </div>
+          </motion.div>
           
           {/* Signal Strength */}
           <div className="bg-black/30 rounded-lg p-3">
@@ -1510,14 +1543,26 @@ export default function TradingChart() {
               <span className="text-[11px] font-mono font-bold">{combinedSignal.overScore}%</span>
             </div>
             <div className="w-full bg-muted rounded-full h-1.5 mb-2">
-              <div className="h-full bg-profit rounded-full" style={{ width: `${combinedSignal.overScore}%` }} />
+              <motion.div 
+                className="h-full bg-profit rounded-full" 
+                style={{ width: `${combinedSignal.overScore}%` }}
+                initial={{ width: 0 }}
+                animate={{ width: `${combinedSignal.overScore}%` }}
+                transition={{ duration: 0.5 }}
+              />
             </div>
             <div className="flex justify-between mb-1">
               <span className="text-[11px] text-loss">UNDER</span>
               <span className="text-[11px] font-mono font-bold">{combinedSignal.underScore}%</span>
             </div>
             <div className="w-full bg-muted rounded-full h-1.5">
-              <div className="h-full bg-loss rounded-full" style={{ width: `${combinedSignal.underScore}%` }} />
+              <motion.div 
+                className="h-full bg-loss rounded-full" 
+                style={{ width: `${combinedSignal.underScore}%` }}
+                initial={{ width: 0 }}
+                animate={{ width: `${combinedSignal.underScore}%` }}
+                transition={{ duration: 0.5 }}
+              />
             </div>
           </div>
           
@@ -1527,7 +1572,15 @@ export default function TradingChart() {
             <div className="space-y-1 max-h-20 overflow-auto">
               {combinedSignal.signals.length > 0 ? (
                 combinedSignal.signals.map((signal, idx) => (
-                  <div key={idx} className="text-[9px] font-mono text-primary">{signal}</div>
+                  <motion.div 
+                    key={idx} 
+                    className="text-[9px] font-mono text-primary"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: idx * 0.1 }}
+                  >
+                    {signal}
+                  </motion.div>
                 ))
               ) : (
                 <div className="text-[8px] text-muted-foreground">Enable indicators to see signals</div>
@@ -1539,7 +1592,7 @@ export default function TradingChart() {
         <div className="text-[8px] text-muted-foreground text-center mt-2 border-t border-border pt-2">
           💡 Combine 2-3 indicators for best results | Parabolic SAR + Bollinger Bands + RSI recommended
         </div>
-      </div>
+      </motion.div>
       
       {/* Drawing Tools Bar */}
       {showChart && (
@@ -1621,7 +1674,7 @@ export default function TradingChart() {
                 transition={{ duration: 0.3 }}
                 className="overflow-hidden"
               >
-                <div className="bg-[#0D1117] border border-[#30363D] rounded-xl overflow-hidden">
+                <div className="bg-[#0D1117] border border-[#30363D] rounded-xl overflow-hidden shadow-2xl">
                   <canvas 
                     ref={canvasRef} 
                     className="w-full" 
@@ -1646,10 +1699,15 @@ export default function TradingChart() {
               { label: 'RSI', value: rsi.toFixed(1), color: rsi > 70 ? 'text-loss' : rsi < 30 ? 'text-profit' : 'text-foreground' },
               { label: 'Signal', value: combinedSignal.direction, color: combinedSignal.color },
             ].map(item => (
-              <div key={item.label} className="bg-card border border-border rounded-lg p-2 text-center">
+              <motion.div 
+                key={item.label} 
+                className="bg-card border border-border rounded-lg p-2 text-center"
+                whileHover={{ scale: 1.05, y: -2 }}
+                transition={{ duration: 0.2 }}
+              >
                 <div className="text-[9px] text-muted-foreground">{item.label}</div>
                 <div className={`font-mono text-xs font-bold ${item.color}`}>{item.value}</div>
-              </div>
+              </motion.div>
             ))}
           </div>
           
@@ -1684,20 +1742,23 @@ export default function TradingChart() {
                 const pct = percentages[d] || 0;
                 const count = frequency[d] || 0;
                 return (
-                  <button key={d}
+                  <motion.button 
+                    key={d}
                     onClick={() => { setSelectedDigit(d); setPrediction(String(d)); }}
                     className={`relative rounded-lg p-2 text-center transition-all border cursor-pointer hover:ring-2 hover:ring-primary ${
                       selectedDigit === d ? 'ring-2 ring-primary' : ''
                     } ${pct > 12 ? 'bg-loss/10 border-loss/40 text-loss' :
                       pct > 9 ? 'bg-warning/10 border-warning/40 text-warning' :
                       'bg-card border-border text-primary'}`}
+                    whileHover={{ scale: 1.05, y: -2 }}
+                    whileTap={{ scale: 0.95 }}
                   >
                     <div className="font-mono text-lg font-bold">{d}</div>
                     <div className="text-[8px]">{count} ({pct.toFixed(1)}%)</div>
                     <div className="h-1 bg-muted rounded-full mt-1">
                       <div className={`h-full rounded-full ${pct > 12 ? 'bg-loss' : pct > 9 ? 'bg-warning' : 'bg-primary'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
                     </div>
-                  </button>
+                  </motion.button>
                 );
               })}
             </div>
@@ -1756,8 +1817,11 @@ export default function TradingChart() {
                 const isLast = i === last26.length - 1;
                 const isEven = d % 2 === 0;
                 return (
-                  <div
+                  <motion.div
                     key={i}
+                    initial={isLast ? { scale: 0.8 } : {}}
+                    animate={isLast ? { scale: [1, 1.1, 1] } : {}}
+                    transition={isLast ? { duration: 1, repeat: Infinity } : {}}
                     className={`w-7 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-xs border-2 ${
                       isLast ? 'ring-2 ring-primary' : ''
                     } ${isEven
@@ -1766,7 +1830,7 @@ export default function TradingChart() {
                     }`}
                   >
                     {d}
-                  </div>
+                  </motion.div>
                 );
               })}
             </div>
