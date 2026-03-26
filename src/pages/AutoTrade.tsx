@@ -1640,7 +1640,7 @@ export default function TradingChart() {
               </Button>
             </div>
             {voiceEnabled && (
-              <p className="text-[9px] text-muted-foreground mt-1">🔊 AI will announce trade results</p>
+              <p className="text-[9px] text-muted-foreground mt-1">🔊 Millie AI will announce trade results</p>
             )}
           </div>
 
@@ -1708,7 +1708,7 @@ export default function TradingChart() {
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                <Zap className="w-3.5 h-3.5 text-primary" /> Auto Bot
+                <Zap className="w-3.5 h-3.5 text-primary" /> Milliefx Speed Bot
               </h3>
               <div className="flex items-center gap-2">
                 <Button
