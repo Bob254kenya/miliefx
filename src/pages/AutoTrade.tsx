@@ -108,7 +108,7 @@ interface DigitStats {
   overPercentage: number;
   underPercentage: number;
   last26Digits: number[];
-  tickPrices: number[]; // Store tick prices for rise/fall detection
+  tickPrices: number[];
 }
 
 // Independent tick storage for digit analysis
@@ -131,11 +131,9 @@ function addTick(symbol: string, digit: number, price: number) {
   globalTickHistory[symbol].push(digit);
   globalTickPrices[symbol].push(price);
   
-  // Keep up to 2000 ticks for analysis
   if (globalTickHistory[symbol].length > 2000) globalTickHistory[symbol].shift();
   if (globalTickPrices[symbol].length > 2000) globalTickPrices[symbol].shift();
   
-  // Notify all callbacks for this symbol
   if (tickCallbacks[symbol]) {
     tickCallbacks[symbol].forEach(cb => cb());
   }
@@ -397,11 +395,9 @@ export default function TradingChart() {
   const subscriptionRef = useRef<any>(null);
   const reconnectAttempts = useRef(0);
 
-  // Indicators state
   const [indicators, setIndicators] = useState<Indicator[]>([]);
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false);
 
-  // Digit stats state - will update in real-time
   const [digitStats, setDigitStats] = useState<DigitStats>({
     frequency: {},
     percentages: {},
@@ -416,7 +412,6 @@ export default function TradingChart() {
     tickPrices: [],
   });
 
-  // Zoom & pan state
   const [candleWidth, setCandleWidth] = useState(7);
   const [scrollOffset, setScrollOffset] = useState(0);
   const isDragging = useRef(false);
@@ -426,16 +421,14 @@ export default function TradingChart() {
   const priceAxisStartY = useRef(0);
   const priceAxisStartWidth = useRef(7);
 
-  // Contract type for display (manual selection)
+  // Contract type for display
   const [selectedContractType, setSelectedContractType] = useState('CALL');
   const [selectedPrediction, setSelectedPrediction] = useState('5');
 
-  // Bot progress
   const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const lastSpokenSignal = useRef('');
 
-  // Strategy State
   const [strategyEnabled, setStrategyEnabled] = useState(false);
   const [strategyMode, setStrategyMode] = useState<'pattern' | 'digit'>('pattern');
   const [patternInput, setPatternInput] = useState('');
@@ -443,7 +436,6 @@ export default function TradingChart() {
   const [digitCompare, setDigitCompare] = useState('5');
   const [digitWindow, setDigitWindow] = useState('3');
 
-  // Auto Bot state
   const [botRunning, setBotRunning] = useState(false);
   const [botPaused, setBotPaused] = useState(false);
   const botRunningRef = useRef(false);
@@ -464,7 +456,6 @@ export default function TradingChart() {
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
   const [turboMode, setTurboMode] = useState(false);
 
-  // Display symbols for last 26 digits - updates in real-time based on selected contract type
   const [displaySymbols, setDisplaySymbols] = useState<string[]>([]);
 
   // Helper function to get symbol based on contract type, digit, and price movement
@@ -474,34 +465,27 @@ export default function TradingChart() {
     switch (type) {
       case 'CALL':
       case 'PUT':
-        // Rise/Fall based on actual price movement
         if (prevPrice === null) return '?';
         if (price > prevPrice) return 'R';
         if (price < prevPrice) return 'F';
-        return 'C'; // C for Constant/Same
+        return 'C';
         
       case 'DIGITOVER':
-        // O for Over (digit > barrier), U for Under
         return digit > barrierNum ? 'O' : 'U';
         
       case 'DIGITUNDER':
-        // U for Under (digit < barrier), O for Over
         return digit < barrierNum ? 'U' : 'O';
         
       case 'DIGITEVEN':
-        // E for Even, O for Odd
         return digit % 2 === 0 ? 'E' : 'O';
         
       case 'DIGITODD':
-        // O for Odd, E for Even
         return digit % 2 !== 0 ? 'O' : 'E';
         
       case 'DIGITMATCH':
-        // S for Same (matches barrier)
         return digit === barrierNum ? 'S' : 'D';
         
       case 'DIGITDIFF':
-        // D for Different, S for Same
         return digit !== barrierNum ? 'D' : 'S';
         
       default:
@@ -509,9 +493,8 @@ export default function TradingChart() {
     }
   }, []);
 
-  // Update display symbols in real-time based on selected contract type
-  // This updates whenever ticks come in OR contract type/prediction changes
-  useEffect(() => {
+  // Update display symbols - THIS NEEDS TO RUN IMMEDIATELY when contract type or prediction changes
+  const updateDisplaySymbols = useCallback(() => {
     const tickPricesData = digitStats.tickPrices;
     const symbols = digitStats.last26Digits.map((digit, index) => {
       const currentPrice = tickPricesData[index];
@@ -521,18 +504,26 @@ export default function TradingChart() {
     setDisplaySymbols(symbols);
   }, [digitStats.last26Digits, digitStats.tickPrices, selectedContractType, selectedPrediction, getDigitSymbol]);
 
-  // Function to update digit stats (called on tick range change and every new tick)
+  // Update when contract type changes
+  useEffect(() => {
+    updateDisplaySymbols();
+  }, [selectedContractType, selectedPrediction, updateDisplaySymbols]);
+
+  // Update when tick data changes
+  useEffect(() => {
+    updateDisplaySymbols();
+  }, [digitStats.last26Digits, digitStats.tickPrices, updateDisplaySymbols]);
+
+  // Function to update digit stats
   const updateDigitStats = useCallback(() => {
     const stats = calculateDigitStats(symbol, tickRange);
     setDigitStats(stats);
   }, [symbol, tickRange]);
 
-  // Subscribe to real-time tick updates for digit analysis - ALWAYS active
+  // Subscribe to real-time tick updates
   useEffect(() => {
-    // Initial calculation
     updateDigitStats();
     
-    // Subscribe to tick updates
     const unsubscribe = subscribeToTicks(symbol, () => {
       updateDigitStats();
     });
@@ -561,7 +552,7 @@ export default function TradingChart() {
     ));
   }, []);
 
-  // Load history with configurable candle count
+  // Load history
   useEffect(() => {
     let active = true;
     let timeoutId: NodeJS.Timeout;
@@ -601,7 +592,6 @@ export default function TradingChart() {
         const hist = await derivApi.getTickHistory(symbol as MarketSymbol, ticksToLoad);
         if (!active) return;
         
-        // Store ALL ticks for independent digit analysis
         const historicalDigits = (hist.history.prices || []).map(p => getLastDigit(p));
         const historicalPrices = hist.history.prices || [];
         globalTickHistory[symbol] = historicalDigits;
@@ -612,7 +602,6 @@ export default function TradingChart() {
         setScrollOffset(0);
         setIsLoading(false);
         
-        // Update digit stats after loading historical data
         updateDigitStats();
 
         if (!subscribedRef.current || !subscriptionRef.current) {
@@ -623,10 +612,8 @@ export default function TradingChart() {
             const digit = getLastDigit(quote);
             const epoch = data.tick.epoch;
             
-            // Update independent tick history for digit analysis (triggers callback)
             addTick(symbol, digit, quote);
             
-            // Update prices and times for candles
             setPrices(prev => {
               const newPrices = [...prev, quote];
               return newPrices.slice(-CANDLE_CONFIG.maxCandles);
@@ -706,12 +693,10 @@ export default function TradingChart() {
     }
   }, [symbol]);
 
-  /* ── Derived data for candles only ── */
   const candles = useMemo(() => buildCandles(prices, times, timeframe), [prices, times, timeframe]);
   const currentPrice = prices[prices.length - 1] || 0;
   const lastDigit = getLastDigit(currentPrice);
   
-  // Indicators calculations (based on candles/price data)
   const bb = useMemo(() => calculateBollingerBands(prices, 20), [prices]);
   const ema50 = useMemo(() => calcEMA(prices, 50), [prices]);
   const sma20 = useMemo(() => calcSMA(prices, 20), [prices]);
@@ -719,7 +704,6 @@ export default function TradingChart() {
   const rsi = useMemo(() => calculateRSI(prices, 14), [prices]);
   const macd = useMemo(() => calcMACDFull(prices), [prices]);
 
-  // Series for chart rendering
   const candleEndIndices = useMemo(() => mapCandlesToPriceIndices(prices, times, timeframe), [prices, times, timeframe]);
   const emaSeries = useMemo(() => calcEMASeries(prices, 50), [prices]);
   const smaSeries = useMemo(() => calcSMASeries(prices, 20), [prices]);
@@ -727,7 +711,6 @@ export default function TradingChart() {
   const rsiSeries = useMemo(() => calcRSISeries(prices, 14), [prices]);
   const macdSeries = useMemo(() => calcMACDSeries(prices), [prices]);
 
-  // Use digit stats from real-time updates
   const { frequency, percentages, mostCommon, leastCommon, totalTicks, evenPercentage, oddPercentage, overPercentage, underPercentage } = digitStats;
   
   const bbRange = bb.upper - bb.lower || 1;
@@ -753,7 +736,6 @@ export default function TradingChart() {
     return { digit: mostCommon, confidence: Math.min(90, Math.round(bestPct * 3)) };
   }, [percentages, mostCommon]);
 
-  // Strategy Helpers
   const cleanPattern = patternInput.toUpperCase().replace(/[^EO]/g, '');
   const patternValid = cleanPattern.length >= 2;
 
@@ -797,7 +779,7 @@ export default function TradingChart() {
     }
   }, [strategyEnabled, strategyMode, checkPatternMatch, checkDigitCondition]);
 
-  // Canvas mouse handlers for zoom & pan
+  // Canvas handlers
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !showChart) return;
@@ -862,7 +844,7 @@ export default function TradingChart() {
     };
   }, [candles.length, scrollOffset, candleWidth, showChart]);
 
-  // Chart rendering with indicators
+  // Chart rendering
   useEffect(() => {
     if (!showChart) return;
     
@@ -966,7 +948,6 @@ export default function TradingChart() {
       ctx.setLineDash([]);
     };
 
-    // Draw Bollinger Bands if enabled
     if (indicators.find(i => i.enabled && i.type === 'BB')) {
       ctx.fillStyle = 'rgba(188, 140, 255, 0.06)';
       const bbUpperPoints: {x: number, y: number}[] = [];
@@ -994,7 +975,6 @@ export default function TradingChart() {
       drawLine(bbSeries.lower, '#BC8CFF', 1.2, [5, 3]);
     }
 
-    // Draw Moving Averages if enabled
     if (indicators.find(i => i.enabled && i.type === 'MA')) {
       drawLine(emaSeries, '#2F81F7', 1.5);
       drawLine(smaSeries, '#E6B422', 1.5);
@@ -1021,7 +1001,6 @@ export default function TradingChart() {
     ctx.fillStyle = '#0D1117';
     ctx.fillText(`R ${resistance.toFixed(4)}`, chartW + 2, resY + 3);
 
-    // Draw candles - BLUE for bullish, RED for bearish
     for (let i = 0; i < visibleCandles.length; i++) {
       const c = visibleCandles[i];
       const x = offsetX + i * totalCandleW;
@@ -1082,7 +1061,6 @@ export default function TradingChart() {
 
     let currentYOffset = H + 8;
     
-    // Draw RSI panel if enabled
     if (indicators.find(i => i.enabled && i.type === 'RSI')) {
       const rsiTop = currentYOffset;
       ctx.fillStyle = '#161B22';
@@ -1139,7 +1117,6 @@ export default function TradingChart() {
       currentYOffset += rsiH;
     }
     
-    // Draw MACD panel if enabled
     if (indicators.find(i => i.enabled && i.type === 'MACD')) {
       const macdTop = currentYOffset;
       ctx.fillStyle = '#161B22';
@@ -1158,7 +1135,6 @@ export default function TradingChart() {
         
         const macdToY = (v: number) => macdTop + 4 + ((maxMacd - v) / macdRange) * (macdH - 8);
         
-        // Draw zero line
         const zeroY = macdToY(0);
         ctx.strokeStyle = '#484F58';
         ctx.lineWidth = 1;
@@ -1166,7 +1142,6 @@ export default function TradingChart() {
         ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(chartW, zeroY); ctx.stroke();
         ctx.setLineDash([]);
         
-        // Draw MACD line
         ctx.beginPath();
         ctx.strokeStyle = '#2F81F7';
         ctx.lineWidth = 1.5;
@@ -1183,7 +1158,6 @@ export default function TradingChart() {
         }
         ctx.stroke();
         
-        // Draw Signal line
         ctx.beginPath();
         ctx.strokeStyle = '#E6B422';
         ctx.lineWidth = 1.5;
@@ -1329,7 +1303,6 @@ export default function TradingChart() {
   const totalProfit = tradeHistory.reduce((s, t) => s + t.profit, 0);
   const winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
 
-  // Get the legend text based on selected contract type
   const getLegendText = () => {
     switch (selectedContractType) {
       case 'CALL':
@@ -1653,7 +1626,7 @@ export default function TradingChart() {
           </div>
         </div>
 
-        {/* RIGHT: Signals + Contract Selector + Last 26 Digits + Bot */}
+        {/* RIGHT: Signals + Contract Selector + Bot + Last 26 Digits */}
         <div className="xl:col-span-4 space-y-3">
           {/* Voice AI Toggle */}
           <div className="bg-card border border-primary/30 rounded-xl p-3">
@@ -1748,7 +1721,11 @@ export default function TradingChart() {
           {/* Contract Type Selector for Display */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-2">
             <h3 className="text-xs font-semibold text-foreground">Analysis Mode</h3>
-            <Select value={selectedContractType} onValueChange={setSelectedContractType}>
+            <Select value={selectedContractType} onValueChange={(value) => {
+              setSelectedContractType(value);
+              // Force immediate update of display symbols
+              setTimeout(() => updateDisplaySymbols(), 0);
+            }}>
               <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
             </Select>
@@ -1758,7 +1735,11 @@ export default function TradingChart() {
                 <label className="text-[9px] text-muted-foreground">Prediction (0-9)</label>
                 <div className="grid grid-cols-5 gap-1">
                   {Array.from({ length: 10 }, (_, i) => (
-                    <button key={i} onClick={() => setSelectedPrediction(String(i))}
+                    <button key={i} onClick={() => {
+                      setSelectedPrediction(String(i));
+                      // Force immediate update
+                      setTimeout(() => updateDisplaySymbols(), 0);
+                    }}
                       className={`h-8 rounded text-xs font-mono font-bold transition-all ${
                         selectedPrediction === String(i) ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground hover:bg-secondary'
                       }`}>{i}</button>
@@ -1769,122 +1750,6 @@ export default function TradingChart() {
             
             <div className="text-[9px] text-muted-foreground text-center pt-1">
               Select contract type to analyze last 26 digits
-            </div>
-          </div>
-
-          {/* Last 26 Digits - Always Active, Updates in Real-Time */}
-          <div className="bg-card border border-border rounded-xl p-3">
-            <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center justify-between">
-              <span>Last 26 Digits Analysis</span>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="text-[8px] animate-pulse">
-                  🟢 LIVE
-                </Badge>
-                <Badge className="text-[8px] bg-primary/20 text-primary">
-                  {selectedContractType === 'CALL' ? 'Rise' : 
-                   selectedContractType === 'PUT' ? 'Fall' :
-                   selectedContractType === 'DIGITOVER' ? `Over ${selectedPrediction}` :
-                   selectedContractType === 'DIGITUNDER' ? `Under ${selectedPrediction}` :
-                   selectedContractType === 'DIGITEVEN' ? 'Even' :
-                   selectedContractType === 'DIGITODD' ? 'Odd' :
-                   selectedContractType === 'DIGITMATCH' ? `Match ${selectedPrediction}` :
-                   selectedContractType === 'DIGITDIFF' ? `Diff ${selectedPrediction}` : selectedContractType}
-                </Badge>
-              </div>
-            </h3>
-            
-            {/* Legend */}
-            <div className="flex flex-wrap gap-3 mb-3 text-[8px] justify-center">
-              {legend.symbol1 && (
-                <div className="flex items-center gap-1">
-                  <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
-                    legend.symbol1 === 'R' ? 'bg-profit/20 text-profit' :
-                    legend.symbol1 === 'F' ? 'bg-loss/20 text-loss' :
-                    legend.symbol1 === 'O' ? 'bg-primary/20 text-primary' :
-                    legend.symbol1 === 'U' ? 'bg-[#D29922]/20 text-[#D29922]' :
-                    legend.symbol1 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
-                    'bg-muted/20 text-foreground'
-                  }`}>
-                    {legend.symbol1}
-                  </div>
-                  <span className="text-muted-foreground">{legend.meaning1}</span>
-                </div>
-              )}
-              {legend.symbol2 && (
-                <div className="flex items-center gap-1">
-                  <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
-                    legend.symbol2 === 'R' ? 'bg-profit/20 text-profit' :
-                    legend.symbol2 === 'F' ? 'bg-loss/20 text-loss' :
-                    legend.symbol2 === 'O' ? 'bg-primary/20 text-primary' :
-                    legend.symbol2 === 'U' ? 'bg-[#D29922]/20 text-[#D29922]' :
-                    legend.symbol2 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
-                    'bg-muted/20 text-foreground'
-                  }`}>
-                    {legend.symbol2}
-                  </div>
-                  <span className="text-muted-foreground">{legend.meaning2}</span>
-                </div>
-              )}
-              {legend.symbol3 && (
-                <div className="flex items-center gap-1">
-                  <div className="w-4 h-4 rounded bg-muted/20 flex items-center justify-center text-[9px] font-bold">
-                    {legend.symbol3}
-                  </div>
-                  <span className="text-muted-foreground">{legend.meaning3}</span>
-                </div>
-              )}
-            </div>
-            
-            <div className="flex gap-1 flex-wrap justify-center">
-              {displaySymbols.length > 0 ? (
-                displaySymbols.map((symbol, i) => {
-                  const isLast = i === displaySymbols.length - 1;
-                  
-                  let bgColor = '';
-                  let textColor = '';
-                  
-                  if (symbol === 'R' || symbol === 'U') {
-                    bgColor = 'bg-profit/20';
-                    textColor = 'text-profit';
-                  } else if (symbol === 'F' || symbol === 'O' || symbol === 'D') {
-                    bgColor = 'bg-loss/20';
-                    textColor = 'text-loss';
-                  } else if (symbol === 'E' || symbol === 'S') {
-                    bgColor = 'bg-[#3FB950]/20';
-                    textColor = 'text-[#3FB950]';
-                  } else {
-                    bgColor = 'bg-muted/20';
-                    textColor = 'text-foreground';
-                  }
-                  
-                  return (
-                    <motion.div
-                      key={i}
-                      initial={isLast ? { scale: 0.8 } : {}}
-                      animate={isLast ? { scale: [1, 1.2, 1] } : {}}
-                      transition={isLast ? { duration: 0.5 } : {}}
-                      className={`w-7 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-sm border-2 transition-all ${
-                        isLast ? 'w-9 h-11 text-base ring-2 ring-primary' : ''
-                      } ${bgColor} ${textColor} ${
-                        isLast ? 'border-primary' : 
-                        symbol === 'R' || symbol === 'U' ? 'border-profit/30' :
-                        symbol === 'F' || symbol === 'O' || symbol === 'D' ? 'border-loss/30' :
-                        symbol === 'E' || symbol === 'S' ? 'border-[#3FB950]/30' :
-                        'border-border'
-                      }`}
-                    >
-                      {symbol}
-                    </motion.div>
-                  );
-                })
-              ) : (
-                <div className="text-center text-xs text-muted-foreground py-4">
-                  Waiting for tick data...
-                </div>
-              )}
-            </div>
-            <div className="text-center text-[8px] text-muted-foreground mt-2">
-              🔄 Updates with every tick • Latest digit highlighted
             </div>
           </div>
 
@@ -2118,6 +1983,122 @@ export default function TradingChart() {
                   </Button>
                 </>
               )}
+            </div>
+          </div>
+
+          {/* Last 26 Digits - Below Milliefx Speed Bot */}
+          <div className="bg-card border border-border rounded-xl p-3">
+            <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center justify-between">
+              <span>Last 26 Digits Analysis</span>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="text-[8px] animate-pulse">
+                  🟢 LIVE
+                </Badge>
+                <Badge className="text-[8px] bg-primary/20 text-primary">
+                  {selectedContractType === 'CALL' ? 'Rise' : 
+                   selectedContractType === 'PUT' ? 'Fall' :
+                   selectedContractType === 'DIGITOVER' ? `Over ${selectedPrediction}` :
+                   selectedContractType === 'DIGITUNDER' ? `Under ${selectedPrediction}` :
+                   selectedContractType === 'DIGITEVEN' ? 'Even' :
+                   selectedContractType === 'DIGITODD' ? 'Odd' :
+                   selectedContractType === 'DIGITMATCH' ? `Match ${selectedPrediction}` :
+                   selectedContractType === 'DIGITDIFF' ? `Diff ${selectedPrediction}` : selectedContractType}
+                </Badge>
+              </div>
+            </h3>
+            
+            {/* Legend */}
+            <div className="flex flex-wrap gap-3 mb-3 text-[8px] justify-center">
+              {legend.symbol1 && (
+                <div className="flex items-center gap-1">
+                  <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
+                    legend.symbol1 === 'R' ? 'bg-profit/20 text-profit' :
+                    legend.symbol1 === 'F' ? 'bg-loss/20 text-loss' :
+                    legend.symbol1 === 'O' ? 'bg-primary/20 text-primary' :
+                    legend.symbol1 === 'U' ? 'bg-[#D29922]/20 text-[#D29922]' :
+                    legend.symbol1 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
+                    'bg-muted/20 text-foreground'
+                  }`}>
+                    {legend.symbol1}
+                  </div>
+                  <span className="text-muted-foreground">{legend.meaning1}</span>
+                </div>
+              )}
+              {legend.symbol2 && (
+                <div className="flex items-center gap-1">
+                  <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
+                    legend.symbol2 === 'R' ? 'bg-profit/20 text-profit' :
+                    legend.symbol2 === 'F' ? 'bg-loss/20 text-loss' :
+                    legend.symbol2 === 'O' ? 'bg-primary/20 text-primary' :
+                    legend.symbol2 === 'U' ? 'bg-[#D29922]/20 text-[#D29922]' :
+                    legend.symbol2 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
+                    'bg-muted/20 text-foreground'
+                  }`}>
+                    {legend.symbol2}
+                  </div>
+                  <span className="text-muted-foreground">{legend.meaning2}</span>
+                </div>
+              )}
+              {legend.symbol3 && (
+                <div className="flex items-center gap-1">
+                  <div className="w-4 h-4 rounded bg-muted/20 flex items-center justify-center text-[9px] font-bold">
+                    {legend.symbol3}
+                  </div>
+                  <span className="text-muted-foreground">{legend.meaning3}</span>
+                </div>
+              )}
+            </div>
+            
+            <div className="flex gap-1 flex-wrap justify-center">
+              {displaySymbols.length > 0 ? (
+                displaySymbols.map((symbol, i) => {
+                  const isLast = i === displaySymbols.length - 1;
+                  
+                  let bgColor = '';
+                  let textColor = '';
+                  
+                  if (symbol === 'R' || symbol === 'U') {
+                    bgColor = 'bg-profit/20';
+                    textColor = 'text-profit';
+                  } else if (symbol === 'F' || symbol === 'O' || symbol === 'D') {
+                    bgColor = 'bg-loss/20';
+                    textColor = 'text-loss';
+                  } else if (symbol === 'E' || symbol === 'S') {
+                    bgColor = 'bg-[#3FB950]/20';
+                    textColor = 'text-[#3FB950]';
+                  } else {
+                    bgColor = 'bg-muted/20';
+                    textColor = 'text-foreground';
+                  }
+                  
+                  return (
+                    <motion.div
+                      key={i}
+                      initial={isLast ? { scale: 0.8 } : {}}
+                      animate={isLast ? { scale: [1, 1.2, 1] } : {}}
+                      transition={isLast ? { duration: 0.5 } : {}}
+                      className={`w-7 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-sm border-2 transition-all ${
+                        isLast ? 'w-9 h-11 text-base ring-2 ring-primary' : ''
+                      } ${bgColor} ${textColor} ${
+                        isLast ? 'border-primary' : 
+                        symbol === 'R' || symbol === 'U' ? 'border-profit/30' :
+                        symbol === 'F' || symbol === 'O' || symbol === 'D' ? 'border-loss/30' :
+                        symbol === 'E' || symbol === 'S' ? 'border-[#3FB950]/30' :
+                        'border-border'
+                      }`}
+                    >
+                      {symbol}
+                    </motion.div>
+                  );
+                })
+              ) : (
+                <div className="text-center text-xs text-muted-foreground py-4">
+                  Waiting for tick data...
+                </div>
+              )}
+            </div>
+            <div className="text-center text-[8px] text-muted-foreground mt-2">
+              🔄 Updates with every tick • Latest digit highlighted
             </div>
           </div>
 
