@@ -426,12 +426,9 @@ export default function TradingChart() {
   const priceAxisStartY = useRef(0);
   const priceAxisStartWidth = useRef(7);
 
-  // Trade panel - removed manual trade, keeping only contract type selection for display
-  const [contractType, setContractType] = useState('CALL');
-  const [prediction, setPrediction] = useState('5');
-  const [duration, setDuration] = useState('1');
-  const [durationUnit, setDurationUnit] = useState('t');
-  const [tradeStake, setTradeStake] = useState('1.00');
+  // Contract type for display (manual selection)
+  const [selectedContractType, setSelectedContractType] = useState('CALL');
+  const [selectedPrediction, setSelectedPrediction] = useState('5');
 
   // Bot progress
   const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
@@ -467,7 +464,7 @@ export default function TradingChart() {
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
   const [turboMode, setTurboMode] = useState(false);
 
-  // Display symbols for last 26 digits based on contract type - only updates when bot is running
+  // Display symbols for last 26 digits - updates in real-time based on selected contract type
   const [displaySymbols, setDisplaySymbols] = useState<string[]>([]);
 
   // Helper function to get symbol based on contract type, digit, and price movement
@@ -512,57 +509,36 @@ export default function TradingChart() {
     }
   }, []);
 
-  // Update display symbols ONLY when bot is running and ticks come in
+  // Update display symbols in real-time based on selected contract type
+  // This updates whenever ticks come in OR contract type/prediction changes
   useEffect(() => {
-    if (!botRunning) {
-      // Clear display when bot is not running
-      setDisplaySymbols([]);
-      return;
-    }
-    
-    // Update based on current digit stats and contract type
     const tickPricesData = digitStats.tickPrices;
     const symbols = digitStats.last26Digits.map((digit, index) => {
       const currentPrice = tickPricesData[index];
       const prevPrice = index > 0 ? tickPricesData[index - 1] : null;
-      return getDigitSymbol(digit, currentPrice, prevPrice, botConfig.contractType, botConfig.prediction);
+      return getDigitSymbol(digit, currentPrice, prevPrice, selectedContractType, selectedPrediction);
     });
     setDisplaySymbols(symbols);
-  }, [botRunning, digitStats.last26Digits, digitStats.tickPrices, botConfig.contractType, botConfig.prediction, getDigitSymbol]);
-
-  // Also update when contract type changes while bot is running
-  useEffect(() => {
-    if (!botRunning) return;
-    
-    const tickPricesData = digitStats.tickPrices;
-    const symbols = digitStats.last26Digits.map((digit, index) => {
-      const currentPrice = tickPricesData[index];
-      const prevPrice = index > 0 ? tickPricesData[index - 1] : null;
-      return getDigitSymbol(digit, currentPrice, prevPrice, botConfig.contractType, botConfig.prediction);
-    });
-    setDisplaySymbols(symbols);
-  }, [botRunning, botConfig.contractType, botConfig.prediction, digitStats.last26Digits, digitStats.tickPrices, getDigitSymbol]);
+  }, [digitStats.last26Digits, digitStats.tickPrices, selectedContractType, selectedPrediction, getDigitSymbol]);
 
   // Function to update digit stats (called on tick range change and every new tick)
   const updateDigitStats = useCallback(() => {
-    const stats = calculateDigitStats(botConfig.botSymbol, tickRange);
+    const stats = calculateDigitStats(symbol, tickRange);
     setDigitStats(stats);
-  }, [botConfig.botSymbol, tickRange]);
+  }, [symbol, tickRange]);
 
-  // Subscribe to real-time tick updates for digit analysis - only update when bot is running
+  // Subscribe to real-time tick updates for digit analysis - ALWAYS active
   useEffect(() => {
-    if (!botRunning) return;
-    
     // Initial calculation
     updateDigitStats();
     
     // Subscribe to tick updates
-    const unsubscribe = subscribeToTicks(botConfig.botSymbol, () => {
+    const unsubscribe = subscribeToTicks(symbol, () => {
       updateDigitStats();
     });
     
     return unsubscribe;
-  }, [botRunning, botConfig.botSymbol, tickRange, updateDigitStats]);
+  }, [symbol, tickRange, updateDigitStats]);
 
   const addIndicator = useCallback((type: IndicatorType) => {
     const newIndicator: Indicator = {
@@ -635,6 +611,9 @@ export default function TradingChart() {
         setTimes(hist.history.times || []);
         setScrollOffset(0);
         setIsLoading(false);
+        
+        // Update digit stats after loading historical data
+        updateDigitStats();
 
         if (!subscribedRef.current || !subscriptionRef.current) {
           subscriptionRef.current = await derivApi.subscribeTicks(symbol as MarketSymbol, (data: any) => {
@@ -687,7 +666,7 @@ export default function TradingChart() {
       cleanup();
       subscribedRef.current = false;
     };
-  }, [symbol, candleCount, showChart]);
+  }, [symbol, candleCount, updateDigitStats, showChart]);
 
   useEffect(() => {
     const checkConnection = setInterval(() => {
@@ -1331,7 +1310,6 @@ export default function TradingChart() {
   const stopBot = useCallback(() => { 
     botRunningRef.current = false; 
     setBotRunning(false);
-    setDisplaySymbols([]); // Clear display when bot stops
     toast.info('🛑 Bot stopped'); 
   }, []);
   
@@ -1351,25 +1329,25 @@ export default function TradingChart() {
   const totalProfit = tradeHistory.reduce((s, t) => s + t.profit, 0);
   const winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
 
-  // Get the legend text based on current contract type
+  // Get the legend text based on selected contract type
   const getLegendText = () => {
-    switch (botConfig.contractType) {
+    switch (selectedContractType) {
       case 'CALL':
         return { symbol1: 'R', meaning1: 'Rise (price up)', symbol2: 'F', meaning2: 'Fall (price down)', symbol3: 'C', meaning3: 'Constant (price same)' };
       case 'PUT':
         return { symbol1: 'F', meaning1: 'Fall (price down)', symbol2: 'R', meaning2: 'Rise (price up)', symbol3: 'C', meaning3: 'Constant (price same)' };
       case 'DIGITOVER':
-        return { symbol1: 'O', meaning1: `Over > ${botConfig.prediction}`, symbol2: 'U', meaning2: `Under ≤ ${botConfig.prediction}`, symbol3: '', meaning3: '' };
+        return { symbol1: 'O', meaning1: `Over > ${selectedPrediction}`, symbol2: 'U', meaning2: `Under ≤ ${selectedPrediction}`, symbol3: '', meaning3: '' };
       case 'DIGITUNDER':
-        return { symbol1: 'U', meaning1: `Under < ${botConfig.prediction}`, symbol2: 'O', meaning2: `Over ≥ ${botConfig.prediction}`, symbol3: '', meaning3: '' };
+        return { symbol1: 'U', meaning1: `Under < ${selectedPrediction}`, symbol2: 'O', meaning2: `Over ≥ ${selectedPrediction}`, symbol3: '', meaning3: '' };
       case 'DIGITEVEN':
         return { symbol1: 'E', meaning1: 'Even', symbol2: 'O', meaning2: 'Odd', symbol3: '', meaning3: '' };
       case 'DIGITODD':
         return { symbol1: 'O', meaning1: 'Odd', symbol2: 'E', meaning2: 'Even', symbol3: '', meaning3: '' };
       case 'DIGITMATCH':
-        return { symbol1: 'S', meaning1: `Same = ${botConfig.prediction}`, symbol2: 'D', meaning2: `Different ≠ ${botConfig.prediction}`, symbol3: '', meaning3: '' };
+        return { symbol1: 'S', meaning1: `Same = ${selectedPrediction}`, symbol2: 'D', meaning2: `Different ≠ ${selectedPrediction}`, symbol3: '', meaning3: '' };
       case 'DIGITDIFF':
-        return { symbol1: 'D', meaning1: `Different ≠ ${botConfig.prediction}`, symbol2: 'S', meaning2: `Same = ${botConfig.prediction}`, symbol3: '', meaning3: '' };
+        return { symbol1: 'D', meaning1: `Different ≠ ${selectedPrediction}`, symbol2: 'S', meaning2: `Same = ${selectedPrediction}`, symbol3: '', meaning3: '' };
       default:
         return { symbol1: '', meaning1: '', symbol2: '', meaning2: '', symbol3: '', meaning3: '' };
     }
@@ -1618,9 +1596,9 @@ export default function TradingChart() {
                 const isBestDiffer = d === leastCommon;
                 return (
                   <button key={d}
-                    onClick={() => { setPrediction(String(d)); }}
+                    onClick={() => { setSelectedPrediction(String(d)); }}
                     className={`relative rounded-lg p-2 text-center transition-all border cursor-pointer hover:ring-2 hover:ring-primary ${
-                      prediction === String(d) ? 'ring-2 ring-primary' : ''
+                      selectedPrediction === String(d) ? 'ring-2 ring-primary' : ''
                     } ${isHot ? 'bg-loss/10 border-loss/40 text-loss' :
                       isWarm ? 'bg-warning/10 border-warning/40 text-warning' :
                       'bg-card border-border text-primary'}`}
@@ -1675,7 +1653,7 @@ export default function TradingChart() {
           </div>
         </div>
 
-        {/* RIGHT: Signals + Bot + Last 26 Digits */}
+        {/* RIGHT: Signals + Contract Selector + Last 26 Digits + Bot */}
         <div className="xl:col-span-4 space-y-3">
           {/* Voice AI Toggle */}
           <div className="bg-card border border-primary/30 rounded-xl p-3">
@@ -1764,6 +1742,149 @@ export default function TradingChart() {
               <div className="h-1.5 bg-muted rounded-full">
                 <div className="h-full bg-profit rounded-full" style={{ width: `${matchSignal.confidence}%` }} />
               </div>
+            </div>
+          </div>
+
+          {/* Contract Type Selector for Display */}
+          <div className="bg-card border border-border rounded-xl p-3 space-y-2">
+            <h3 className="text-xs font-semibold text-foreground">Analysis Mode</h3>
+            <Select value={selectedContractType} onValueChange={setSelectedContractType}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
+            </Select>
+
+            {['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(selectedContractType) && (
+              <div>
+                <label className="text-[9px] text-muted-foreground">Prediction (0-9)</label>
+                <div className="grid grid-cols-5 gap-1">
+                  {Array.from({ length: 10 }, (_, i) => (
+                    <button key={i} onClick={() => setSelectedPrediction(String(i))}
+                      className={`h-8 rounded text-xs font-mono font-bold transition-all ${
+                        selectedPrediction === String(i) ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground hover:bg-secondary'
+                      }`}>{i}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            <div className="text-[9px] text-muted-foreground text-center pt-1">
+              Select contract type to analyze last 26 digits
+            </div>
+          </div>
+
+          {/* Last 26 Digits - Always Active, Updates in Real-Time */}
+          <div className="bg-card border border-border rounded-xl p-3">
+            <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center justify-between">
+              <span>Last 26 Digits Analysis</span>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="text-[8px] animate-pulse">
+                  🟢 LIVE
+                </Badge>
+                <Badge className="text-[8px] bg-primary/20 text-primary">
+                  {selectedContractType === 'CALL' ? 'Rise' : 
+                   selectedContractType === 'PUT' ? 'Fall' :
+                   selectedContractType === 'DIGITOVER' ? `Over ${selectedPrediction}` :
+                   selectedContractType === 'DIGITUNDER' ? `Under ${selectedPrediction}` :
+                   selectedContractType === 'DIGITEVEN' ? 'Even' :
+                   selectedContractType === 'DIGITODD' ? 'Odd' :
+                   selectedContractType === 'DIGITMATCH' ? `Match ${selectedPrediction}` :
+                   selectedContractType === 'DIGITDIFF' ? `Diff ${selectedPrediction}` : selectedContractType}
+                </Badge>
+              </div>
+            </h3>
+            
+            {/* Legend */}
+            <div className="flex flex-wrap gap-3 mb-3 text-[8px] justify-center">
+              {legend.symbol1 && (
+                <div className="flex items-center gap-1">
+                  <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
+                    legend.symbol1 === 'R' ? 'bg-profit/20 text-profit' :
+                    legend.symbol1 === 'F' ? 'bg-loss/20 text-loss' :
+                    legend.symbol1 === 'O' ? 'bg-primary/20 text-primary' :
+                    legend.symbol1 === 'U' ? 'bg-[#D29922]/20 text-[#D29922]' :
+                    legend.symbol1 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
+                    'bg-muted/20 text-foreground'
+                  }`}>
+                    {legend.symbol1}
+                  </div>
+                  <span className="text-muted-foreground">{legend.meaning1}</span>
+                </div>
+              )}
+              {legend.symbol2 && (
+                <div className="flex items-center gap-1">
+                  <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
+                    legend.symbol2 === 'R' ? 'bg-profit/20 text-profit' :
+                    legend.symbol2 === 'F' ? 'bg-loss/20 text-loss' :
+                    legend.symbol2 === 'O' ? 'bg-primary/20 text-primary' :
+                    legend.symbol2 === 'U' ? 'bg-[#D29922]/20 text-[#D29922]' :
+                    legend.symbol2 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
+                    'bg-muted/20 text-foreground'
+                  }`}>
+                    {legend.symbol2}
+                  </div>
+                  <span className="text-muted-foreground">{legend.meaning2}</span>
+                </div>
+              )}
+              {legend.symbol3 && (
+                <div className="flex items-center gap-1">
+                  <div className="w-4 h-4 rounded bg-muted/20 flex items-center justify-center text-[9px] font-bold">
+                    {legend.symbol3}
+                  </div>
+                  <span className="text-muted-foreground">{legend.meaning3}</span>
+                </div>
+              )}
+            </div>
+            
+            <div className="flex gap-1 flex-wrap justify-center">
+              {displaySymbols.length > 0 ? (
+                displaySymbols.map((symbol, i) => {
+                  const isLast = i === displaySymbols.length - 1;
+                  
+                  let bgColor = '';
+                  let textColor = '';
+                  
+                  if (symbol === 'R' || symbol === 'U') {
+                    bgColor = 'bg-profit/20';
+                    textColor = 'text-profit';
+                  } else if (symbol === 'F' || symbol === 'O' || symbol === 'D') {
+                    bgColor = 'bg-loss/20';
+                    textColor = 'text-loss';
+                  } else if (symbol === 'E' || symbol === 'S') {
+                    bgColor = 'bg-[#3FB950]/20';
+                    textColor = 'text-[#3FB950]';
+                  } else {
+                    bgColor = 'bg-muted/20';
+                    textColor = 'text-foreground';
+                  }
+                  
+                  return (
+                    <motion.div
+                      key={i}
+                      initial={isLast ? { scale: 0.8 } : {}}
+                      animate={isLast ? { scale: [1, 1.2, 1] } : {}}
+                      transition={isLast ? { duration: 0.5 } : {}}
+                      className={`w-7 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-sm border-2 transition-all ${
+                        isLast ? 'w-9 h-11 text-base ring-2 ring-primary' : ''
+                      } ${bgColor} ${textColor} ${
+                        isLast ? 'border-primary' : 
+                        symbol === 'R' || symbol === 'U' ? 'border-profit/30' :
+                        symbol === 'F' || symbol === 'O' || symbol === 'D' ? 'border-loss/30' :
+                        symbol === 'E' || symbol === 'S' ? 'border-[#3FB950]/30' :
+                        'border-border'
+                      }`}
+                    >
+                      {symbol}
+                    </motion.div>
+                  );
+                })
+              ) : (
+                <div className="text-center text-xs text-muted-foreground py-4">
+                  Waiting for tick data...
+                </div>
+              )}
+            </div>
+            <div className="text-center text-[8px] text-muted-foreground mt-2">
+              🔄 Updates with every tick • Latest digit highlighted
             </div>
           </div>
 
@@ -1998,132 +2119,6 @@ export default function TradingChart() {
                 </>
               )}
             </div>
-          </div>
-
-          {/* Last 26 Digits - Only Updates When Bot is Running */}
-          <div className="bg-card border border-border rounded-xl p-3">
-            <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center justify-between">
-              <span>Last 26 Digits Analysis</span>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="text-[8px]">
-                  {botRunning ? '🟢 LIVE' : '⚫ IDLE'}
-                </Badge>
-                <Badge className="text-[8px] bg-primary/20 text-primary">
-                  {botConfig.contractType === 'CALL' ? 'Rise' : 
-                   botConfig.contractType === 'PUT' ? 'Fall' :
-                   botConfig.contractType === 'DIGITOVER' ? `Over ${botConfig.prediction}` :
-                   botConfig.contractType === 'DIGITUNDER' ? `Under ${botConfig.prediction}` :
-                   botConfig.contractType === 'DIGITEVEN' ? 'Even' :
-                   botConfig.contractType === 'DIGITODD' ? 'Odd' :
-                   botConfig.contractType === 'DIGITMATCH' ? `Match ${botConfig.prediction}` :
-                   botConfig.contractType === 'DIGITDIFF' ? `Diff ${botConfig.prediction}` : botConfig.contractType}
-                </Badge>
-              </div>
-            </h3>
-            
-            {!botRunning ? (
-              <div className="text-center py-8 text-muted-foreground text-xs">
-                <Zap className="w-8 h-8 mx-auto mb-2 text-muted-foreground/50" />
-                Start the bot to see real-time digit analysis
-                <div className="text-[9px] mt-1">Bot will update last 26 digits with every tick</div>
-              </div>
-            ) : (
-              <>
-                {/* Legend */}
-                <div className="flex flex-wrap gap-3 mb-3 text-[8px] justify-center">
-                  {legend.symbol1 && (
-                    <div className="flex items-center gap-1">
-                      <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
-                        legend.symbol1 === 'R' ? 'bg-profit/20 text-profit' :
-                        legend.symbol1 === 'F' ? 'bg-loss/20 text-loss' :
-                        legend.symbol1 === 'O' ? 'bg-primary/20 text-primary' :
-                        legend.symbol1 === 'U' ? 'bg-[#D29922]/20 text-[#D29922]' :
-                        legend.symbol1 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
-                        'bg-muted/20 text-foreground'
-                      }`}>
-                        {legend.symbol1}
-                      </div>
-                      <span className="text-muted-foreground">{legend.meaning1}</span>
-                    </div>
-                  )}
-                  {legend.symbol2 && (
-                    <div className="flex items-center gap-1">
-                      <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
-                        legend.symbol2 === 'R' ? 'bg-profit/20 text-profit' :
-                        legend.symbol2 === 'F' ? 'bg-loss/20 text-loss' :
-                        legend.symbol2 === 'O' ? 'bg-primary/20 text-primary' :
-                        legend.symbol2 === 'U' ? 'bg-[#D29922]/20 text-[#D29922]' :
-                        legend.symbol2 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
-                        'bg-muted/20 text-foreground'
-                      }`}>
-                        {legend.symbol2}
-                      </div>
-                      <span className="text-muted-foreground">{legend.meaning2}</span>
-                    </div>
-                  )}
-                  {legend.symbol3 && (
-                    <div className="flex items-center gap-1">
-                      <div className="w-4 h-4 rounded bg-muted/20 flex items-center justify-center text-[9px] font-bold">
-                        {legend.symbol3}
-                      </div>
-                      <span className="text-muted-foreground">{legend.meaning3}</span>
-                    </div>
-                  )}
-                </div>
-                
-                <div className="flex gap-1 flex-wrap justify-center">
-                  {displaySymbols.length > 0 ? (
-                    displaySymbols.map((symbol, i) => {
-                      const isLast = i === displaySymbols.length - 1;
-                      
-                      let bgColor = '';
-                      let textColor = '';
-                      
-                      if (symbol === 'R' || symbol === 'U') {
-                        bgColor = 'bg-profit/20';
-                        textColor = 'text-profit';
-                      } else if (symbol === 'F' || symbol === 'O' || symbol === 'D') {
-                        bgColor = 'bg-loss/20';
-                        textColor = 'text-loss';
-                      } else if (symbol === 'E' || symbol === 'S') {
-                        bgColor = 'bg-[#3FB950]/20';
-                        textColor = 'text-[#3FB950]';
-                      } else {
-                        bgColor = 'bg-muted/20';
-                        textColor = 'text-foreground';
-                      }
-                      
-                      return (
-                        <motion.div
-                          key={i}
-                          initial={isLast ? { scale: 0.8 } : {}}
-                          animate={isLast ? { scale: [1, 1.2, 1] } : {}}
-                          transition={isLast ? { duration: 0.5 } : {}}
-                          className={`w-7 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-sm border-2 transition-all ${
-                            isLast ? 'w-9 h-11 text-base ring-2 ring-primary' : ''
-                          } ${bgColor} ${textColor} ${
-                            isLast ? 'border-primary' : 
-                            symbol === 'R' || symbol === 'U' ? 'border-profit/30' :
-                            symbol === 'F' || symbol === 'O' || symbol === 'D' ? 'border-loss/30' :
-                            symbol === 'E' || symbol === 'S' ? 'border-[#3FB950]/30' :
-                            'border-border'
-                          }`}
-                        >
-                          {symbol}
-                        </motion.div>
-                      );
-                    })
-                  ) : (
-                    <div className="text-center text-xs text-muted-foreground py-4">
-                      Waiting for tick data...
-                    </div>
-                  )}
-                </div>
-                <div className="text-center text-[8px] text-muted-foreground mt-2">
-                  🔄 Updating with every tick • Latest digit highlighted
-                </div>
-              </>
-            )}
           </div>
 
           {/* Bot Progress */}
