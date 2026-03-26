@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
+import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,7 +16,7 @@ import {
   TrendingUp, TrendingDown, Activity, BarChart3, ArrowUp, ArrowDown,
   Target, ShieldAlert, Volume2, VolumeX, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, RefreshCw,
   TrendingUp as TrendLineIcon, Move, Circle as CircleIcon, Square, Type, X, Trash2, Layers, LineChart, Settings,
-  Minus as LineIcon, Triangle, ArrowRight, MousePointer, Eraser
+  Minus as LineIcon, Triangle, ArrowRight, MousePointer, Eraser, Sliders
 } from 'lucide-react';
 
 /* ── Markets ── */
@@ -57,50 +58,8 @@ const GROUPS = [
 
 const TIMEFRAMES = ['1m','3m','5m','15m','30m','1h','4h','12h','1d'];
 
-// Updated candle counts per timeframe
-const getCandleCountForTimeframe = (timeframe: string): number => {
-  const counts: Record<string, number> = {
-    '1m': 200,
-    '3m': 200,
-    '5m': 200,
-    '15m': 200,
-    '30m': 200,
-    '1h': 150,
-    '4h': 145,
-    '12h': 145,
-    '1d': 145,
-  };
-  return counts[timeframe] || 150;
-};
-
-const getTickCountForTimeframe = (timeframe: string): number => {
-  const seconds: Record<string, number> = {
-    '1m': 60,
-    '3m': 180,
-    '5m': 300,
-    '15m': 900,
-    '30m': 1800,
-    '1h': 3600,
-    '4h': 14400,
-    '12h': 43200,
-    '1d': 86400,
-  };
-  
-  const interval = seconds[timeframe] || 60;
-  const targetCandles = getCandleCountForTimeframe(timeframe);
-  return Math.ceil(targetCandles * interval * 1.2);
-};
-
-const CONTRACT_TYPES = [
-  { value: 'CALL', label: 'Rise' },
-  { value: 'PUT', label: 'Fall' },
-  { value: 'DIGITMATCH', label: 'Digits Match' },
-  { value: 'DIGITDIFF', label: 'Digits Differs' },
-  { value: 'DIGITEVEN', label: 'Digits Even' },
-  { value: 'DIGITODD', label: 'Digits Odd' },
-  { value: 'DIGITOVER', label: 'Digits Over' },
-  { value: 'DIGITUNDER', label: 'Digits Under' },
-];
+// Tick selector options
+const TICK_OPTIONS = [50, 100, 200, 300, 500, 1000, 2000, 3000, 5000];
 
 /* ── Drawing Tool Types ── */
 interface DrawingTool {
@@ -305,15 +264,16 @@ function getTickHistory(symbol: string): number[] {
 function addTick(symbol: string, digit: number) {
   if (!tickHistoryRef[symbol]) tickHistoryRef[symbol] = [];
   tickHistoryRef[symbol].push(digit);
-  if (tickHistoryRef[symbol].length > 500) tickHistoryRef[symbol].shift();
+  if (tickHistoryRef[symbol].length > 5000) tickHistoryRef[symbol].shift();
 }
 
 export default function TradingChart() {
   const { isAuthorized } = useAuth();
-  const [showChart, setShowChart] = useState(false); // Initially hidden
+  const [showChart, setShowChart] = useState(false);
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
   const [timeframe, setTimeframe] = useState('1m');
+  const [selectedTicks, setSelectedTicks] = useState(1000); // Default 1000 ticks
   const [prices, setPrices] = useState<number[]>([]);
   const [times, setTimes] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -322,7 +282,7 @@ export default function TradingChart() {
   const subscriptionRef = useRef<any>(null);
   const reconnectAttempts = useRef(0);
 
-  // Zoom & pan state - NO candle removal
+  // Zoom & pan state
   const [candleWidth, setCandleWidth] = useState(3);
   const [scrollOffset, setScrollOffset] = useState(0);
   const isDragging = useRef(false);
@@ -389,7 +349,7 @@ export default function TradingChart() {
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
   const [turboMode, setTurboMode] = useState(false);
 
-  // Load data
+  // Load data with selected tick count
   useEffect(() => {
     let active = true;
     let timeoutId: NodeJS.Timeout;
@@ -423,12 +383,12 @@ export default function TradingChart() {
         setPrices([]);
         setTimes([]);
         
-        const tickCount = getTickCountForTimeframe(timeframe);
-        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, tickCount);
+        // Use selected tick count
+        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, selectedTicks);
         if (!active) return;
         
         const historicalDigits = (hist.history.prices || []).map(p => getLastDigit(p));
-        tickHistoryRef[symbol] = historicalDigits.slice(-500);
+        tickHistoryRef[symbol] = historicalDigits.slice(-5000);
         
         setPrices(hist.history.prices || []);
         setTimes(hist.history.times || []);
@@ -447,12 +407,13 @@ export default function TradingChart() {
             
             setPrices(prev => {
               const newPrices = [...prev, quote];
-              return newPrices.slice(-20000);
+              // Keep last 10000 ticks
+              return newPrices.slice(-10000);
             });
             
             setTimes(prev => {
               const newTimes = [...prev, epoch];
-              return newTimes.slice(-20000);
+              return newTimes.slice(-10000);
             });
           });
           subscribedRef.current = true;
@@ -473,7 +434,7 @@ export default function TradingChart() {
       cleanup();
       subscribedRef.current = false;
     };
-  }, [symbol, timeframe]);
+  }, [symbol, selectedTicks]); // Re-run when ticks selection changes
 
   const handleManualRefresh = useCallback(async () => {
     if (!derivApi.isConnected) {
@@ -483,15 +444,14 @@ export default function TradingChart() {
     
     setIsLoading(true);
     try {
-      const tickCount = getTickCountForTimeframe(timeframe);
-      const hist = await derivApi.getTickHistory(symbol as MarketSymbol, tickCount);
+      const hist = await derivApi.getTickHistory(symbol as MarketSymbol, selectedTicks);
       setPrices(prev => {
         const newPrices = [...prev, ...hist.history.prices];
-        return newPrices.slice(-20000);
+        return newPrices.slice(-10000);
       });
       setTimes(prev => {
         const newTimes = [...prev, ...hist.history.times];
-        return newTimes.slice(-20000);
+        return newTimes.slice(-10000);
       });
       toast.success('Market data refreshed');
     } catch (err) {
@@ -499,12 +459,11 @@ export default function TradingChart() {
     } finally {
       setIsLoading(false);
     }
-  }, [symbol, timeframe]);
+  }, [symbol, selectedTicks]);
 
   /* ── Derived data ── */
-  const targetCandles = getCandleCountForTimeframe(timeframe);
-  const tfPrices = useMemo(() => prices.slice(-getTickCountForTimeframe(timeframe)), [prices, timeframe]);
-  const tfTimes = useMemo(() => times.slice(-getTickCountForTimeframe(timeframe)), [times, timeframe]);
+  const tfPrices = useMemo(() => prices.slice(-selectedTicks), [prices, selectedTicks]);
+  const tfTimes = useMemo(() => times.slice(-selectedTicks), [times, selectedTicks]);
   const candles = useMemo(() => buildCandles(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
   const currentPrice = prices[prices.length - 1] || 0;
   const lastDigit = getLastDigit(currentPrice);
@@ -530,6 +489,29 @@ export default function TradingChart() {
   const ema50Series = useMemo(() => calcEMASeries(tfPrices, 50), [tfPrices]);
   const bbSeries = useMemo(() => calcBBSeries(tfPrices, 20, 2), [tfPrices]);
   const rsiSeries = useMemo(() => calcRSISeries(tfPrices, 14), [tfPrices]);
+
+  // Digit stats
+  const evenCount = digits.filter(d => d % 2 === 0).length;
+  const oddCount = digits.length - evenCount;
+  const evenPct = digits.length > 0 ? (evenCount / digits.length * 100) : 50;
+  const oddPct = 100 - evenPct;
+  const overCount = digits.filter(d => d > 4).length;
+  const underCount = digits.length - overCount;
+  const overPct = digits.length > 0 ? (overCount / digits.length * 100) : 50;
+  const underPct = 100 - overPct;
+
+  const bbRange = bb.upper - bb.lower || 1;
+  const bbPosition = ((currentPrice - bb.lower) / bbRange * 100);
+
+  const riseSignal = useMemo(() => {
+    const conf = rsi < 30 ? 85 : rsi > 70 ? 25 : 50 + (50 - rsi);
+    return { direction: rsi < 45 ? 'Rise' : 'Fall', confidence: Math.min(95, Math.max(10, Math.round(conf))) };
+  }, [rsi]);
+
+  const matchSignal = useMemo(() => {
+    const bestPct = Math.max(...percentages);
+    return { digit: mostCommon, confidence: Math.min(90, Math.round(bestPct * 3)) };
+  }, [percentages, mostCommon]);
 
   // Canvas drawing handlers
   const getCanvasCoordinates = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -577,11 +559,6 @@ export default function TradingChart() {
     setIsDrawing(false);
     setCurrentDrawing(null);
   }, [currentDrawing]);
-
-  const deleteDrawing = useCallback((id: string) => {
-    setDrawings(prev => prev.filter(d => d.id !== id));
-    if (selectedDrawingId === id) setSelectedDrawingId(null);
-  }, [selectedDrawingId]);
 
   const deleteAllDrawings = useCallback(() => {
     setDrawings([]);
@@ -724,7 +701,6 @@ export default function TradingChart() {
     const gap = 1;
     const totalCandleW = candleWidth + gap;
     const maxVisible = Math.floor(chartW / totalCandleW);
-    // NO candle removal - just adjust visible range
     const endIdx = Math.min(candles.length, candles.length - scrollOffset);
     const startIdx = Math.max(0, endIdx - maxVisible);
     const visibleCandles = candles.slice(startIdx, endIdx);
@@ -784,7 +760,6 @@ export default function TradingChart() {
         ctx.fill();
       }
 
-      // Draw Bollinger lines
       const drawBBLine = (values: (number | null)[], color: string, dash: number[] = []) => {
         ctx.beginPath();
         ctx.setLineDash(dash);
@@ -1020,11 +995,11 @@ export default function TradingChart() {
 
     ctx.fillStyle = '#484F58';
     ctx.font = '9px JetBrains Mono, monospace';
-    ctx.fillText(`${visibleCandles.length} / ${candles.length} candles | Scroll: drag | Zoom: Ctrl+wheel`, 8, H - 6);
+    ctx.fillText(`${visibleCandles.length} candles | ${selectedTicks} ticks | Scroll: drag | Zoom: Ctrl+wheel`, 8, H - 6);
 
   }, [candles, bb, ema9, ema20, ema50, support, resistance, currentPrice, candleEndIndices, 
       ema9Series, ema20Series, ema50Series, bbSeries, rsiSeries, rsi, candleWidth, scrollOffset, 
-      showChart, indicators, drawings, currentDrawing, macd]);
+      showChart, indicators, drawings, currentDrawing, macd, selectedTicks]);
 
   // Canvas mouse handlers
   useEffect(() => {
@@ -1036,15 +1011,13 @@ export default function TradingChart() {
       if (e.ctrlKey || e.metaKey) {
         setCandleWidth(prev => Math.max(2, Math.min(12, prev - Math.sign(e.deltaY))));
       } else {
-        // Pan without removing candles
         const delta = Math.sign(e.deltaY) * Math.max(5, Math.floor(candles.length * 0.02));
-        setScrollOffset(prev => Math.max(0, Math.min(candles.length - 20, prev + delta)));
+        setScrollOffset(prev => Math.max(0, Math.min(candles.length - 10, prev + delta)));
       }
     };
 
     const onMouseDown = (e: MouseEvent) => {
       if (activeTool) {
-        // Handle drawing
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
@@ -1057,7 +1030,6 @@ export default function TradingChart() {
         };
         setCurrentDrawing(newDrawing);
       } else {
-        // Handle panning
         isDragging.current = true;
         dragStartX.current = e.clientX;
         dragStartOffset.current = scrollOffset;
@@ -1239,24 +1211,6 @@ export default function TradingChart() {
   const totalProfit = tradeHistory.reduce((s, t) => s + t.profit, 0);
   const winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
 
-  // Digit stats
-  const evenCount = digits.filter(d => d % 2 === 0).length;
-  const oddCount = digits.length - evenCount;
-  const evenPct = digits.length > 0 ? (evenCount / digits.length * 100) : 50;
-  const oddPct = 100 - evenPct;
-  const overCount = digits.filter(d => d > 4).length;
-  const underCount = digits.length - overCount;
-  const overPct = digits.length > 0 ? (overCount / digits.length * 100) : 50;
-  const underPct = 100 - overPct;
-
-  const bbRange = bb.upper - bb.lower || 1;
-  const bbPosition = ((currentPrice - bb.lower) / bbRange * 100);
-
-  const riseSignal = useMemo(() => {
-    const conf = rsi < 30 ? 85 : rsi > 70 ? 25 : 50 + (50 - rsi);
-    return { direction: rsi < 45 ? 'Rise' : 'Fall', confidence: Math.min(95, Math.max(10, Math.round(conf))) };
-  }, [rsi]);
-
   return (
     <div className="space-y-4 max-w-[1920px] mx-auto">
       {/* Header */}
@@ -1265,9 +1219,25 @@ export default function TradingChart() {
           <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-primary" /> Trading Chart
           </h1>
-          <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {candles.length} / {targetCandles} candles</p>
+          <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {selectedTicks} ticks • {candles.length} candles</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Tick Selector */}
+          <div className="flex items-center gap-2 bg-card border border-border rounded-lg px-2 py-1">
+            <Sliders className="w-4 h-4 text-muted-foreground" />
+            <Select value={selectedTicks.toString()} onValueChange={(v) => setSelectedTicks(parseInt(v))}>
+              <SelectTrigger className="h-7 text-xs w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TICK_OPTIONS.map(ticks => (
+                  <SelectItem key={ticks} value={ticks.toString()}>
+                    {ticks} ticks
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <Button onClick={handleManualRefresh} variant="outline" size="sm" className="gap-1" disabled={isLoading}>
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh
@@ -1310,7 +1280,7 @@ export default function TradingChart() {
           <Button key={tf} size="sm" variant={timeframe === tf ? 'default' : 'outline'}
             className={`h-7 text-xs px-3 ${timeframe === tf ? 'bg-primary text-primary-foreground' : ''}`}
             onClick={() => setTimeframe(tf)}>
-            {tf} ({getCandleCountForTimeframe(tf)}c)
+            {tf}
           </Button>
         ))}
       </div>
