@@ -56,7 +56,7 @@ export default function TopNavbar() {
             <Cpu className="w-3.5 h-3.5 text-primary-foreground" />
           </div>
           <span className="font-bold text-foreground text-sm">
-            RAMZ<span className="text-primary">TRADERS</span>
+            Millie<span className="text-primary">Fx</span>
           </span>
           <div className="ml-1">
             <SocialIcons />
