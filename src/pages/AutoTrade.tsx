@@ -60,20 +60,19 @@ const GROUPS = [
 
 const TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '12h', '1d'];
 
-// Target candles - 800 for all timeframes
-const TARGET_CANDLES = 800;
+// CONSTANT: 1000 candles for ALL timeframes
+const TARGET_CANDLES = 1000;
 
-// Tick selector options (50 to 5000)
+// Tick selector options (for digit analysis only)
 const TICK_OPTIONS = [50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 4000, 5000];
 
-// Get required ticks for target candles (ensures enough data for 800 candles)
+// Get required ticks for target candles (ensures enough data for 1000 candles)
 const getRequiredTicksForTimeframe = (timeframe: string): number => {
   const seconds: Record<string, number> = {
     '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
     '1h': 3600, '4h': 14400, '12h': 43200, '1d': 86400,
   };
   const interval = seconds[timeframe] || 60;
-  // Calculate ticks needed for 800 candles with 50% buffer
   return Math.ceil(TARGET_CANDLES * interval * 1.5);
 };
 
@@ -86,6 +85,16 @@ const CONTRACT_TYPES = [
   { value: 'DIGITODD', label: 'Digits Odd' },
   { value: 'DIGITOVER', label: 'Digits Over' },
   { value: 'DIGITUNDER', label: 'Digits Under' },
+];
+
+// MillieFX Speed Bot contract types (Over/Under, Even/Odd, Matches/Differs)
+const MILLIEFX_CONTRACT_TYPES = [
+  { value: 'DIGITEVEN', label: 'Even' },
+  { value: 'DIGITODD', label: 'Odd' },
+  { value: 'DIGITOVER', label: 'Over' },
+  { value: 'DIGITUNDER', label: 'Under' },
+  { value: 'DIGITMATCH', label: 'Matches' },
+  { value: 'DIGITDIFF', label: 'Differs' },
 ];
 
 /* ============================================
@@ -133,6 +142,20 @@ interface TradeRecord {
   status: 'won' | 'lost' | 'open';
   symbol: string;
   resultDigit?: number;
+}
+
+interface MillieFXBotConfig {
+  symbol: string;
+  stake: string;
+  contractType: string;
+  prediction: string;
+  duration: string;
+  durationUnit: string;
+  martingale: boolean;
+  multiplier: string;
+  stopLoss: string;
+  takeProfit: string;
+  maxTrades: string;
 }
 
 /* ============================================
@@ -307,7 +330,6 @@ function calcSupportResistanceLevels(prices: number[], candles: Candle[]): Suppo
     }
   }
   
-  // Group nearby levels
   const grouped: SupportResistanceLevel[] = [];
   const tolerance = (Math.max(...prices) - Math.min(...prices)) * 0.01;
   
@@ -325,7 +347,6 @@ function calcSupportResistanceLevels(prices: number[], candles: Candle[]): Suppo
     }
   }
   
-  // Get top 3 supports and resistances
   const supports = grouped.filter(l => l.type === 'support').sort((a, b) => b.strength - a.strength).slice(0, 3);
   const resistances = grouped.filter(l => l.type === 'resistance').sort((a, b) => b.strength - a.strength).slice(0, 3);
   
@@ -372,7 +393,7 @@ function calcMACDFull(prices: number[]) {
   return { macd, signal, histogram: macd - signal };
 }
 
-// Tick history storage
+// Tick history storage (for digit analysis)
 const tickHistoryRef: { [symbol: string]: number[] } = {};
 
 function getTickHistory(symbol: string): number[] {
@@ -397,7 +418,9 @@ export default function TradingChart() {
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
   const [timeframe, setTimeframe] = useState('1m');
-  const [selectedTicks, setSelectedTicks] = useState(1000); // Default 1000 ticks
+  
+  // Digit Analysis Ticks - ONLY affects digit analysis percentages
+  const [digitAnalysisTicks, setDigitAnalysisTicks] = useState(1000);
   
   // Data State
   const [prices, setPrices] = useState<number[]>([]);
@@ -408,7 +431,7 @@ export default function TradingChart() {
   const subscriptionRef = useRef<any>(null);
   const reconnectAttempts = useRef(0);
   
-  // Chart Interaction State - NO CANDLE REMOVAL ON SCROLL
+  // Chart Interaction State
   const [candleWidth, setCandleWidth] = useState(3);
   const [scrollOffset, setScrollOffset] = useState(0);
   const isDragging = useRef(false);
@@ -433,35 +456,19 @@ export default function TradingChart() {
     supportResistance: false,
   });
   
-  // Trade Panel State
-  const [contractType, setContractType] = useState('CALL');
-  const [prediction, setPrediction] = useState('5');
-  const [duration, setDuration] = useState('1');
-  const [durationUnit, setDurationUnit] = useState('t');
-  const [tradeStake, setTradeStake] = useState('1.00');
-  const [selectedDigit, setSelectedDigit] = useState<number | null>(null);
-  const [isTrading, setIsTrading] = useState(false);
-  const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
+  // Voice State
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const lastSpokenSignal = useRef('');
   
-  // Strategy State
-  const [strategyEnabled, setStrategyEnabled] = useState(false);
-  const [strategyMode, setStrategyMode] = useState<'pattern' | 'digit'>('pattern');
-  const [patternInput, setPatternInput] = useState('');
-  const [digitCondition, setDigitCondition] = useState('==');
-  const [digitCompare, setDigitCompare] = useState('5');
-  const [digitWindow, setDigitWindow] = useState('3');
-  
-  // Bot State
+  // MillieFX Speed Bot State
   const [botRunning, setBotRunning] = useState(false);
   const [botPaused, setBotPaused] = useState(false);
   const botRunningRef = useRef(false);
   const botPausedRef = useRef(false);
-  const [botConfig, setBotConfig] = useState({
-    botSymbol: 'R_100',
+  const [botConfig, setBotConfig] = useState<MillieFXBotConfig>({
+    symbol: 'R_100',
     stake: '1.00',
-    contractType: 'CALL',
+    contractType: 'DIGITOVER',
     prediction: '5',
     duration: '1',
     durationUnit: 't',
@@ -472,10 +479,13 @@ export default function TradingChart() {
     maxTrades: '50',
   });
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
-  const [turboMode, setTurboMode] = useState(false);
+  const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
+  
+  // Digit Analysis - Using digitAnalysisTicks for calculation (NOT candles)
+  const [digitPrices, setDigitPrices] = useState<number[]>([]);
   
   /* ============================================
-     DATA LOADING - TICKS DON'T AFFECT CANDLE COUNT
+     DATA LOADING - 1000 candles for ALL timeframes
      ============================================ */
   
   useEffect(() => {
@@ -511,8 +521,9 @@ export default function TradingChart() {
         setPrices([]);
         setTimes([]);
         
-        // Load data based on selected ticks (does NOT affect candle count)
-        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, selectedTicks);
+        // Load enough ticks for 1000 candles
+        const requiredTicks = getRequiredTicksForTimeframe(timeframe);
+        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, requiredTicks);
         if (!active) return;
         
         const historicalDigits = (hist.history.prices || []).map((p: number) => getLastDigit(p));
@@ -520,6 +531,11 @@ export default function TradingChart() {
         
         setPrices(hist.history.prices || []);
         setTimes(hist.history.times || []);
+        
+        // Store prices for digit analysis based on selected ticks
+        const digitPricesSlice = (hist.history.prices || []).slice(-digitAnalysisTicks);
+        setDigitPrices(digitPricesSlice);
+        
         setScrollOffset(0);
         setIsLoading(false);
         
@@ -542,6 +558,12 @@ export default function TradingChart() {
               const newTimes = [...prev, epoch];
               return newTimes.slice(-30000);
             });
+            
+            // Update digit prices with latest tick
+            setDigitPrices(prev => {
+              const newPrices = [...prev, quote];
+              return newPrices.slice(-digitAnalysisTicks);
+            });
           });
           subscribedRef.current = true;
           toast.success(`Connected to ${symbol} market`, { duration: 2000 });
@@ -561,7 +583,14 @@ export default function TradingChart() {
       cleanup();
       subscribedRef.current = false;
     };
-  }, [symbol, selectedTicks]);
+  }, [symbol, timeframe, digitAnalysisTicks]);
+  
+  // Update digit analysis when digitAnalysisTicks changes
+  useEffect(() => {
+    if (prices.length > 0) {
+      setDigitPrices(prices.slice(-digitAnalysisTicks));
+    }
+  }, [digitAnalysisTicks, prices]);
   
   const handleManualRefresh = useCallback(async () => {
     if (!derivApi.isConnected) {
@@ -571,7 +600,8 @@ export default function TradingChart() {
     
     setIsLoading(true);
     try {
-      const hist = await derivApi.getTickHistory(symbol as MarketSymbol, selectedTicks);
+      const requiredTicks = getRequiredTicksForTimeframe(timeframe);
+      const hist = await derivApi.getTickHistory(symbol as MarketSymbol, requiredTicks);
       setPrices(prev => {
         const newPrices = [...prev, ...hist.history.prices];
         return newPrices.slice(-30000);
@@ -580,30 +610,36 @@ export default function TradingChart() {
         const newTimes = [...prev, ...hist.history.times];
         return newTimes.slice(-30000);
       });
+      setDigitPrices(prev => {
+        const newPrices = [...prev, ...hist.history.prices];
+        return newPrices.slice(-digitAnalysisTicks);
+      });
       toast.success('Market data refreshed');
     } catch (err) {
       toast.error('Failed to refresh data');
     } finally {
       setIsLoading(false);
     }
-  }, [symbol, selectedTicks]);
+  }, [symbol, timeframe, digitAnalysisTicks]);
   
   /* ============================================
      DERIVED DATA & INDICATORS
      ============================================ */
   
-  // Use ALL available prices for candles (not limited by ticks)
-  // This ensures 800 candles regardless of tick selection
+  // Use ALL available prices for candles (ensures 1000 candles)
   const tfPrices = useMemo(() => prices.slice(), [prices]);
   const tfTimes = useMemo(() => times.slice(), [times]);
   const candles = useMemo(() => buildCandles(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
   const currentPrice = prices[prices.length - 1] || 0;
   const lastDigit = getLastDigit(currentPrice);
-  const digits = useMemo(() => tfPrices.map(getLastDigit), [tfPrices]);
-  const last26 = useMemo(() => getTickHistory(symbol).slice(-26), [symbol, prices]);
-  const { frequency, percentages, mostCommon, leastCommon } = useMemo(() => analyzeDigits(tfPrices), [tfPrices]);
   
-  // Indicators
+  // Digit analysis - ONLY based on digitAnalysisTicks (selected ticks)
+  const digitPricesForAnalysis = useMemo(() => digitPrices, [digitPrices]);
+  const digits = useMemo(() => digitPricesForAnalysis.map(getLastDigit), [digitPricesForAnalysis]);
+  const { frequency, percentages, mostCommon, leastCommon } = useMemo(() => analyzeDigits(digitPricesForAnalysis), [digitPricesForAnalysis]);
+  const last26 = useMemo(() => digits.slice(-26), [digits]);
+  
+  // Indicators (using all prices)
   const bb = useMemo(() => calculateBollingerBands(tfPrices, 20), [tfPrices]);
   const ema9 = useMemo(() => calcEMA(tfPrices, 9), [tfPrices]);
   const ema20 = useMemo(() => calcEMA(tfPrices, 20), [tfPrices]);
@@ -626,7 +662,7 @@ export default function TradingChart() {
   }, [candles]);
   const supportResistanceLevels = useMemo(() => calcSupportResistanceLevels(tfPrices, candles), [tfPrices, candles]);
   
-  // Digit stats
+  // Digit stats (using digit analysis prices)
   const evenCount = digits.filter(d => d % 2 === 0).length;
   const oddCount = digits.length - evenCount;
   const evenPct = digits.length > 0 ? (evenCount / digits.length * 100) : 50;
@@ -656,7 +692,6 @@ export default function TradingChart() {
     let underScore = 0;
     let signals: string[] = [];
     
-    // Parabolic SAR
     if (indicators.parabolicSAR && parabolicSAR.length > 0) {
       const lastSAR = parabolicSAR[parabolicSAR.length - 1];
       const lastCandle = candles[candles.length - 1];
@@ -671,7 +706,6 @@ export default function TradingChart() {
       }
     }
     
-    // Bollinger Bands
     if (indicators.bollinger && bb.lower && bb.upper) {
       if (currentPrice >= bb.upper * 0.98) {
         underScore += 20;
@@ -682,7 +716,6 @@ export default function TradingChart() {
       }
     }
     
-    // Moving Average Crossover
     if (indicators.ma9 && indicators.ma20) {
       const lastEma9 = ema9Series[ema9Series.length - 1];
       const lastEma20 = ema20Series[ema20Series.length - 1];
@@ -700,7 +733,6 @@ export default function TradingChart() {
       }
     }
     
-    // MACD
     if (indicators.macd) {
       if (macd.histogram > 0 && macd.histogram > (macd.histogram - 0.1)) {
         overScore += 20;
@@ -711,7 +743,6 @@ export default function TradingChart() {
       }
     }
     
-    // RSI
     if (indicators.rsi) {
       if (rsi > 70) {
         underScore += 25;
@@ -784,7 +815,7 @@ export default function TradingChart() {
   }, []);
   
   /* ============================================
-     CANVAS DRAWING - NO CANDLE REMOVAL ON SCROLL
+     CANVAS DRAWING
      ============================================ */
   
   useEffect(() => {
@@ -806,7 +837,7 @@ export default function TradingChart() {
     const macdH = indicators.macd ? 100 : 0;
     const H = totalH - rsiH - macdH - 8;
     const priceAxisW = 70;
-    const chartW = W - priceAxisW - 40; // 40px right margin
+    const chartW = W - priceAxisW - 40;
     
     ctx.fillStyle = '#0D1117';
     ctx.fillRect(0, 0, W, totalH);
@@ -814,7 +845,6 @@ export default function TradingChart() {
     const gap = 1;
     const totalCandleW = candleWidth + gap;
     const maxVisible = Math.floor(chartW / totalCandleW);
-    // NO CANDLE REMOVAL - just shift visible window
     const endIdx = Math.min(candles.length, candles.length - scrollOffset);
     const startIdx = Math.max(0, endIdx - maxVisible);
     const visibleCandles = candles.slice(startIdx, endIdx);
@@ -836,7 +866,6 @@ export default function TradingChart() {
     
     const offsetX = 5;
     
-    // Draw grid
     ctx.strokeStyle = '#21262D';
     ctx.lineWidth = 0.5;
     ctx.font = '9px JetBrains Mono, monospace';
@@ -852,7 +881,6 @@ export default function TradingChart() {
       ctx.fillText(pLabel.toFixed(2), chartW + 4, y + 3);
     }
     
-    // Draw Bollinger Bands
     if (indicators.bollinger && bbSeries.upper.length > 0) {
       ctx.fillStyle = 'rgba(188, 140, 255, 0.06)';
       const bbUpperPoints: { x: number; y: number }[] = [];
@@ -909,7 +937,6 @@ export default function TradingChart() {
       ctx.setLineDash([]);
     }
     
-    // Draw Moving Averages
     const drawMALine = (values: (number | null)[], color: string, width: number) => {
       ctx.beginPath();
       ctx.strokeStyle = color;
@@ -936,7 +963,6 @@ export default function TradingChart() {
     if (indicators.ma20) drawMALine(ema20Series, '#E6B422', 1.5);
     if (indicators.ma50) drawMALine(ema50Series, '#F97316', 1.5);
     
-    // Draw Parabolic SAR
     if (indicators.parabolicSAR && parabolicSAR.length > 0) {
       for (let i = 0; i < visibleCandles.length; i++) {
         const idx = visibleEndIndices[i];
@@ -952,7 +978,6 @@ export default function TradingChart() {
       }
     }
     
-    // Draw Support & Resistance Lines (3 each)
     if (indicators.supportResistance && supportResistanceLevels.length > 0) {
       const supports = supportResistanceLevels.filter(s => s.type === 'support');
       const resistances = supportResistanceLevels.filter(s => s.type === 'resistance');
@@ -989,7 +1014,6 @@ export default function TradingChart() {
       ctx.setLineDash([]);
     }
     
-    // Draw Candles - BLUE for bullish, RED for bearish
     for (let i = 0; i < visibleCandles.length; i++) {
       const c = visibleCandles[i];
       const x = offsetX + i * totalCandleW;
@@ -1010,7 +1034,6 @@ export default function TradingChart() {
       ctx.fillRect(x, bodyTop, candleWidth, bodyH);
     }
     
-    // Draw current price line
     const curY = toY(currentPrice);
     ctx.setLineDash([2, 2]);
     ctx.strokeStyle = '#E6EDF3';
@@ -1026,7 +1049,6 @@ export default function TradingChart() {
     ctx.font = 'bold 10px JetBrains Mono, monospace';
     ctx.fillText(currentPrice.toFixed(2), chartW + 2, curY + 4);
     
-    // Draw drawings
     drawings.forEach(drawing => {
       if (drawing.points.length < 2) return;
       ctx.beginPath();
@@ -1039,7 +1061,6 @@ export default function TradingChart() {
       ctx.stroke();
     });
     
-    // Draw current drawing
     if (currentDrawing && currentDrawing.points.length > 1) {
       ctx.beginPath();
       ctx.moveTo(currentDrawing.points[0].x, currentDrawing.points[0].y);
@@ -1051,7 +1072,6 @@ export default function TradingChart() {
       ctx.stroke();
     }
     
-    // Draw MACD
     if (indicators.macd && macdH > 0) {
       const macdTop = H + 8;
       ctx.fillStyle = '#161B22';
@@ -1089,7 +1109,6 @@ export default function TradingChart() {
       ctx.fillText('MACD (12,26,9)', 4, macdTop + 12);
     }
     
-    // Draw RSI
     if (indicators.rsi && rsiH > 0) {
       const rsiTop = H + (indicators.macd ? macdH + 8 : 8);
       ctx.fillStyle = '#161B22';
@@ -1144,7 +1163,6 @@ export default function TradingChart() {
       ctx.fillText('RSI(14)', 4, rsiTop + 12);
     }
     
-    // Legend
     ctx.font = '10px JetBrains Mono, monospace';
     let lx = 8;
     const legends = [];
@@ -1164,12 +1182,12 @@ export default function TradingChart() {
     
     ctx.fillStyle = '#484F58';
     ctx.font = '9px JetBrains Mono, monospace';
-    ctx.fillText(`${visibleCandles.length}/${candles.length} candles | ${selectedTicks} ticks | Drag to pan | Ctrl+wheel zoom`, 8, H - 6);
+    ctx.fillText(`${visibleCandles.length}/${candles.length} candles | ${candles.length} total | Drag to pan | Ctrl+wheel zoom`, 8, H - 6);
   }, [candles, candleEndIndices, candleWidth, scrollOffset, showChart, indicators, drawings, currentDrawing, 
-      bbSeries, ema9Series, ema20Series, ema50Series, currentPrice, macd, rsiSeries, tfPrices, parabolicSAR, supportResistanceLevels, selectedTicks]);
+      bbSeries, ema9Series, ema20Series, ema50Series, currentPrice, macd, rsiSeries, tfPrices, parabolicSAR, supportResistanceLevels]);
   
   /* ============================================
-     MOUSE HANDLERS - NO CANDLE REMOVAL
+     MOUSE HANDLERS
      ============================================ */
   
   useEffect(() => {
@@ -1181,7 +1199,6 @@ export default function TradingChart() {
       if (e.ctrlKey || e.metaKey) {
         setCandleWidth(prev => Math.max(2, Math.min(12, prev - Math.sign(e.deltaY))));
       } else {
-        // Scroll to pan WITHOUT removing candles
         const delta = Math.sign(e.deltaY) * Math.max(5, Math.floor(candles.length * 0.05));
         setScrollOffset(prev => Math.max(0, Math.min(candles.length - 15, prev + delta)));
       }
@@ -1248,7 +1265,7 @@ export default function TradingChart() {
   }, [candles.length, scrollOffset, candleWidth, showChart, activeTool, isDrawing, currentDrawing]);
   
   /* ============================================
-     TRADING & BOT FUNCTIONS
+     MILLIEFX SPEED BOT FUNCTIONS
      ============================================ */
   
   const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
@@ -1264,147 +1281,242 @@ export default function TradingChart() {
     window.speechSynthesis.speak(utterance);
   }, [voiceEnabled]);
   
-  const handleBuy = async (side: 'buy' | 'sell') => {
-    if (!isAuthorized) { toast.error('Please login to your Deriv account first'); return; }
-    if (isTrading) return;
-    setIsTrading(true);
-    const ct = side === 'buy' ? contractType : (contractType === 'CALL' ? 'PUT' : contractType === 'PUT' ? 'CALL' : contractType);
-    const params: any = { contract_type: ct, symbol, duration: parseInt(duration), duration_unit: durationUnit, basis: 'stake', amount: parseFloat(tradeStake) };
-    if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct)) params.barrier = prediction;
+  // MillieFX Speed Bot Trade Execution
+  const executeMillieFXTrade = useCallback(async (stake: number) => {
+    const ct = botConfig.contractType;
+    const params: any = {
+      contract_type: ct,
+      symbol: botConfig.symbol,
+      duration: parseInt(botConfig.duration),
+      duration_unit: botConfig.durationUnit,
+      basis: 'stake',
+      amount: stake
+    };
+    
+    if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER', 'DIGITEVEN', 'DIGITODD'].includes(ct)) {
+      params.barrier = botConfig.prediction;
+    }
+    
     try {
-      toast.info(`⏳ Placing ${ct} trade... $${tradeStake}`);
       const { contractId } = await derivApi.buyContract(params);
-      const newTrade: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake: parseFloat(tradeStake), profit: 0, status: 'open', symbol };
-      setTradeHistory(prev => [newTrade, ...prev].slice(0, 50));
+      const tr: TradeRecord = {
+        id: contractId,
+        time: Date.now(),
+        type: ct,
+        stake,
+        profit: 0,
+        status: 'open',
+        symbol: botConfig.symbol
+      };
+      setTradeHistory(prev => [tr, ...prev].slice(0, 100));
+      
       const result = await derivApi.waitForContractResult(contractId);
-      const resultDigit = getLastDigit(result.price || currentPrice);
-      setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status, resultDigit } : t));
-      if (result.status === 'won') { toast.success(`✅ WON +$${result.profit.toFixed(2)}`); if (voiceEnabled) speak(`Trade won. Profit ${result.profit.toFixed(2)} dollars`); }
-      else { toast.error(`❌ LOST -$${Math.abs(result.profit).toFixed(2)}`); if (voiceEnabled) speak(`Trade lost. Loss ${Math.abs(result.profit).toFixed(2)} dollars`); }
-    } catch (err: any) { toast.error(`Trade failed: ${err.message}`); }
-    finally { setIsTrading(false); }
-  };
-  
-  const checkPatternMatch = useCallback((): boolean => {
-    const ticks = getTickHistory(botConfig.botSymbol);
-    const cleanPattern = patternInput.toUpperCase().replace(/[^EO]/g, '');
-    if (ticks.length < cleanPattern.length) return false;
-    const recent = ticks.slice(-cleanPattern.length);
-    for (let i = 0; i < cleanPattern.length; i++) {
-      const expected = cleanPattern[i];
-      const actual = recent[i] % 2 === 0 ? 'E' : 'O';
-      if (expected !== actual) return false;
+      const resultDigit = getLastDigit(result.price || 0);
+      
+      setTradeHistory(prev => prev.map(t => t.id === contractId ? {
+        ...t,
+        profit: result.profit,
+        status: result.status,
+        resultDigit
+      } : t));
+      
+      return { status: result.status, profit: result.profit, resultDigit };
+    } catch (err: any) {
+      toast.error(`MillieFX trade error: ${err.message}`);
+      throw err;
     }
-    return true;
-  }, [botConfig.botSymbol, patternInput]);
+  }, [botConfig]);
   
-  const checkDigitCondition = useCallback((): boolean => {
-    const ticks = getTickHistory(botConfig.botSymbol);
-    const win = parseInt(digitWindow) || 3;
-    const comp = parseInt(digitCompare);
-    if (ticks.length < win) return false;
-    const recent = ticks.slice(-win);
-    return recent.every(d => {
-      switch (digitCondition) {
-        case '>': return d > comp;
-        case '<': return d < comp;
-        case '>=': return d >= comp;
-        case '<=': return d <= comp;
-        case '==': return d === comp;
-        case '!=': return d !== comp;
-        default: return false;
-      }
-    });
-  }, [botConfig.botSymbol, digitCondition, digitCompare, digitWindow]);
+  // Get signal based on digit analysis
+  const getMillieFXSignal = useCallback((): { type: string; prediction: string; confidence: number } | null => {
+    // Use digit analysis to determine the best trade
+    const bestDigit = mostCommon;
+    const bestPct = percentages[bestDigit] || 0;
+    
+    // Even/Odd signal
+    const evenSignal = evenPct > 55 ? 'DIGITEVEN' : oddPct > 55 ? 'DIGITODD' : null;
+    const evenConfidence = Math.max(evenPct, oddPct);
+    
+    // Over/Under signal
+    const overSignal = overPct > 55 ? 'DIGITOVER' : underPct > 55 ? 'DIGITUNDER' : null;
+    const overConfidence = Math.max(overPct, underPct);
+    
+    // Match/Differ signal
+    const matchSignal = bestPct > 15 ? 'DIGITMATCH' : null;
+    const matchConfidence = bestPct * 3;
+    
+    // Choose the best signal based on confidence
+    const signals = [];
+    if (evenSignal) signals.push({ type: evenSignal, prediction: evenSignal === 'DIGITEVEN' ? '' : '', confidence: evenConfidence });
+    if (overSignal) signals.push({ type: overSignal, prediction: overSignal === 'DIGITOVER' ? '5' : '5', confidence: overConfidence });
+    if (matchSignal) signals.push({ type: matchSignal, prediction: String(bestDigit), confidence: matchConfidence });
+    
+    if (signals.length === 0) return null;
+    
+    const bestSignal = signals.reduce((a, b) => a.confidence > b.confidence ? a : b);
+    return {
+      type: bestSignal.type,
+      prediction: bestSignal.type === 'DIGITMATCH' ? String(bestDigit) : bestSignal.type === 'DIGITOVER' ? '5' : bestSignal.type === 'DIGITUNDER' ? '5' : '',
+      confidence: Math.min(95, Math.round(bestSignal.confidence))
+    };
+  }, [mostCommon, percentages, evenPct, oddPct, overPct, underPct]);
   
-  const checkStrategyCondition = useCallback((): boolean => {
-    if (!strategyEnabled) return true;
-    if (strategyMode === 'pattern') {
-      return checkPatternMatch();
-    } else {
-      return checkDigitCondition();
+  // Start MillieFX Speed Bot
+  const startMillieFXBot = useCallback(async () => {
+    if (!isAuthorized) {
+      toast.error('Please login to your Deriv account first');
+      return;
     }
-  }, [strategyEnabled, strategyMode, checkPatternMatch, checkDigitCondition]);
-  
-  const startBot = useCallback(async () => {
-    if (!isAuthorized) { toast.error('Login to Deriv first'); return; }
-    setBotRunning(true); setBotPaused(false);
-    botRunningRef.current = true; botPausedRef.current = false;
+    
+    setBotRunning(true);
+    setBotPaused(false);
+    botRunningRef.current = true;
+    botPausedRef.current = false;
+    
     const baseStake = parseFloat(botConfig.stake) || 1;
     const sl = parseFloat(botConfig.stopLoss) || 10;
     const tp = parseFloat(botConfig.takeProfit) || 20;
     const maxT = parseInt(botConfig.maxTrades) || 50;
-    const mart = botConfig.martingale;
-    const mult = parseFloat(botConfig.multiplier) || 2;
-    let stake = baseStake;
-    let pnl = 0; let trades = 0; let wins = 0; let losses = 0; let consLosses = 0;
+    const martingale = botConfig.martingale;
+    const multiplier = parseFloat(botConfig.multiplier) || 2;
     
-    if (voiceEnabled) speak('Auto trading bot started');
+    let stake = baseStake;
+    let pnl = 0;
+    let trades = 0;
+    let wins = 0;
+    let losses = 0;
+    let consecutiveLosses = 0;
+    
+    if (voiceEnabled) speak('MillieFX Speed Bot started');
+    toast.info('MillieFX Speed Bot is now running');
     
     while (botRunningRef.current) {
-      if (botPausedRef.current) { await new Promise(r => setTimeout(r, 500)); continue; }
+      if (botPausedRef.current) {
+        await new Promise(r => setTimeout(r, 500));
+        continue;
+      }
+      
       if (trades >= maxT || pnl <= -sl || pnl >= tp) {
         const reason = trades >= maxT ? 'Max trades reached' : pnl <= -sl ? 'Stop loss hit' : 'Take profit reached';
-        toast.info(`🤖 Bot stopped: ${reason}`);
+        toast.info(`🤖 MillieFX Bot stopped: ${reason}`);
         if (voiceEnabled) speak(`Bot stopped. ${reason}. Total profit ${pnl.toFixed(2)} dollars`);
         break;
       }
       
-      if (strategyEnabled) {
-        let conditionMet = false;
-        while (botRunningRef.current && !conditionMet) {
-          conditionMet = checkStrategyCondition();
-          if (!conditionMet) {
-            await new Promise(r => setTimeout(r, 500));
-          }
-        }
-        if (!botRunningRef.current) break;
+      // Get signal from digit analysis
+      const signal = getMillieFXSignal();
+      if (!signal || signal.confidence < 50) {
+        // Wait for better signal
+        await new Promise(r => setTimeout(r, 1000));
+        continue;
       }
       
-      const ct = botConfig.contractType;
-      const params: any = { contract_type: ct, symbol: botConfig.botSymbol, duration: parseInt(botConfig.duration), duration_unit: botConfig.durationUnit, basis: 'stake', amount: stake };
-      if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct)) params.barrier = botConfig.prediction;
+      // Update bot config with signal
+      const currentContractType = signal.type;
+      const prediction = signal.prediction;
+      
+      const params: any = {
+        contract_type: currentContractType,
+        symbol: botConfig.symbol,
+        duration: parseInt(botConfig.duration),
+        duration_unit: botConfig.durationUnit,
+        basis: 'stake',
+        amount: stake
+      };
+      
+      if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER', 'DIGITEVEN', 'DIGITODD'].includes(currentContractType)) {
+        params.barrier = prediction;
+      }
       
       try {
         const { contractId } = await derivApi.buyContract(params);
-        const tr: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake, profit: 0, status: 'open', symbol: botConfig.botSymbol };
+        const tr: TradeRecord = {
+          id: contractId,
+          time: Date.now(),
+          type: currentContractType,
+          stake,
+          profit: 0,
+          status: 'open',
+          symbol: botConfig.symbol
+        };
         setTradeHistory(prev => [tr, ...prev].slice(0, 100));
+        
         const result = await derivApi.waitForContractResult(contractId);
-        trades++; pnl += result.profit;
+        trades++;
+        pnl += result.profit;
         const resultDigit = getLastDigit(result.price || 0);
-        setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status, resultDigit } : t));
+        
+        setTradeHistory(prev => prev.map(t => t.id === contractId ? {
+          ...t,
+          profit: result.profit,
+          status: result.status,
+          resultDigit
+        } : t));
         
         if (result.status === 'won') {
-          wins++; consLosses = 0;
+          wins++;
+          consecutiveLosses = 0;
           stake = baseStake;
-          if (voiceEnabled && trades % 5 === 0) speak(`Trade ${trades} won. Total profit ${pnl.toFixed(2)}`);
+          if (voiceEnabled && trades % 5 === 0) {
+            speak(`Trade ${trades} won. Total profit ${pnl.toFixed(2)} dollars`);
+          }
+          toast.success(`✅ MillieFX WIN! +$${result.profit.toFixed(2)} | Digit: ${resultDigit}`);
         } else {
-          losses++; consLosses++;
-          if (mart) {
-            stake = Math.round(stake * mult * 100) / 100;
+          losses++;
+          consecutiveLosses++;
+          if (martingale) {
+            stake = Math.round(stake * multiplier * 100) / 100;
           } else {
             stake = baseStake;
           }
-          if (voiceEnabled) speak(`Loss ${consLosses}. ${mart ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
+          if (voiceEnabled) {
+            speak(`Loss ${consecutiveLosses}. ${martingale ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
+          }
+          toast.error(`❌ MillieFX LOSS -$${Math.abs(result.profit).toFixed(2)} | Digit: ${resultDigit}`);
         }
-        setBotStats({ trades, wins, losses, pnl, currentStake: stake, consecutiveLosses: consLosses });
+        
+        setBotStats({
+          trades,
+          wins,
+          losses,
+          pnl,
+          currentStake: stake,
+          consecutiveLosses
+        });
+        
+        // Small delay between trades
+        await new Promise(r => setTimeout(r, 500));
+        
       } catch (err: any) {
-        toast.error(`Bot trade error: ${err.message}`);
+        toast.error(`MillieFX trade error: ${err.message}`);
         await new Promise(r => setTimeout(r, 2000));
       }
     }
-    setBotRunning(false); botRunningRef.current = false;
+    
+    setBotRunning(false);
+    botRunningRef.current = false;
     setBotStats(prev => ({ ...prev, trades, wins, losses, pnl }));
-  }, [isAuthorized, botConfig, voiceEnabled, speak, strategyEnabled, checkStrategyCondition]);
+  }, [isAuthorized, botConfig, voiceEnabled, speak, getMillieFXSignal]);
   
-  const stopBot = useCallback(() => { botRunningRef.current = false; setBotRunning(false); toast.info('🛑 Bot stopped'); }, []);
-  const togglePauseBot = useCallback(() => { botPausedRef.current = !botPausedRef.current; setBotPaused(botPausedRef.current); }, []);
+  const stopBot = useCallback(() => {
+    botRunningRef.current = false;
+    setBotRunning(false);
+    toast.info('🛑 MillieFX Speed Bot stopped');
+    if (voiceEnabled) speak('Bot stopped');
+  }, [voiceEnabled]);
+  
+  const togglePauseBot = useCallback(() => {
+    botPausedRef.current = !botPausedRef.current;
+    setBotPaused(botPausedRef.current);
+    if (voiceEnabled) speak(botPausedRef.current ? 'Bot paused' : 'Bot resumed');
+  }, [voiceEnabled]);
   
   const handleBotSymbolChange = useCallback((newSymbol: string) => {
-    setBotConfig(prev => ({ ...prev, botSymbol: newSymbol }));
+    setBotConfig(prev => ({ ...prev, symbol: newSymbol }));
     setSymbol(newSymbol);
   }, []);
   
+  // Trade statistics
   const totalTrades = tradeHistory.filter(t => t.status !== 'open').length;
   const wins = tradeHistory.filter(t => t.status === 'won').length;
   const losses = tradeHistory.filter(t => t.status === 'lost').length;
@@ -1426,28 +1538,6 @@ export default function TradingChart() {
           <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {candles.length}/{TARGET_CANDLES} candles</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Animated Tick Selector with Red Background */}
-          <motion.div 
-            className="flex items-center gap-2 rounded-lg px-3 py-1"
-            style={{ background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)' }}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-          >
-            <Sliders className="w-4 h-4 text-white animate-pulse" />
-            <select 
-              value={selectedTicks} 
-              onChange={(e) => setSelectedTicks(parseInt(e.target.value))}
-              className="bg-transparent text-white text-sm h-8 px-2 rounded focus:outline-none cursor-pointer font-medium"
-              style={{ textShadow: '0 1px 1px rgba(0,0,0,0.2)' }}
-            >
-              {TICK_OPTIONS.map(ticks => (
-                <option key={ticks} value={ticks} className="bg-gray-900 text-white">
-                  📊 {ticks.toLocaleString()} ticks
-                </option>
-              ))}
-            </select>
-          </motion.div>
-          
           <Button onClick={handleManualRefresh} variant="outline" size="sm" className="gap-1" disabled={isLoading}>
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh
@@ -1509,7 +1599,6 @@ export default function TradingChart() {
         </div>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {/* Signal Display */}
           <motion.div 
             className="bg-black/30 rounded-lg p-3 text-center"
             whileHover={{ scale: 1.02 }}
@@ -1535,7 +1624,6 @@ export default function TradingChart() {
             </div>
           </motion.div>
           
-          {/* Signal Strength */}
           <div className="bg-black/30 rounded-lg p-3">
             <div className="text-[10px] text-muted-foreground mb-2">Signal Strength</div>
             <div className="flex justify-between mb-1">
@@ -1566,7 +1654,6 @@ export default function TradingChart() {
             </div>
           </div>
           
-          {/* Active Signals */}
           <div className="bg-black/30 rounded-lg p-3">
             <div className="text-[10px] text-muted-foreground mb-1">Active Signals</div>
             <div className="space-y-1 max-h-20 overflow-auto">
@@ -1631,7 +1718,7 @@ export default function TradingChart() {
         </div>
       )}
       
-      {/* Indicators Toggle Bar - All initially OFF */}
+      {/* Indicators Toggle Bar */}
       {showChart && (
         <div className="bg-card border border-border rounded-xl p-2 flex flex-wrap gap-1 items-center">
           <span className="text-[10px] text-muted-foreground mr-2">Indicators:</span>
@@ -1711,9 +1798,34 @@ export default function TradingChart() {
             ))}
           </div>
           
-          {/* Digit Analysis */}
+          {/* Digit Analysis with Tick Selector */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-3">
-            <h3 className="text-xs font-semibold text-foreground">Digit Analysis</h3>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <h3 className="text-xs font-semibold text-foreground">Digit Analysis</h3>
+              
+              {/* Tick Selector - MOVED HERE */}
+              <motion.div 
+                className="flex items-center gap-2 rounded-lg px-3 py-1"
+                style={{ background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)' }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                <Sliders className="w-4 h-4 text-white animate-pulse" />
+                <select 
+                  value={digitAnalysisTicks} 
+                  onChange={(e) => setDigitAnalysisTicks(parseInt(e.target.value))}
+                  className="bg-transparent text-white text-sm h-8 px-2 rounded focus:outline-none cursor-pointer font-medium"
+                  style={{ textShadow: '0 1px 1px rgba(0,0,0,0.2)' }}
+                >
+                  {TICK_OPTIONS.map(ticks => (
+                    <option key={ticks} value={ticks} className="bg-gray-900 text-white">
+                      📊 {ticks.toLocaleString()} ticks
+                    </option>
+                  ))}
+                </select>
+              </motion.div>
+            </div>
+            
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
                 <div className="text-[9px] text-[#D29922]">Odd</div>
@@ -1744,10 +1856,8 @@ export default function TradingChart() {
                 return (
                   <motion.button 
                     key={d}
-                    onClick={() => { setSelectedDigit(d); setPrediction(String(d)); }}
                     className={`relative rounded-lg p-2 text-center transition-all border cursor-pointer hover:ring-2 hover:ring-primary ${
-                      selectedDigit === d ? 'ring-2 ring-primary' : ''
-                    } ${pct > 12 ? 'bg-loss/10 border-loss/40 text-loss' :
+                      pct > 12 ? 'bg-loss/10 border-loss/40 text-loss' :
                       pct > 9 ? 'bg-warning/10 border-warning/40 text-warning' :
                       'bg-card border-border text-primary'}`}
                     whileHover={{ scale: 1.05, y: -2 }}
@@ -1765,7 +1875,7 @@ export default function TradingChart() {
           </div>
         </div>
         
-        {/* RIGHT: Trade Panel */}
+        {/* RIGHT: MillieFX Speed Bot Panel */}
         <div className="xl:col-span-4 space-y-3">
           {/* Voice AI Toggle */}
           <div className="bg-card border border-primary/30 rounded-xl p-3">
@@ -1836,48 +1946,11 @@ export default function TradingChart() {
             </div>
           </div>
           
-          {/* Quick Trade */}
-          <div className="bg-card border border-border rounded-xl p-3 space-y-2">
-            <h3 className="text-xs font-semibold text-foreground">Quick Trade</h3>
-            <Select value={contractType} onValueChange={setContractType}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
-            </Select>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[9px] text-muted-foreground">Stake ($)</label>
-                <Input type="number" min="0.35" step="0.01" value={tradeStake} onChange={e => setTradeStake(e.target.value)} className="h-7 text-xs" />
-              </div>
-              <div>
-                <label className="text-[9px] text-muted-foreground">Duration</label>
-                <div className="flex gap-1">
-                  <Input type="number" min="1" value={duration} onChange={e => setDuration(e.target.value)} className="h-7 text-xs flex-1" />
-                  <Select value={durationUnit} onValueChange={setDurationUnit}>
-                    <SelectTrigger className="h-7 text-xs w-16"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="t">T</SelectItem>
-                      <SelectItem value="s">S</SelectItem>
-                      <SelectItem value="m">M</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Button onClick={() => handleBuy('buy')} disabled={isTrading || !isAuthorized} className="bg-profit hover:bg-profit/90 text-profit-foreground">
-                <TrendingUp className="w-4 h-4 mr-1" /> CALL
-              </Button>
-              <Button onClick={() => handleBuy('sell')} disabled={isTrading || !isAuthorized} variant="destructive">
-                <TrendingDown className="w-4 h-4 mr-1" /> PUT
-              </Button>
-            </div>
-          </div>
-          
-          {/* Auto Bot Panel */}
+          {/* MillieFX Speed Bot Panel */}
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                <Zap className="w-3.5 h-3.5 text-primary" /> Auto Bot
+                <Zap className="w-3.5 h-3.5 text-primary" /> MillieFX Speed Bot
               </h3>
               {botRunning && (
                 <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ repeat: Infinity, duration: 1.5 }}>
@@ -1886,16 +1959,53 @@ export default function TradingChart() {
               )}
             </div>
             
-            <Select value={botConfig.botSymbol} onValueChange={handleBotSymbolChange} disabled={botRunning}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>{ALL_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name}</SelectItem>)}</SelectContent>
-            </Select>
+            {/* Market Selector for Bot */}
+            <div>
+              <label className="text-[9px] text-muted-foreground">Market (Volatility Indices)</label>
+              <Select value={botConfig.symbol} onValueChange={handleBotSymbolChange} disabled={botRunning}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="max-h-60">
+                  {ALL_MARKETS.map(m => (
+                    <SelectItem key={m.symbol} value={m.symbol}>
+                      {m.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[8px] text-muted-foreground mt-0.5">Chart auto-syncs with selected market</p>
+            </div>
             
-            <Select value={botConfig.contractType} onValueChange={v => setBotConfig(p => ({ ...p, contractType: v }))} disabled={botRunning}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
-            </Select>
+            {/* Contract Type - Only Over/Under, Even/Odd, Matches/Differs */}
+            <div>
+              <label className="text-[9px] text-muted-foreground">Contract Type</label>
+              <Select value={botConfig.contractType} onValueChange={v => setBotConfig(p => ({ ...p, contractType: v }))} disabled={botRunning}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {MILLIEFX_CONTRACT_TYPES.map(c => (
+                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             
+            {/* Prediction for Match/Differ */}
+            {(botConfig.contractType === 'DIGITMATCH' || botConfig.contractType === 'DIGITDIFF') && (
+              <div>
+                <label className="text-[9px] text-muted-foreground">Prediction (0-9)</label>
+                <div className="grid grid-cols-5 gap-1">
+                  {Array.from({ length: 10 }, (_, i) => (
+                    <button key={i} disabled={botRunning} onClick={() => setBotConfig(p => ({ ...p, prediction: String(i) }))}
+                      className={`h-6 rounded text-[10px] font-mono font-bold transition-all ${
+                        botConfig.prediction === String(i) ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground hover:bg-secondary'
+                      }`}>{i}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* Stake and Duration */}
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-[9px] text-muted-foreground">Stake ($)</label>
@@ -1910,15 +2020,16 @@ export default function TradingChart() {
                   <Select value={botConfig.durationUnit} onValueChange={v => setBotConfig(p => ({ ...p, durationUnit: v }))} disabled={botRunning}>
                     <SelectTrigger className="h-7 text-xs w-16"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="t">T</SelectItem>
-                      <SelectItem value="s">S</SelectItem>
-                      <SelectItem value="m">M</SelectItem>
+                      <SelectItem value="t">Ticks</SelectItem>
+                      <SelectItem value="s">Seconds</SelectItem>
+                      <SelectItem value="m">Minutes</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
             </div>
             
+            {/* Martingale */}
             <div className="flex items-center justify-between">
               <label className="text-[10px] text-foreground">Martingale</label>
               <div className="flex items-center gap-2">
@@ -1934,75 +2045,26 @@ export default function TradingChart() {
               </div>
             </div>
             
-            {/* Strategy Section */}
-            <div className="border-t border-border pt-2 mt-1">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-[10px] font-semibold text-warning flex items-center gap-1">
-                  <Zap className="w-3 h-3" /> Pattern/Digit Strategy
-                </label>
-                <Switch checked={strategyEnabled} onCheckedChange={setStrategyEnabled} disabled={botRunning} />
-              </div>
-              
-              {strategyEnabled && (
-                <div className="space-y-2">
-                  <div className="flex gap-1">
-                    <Button size="sm" variant={strategyMode === 'pattern' ? 'default' : 'outline'} className="text-[9px] h-6 px-2 flex-1" onClick={() => setStrategyMode('pattern')} disabled={botRunning}>
-                      Pattern (E/O)
-                    </Button>
-                    <Button size="sm" variant={strategyMode === 'digit' ? 'default' : 'outline'} className="text-[9px] h-6 px-2 flex-1" onClick={() => setStrategyMode('digit')} disabled={botRunning}>
-                      Digit Condition
-                    </Button>
-                  </div>
-                  
-                  {strategyMode === 'pattern' ? (
-                    <div>
-                      <label className="text-[8px] text-muted-foreground">Pattern (E=Even, O=Odd)</label>
-                      <Textarea placeholder="e.g., EEEOE or OOEEO" value={patternInput}
-                        onChange={e => setPatternInput(e.target.value.toUpperCase().replace(/[^EO]/g, ''))}
-                        disabled={botRunning} className="h-12 text-[10px] font-mono min-h-0 mt-1" />
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-3 gap-1">
-                      <div>
-                        <label className="text-[8px] text-muted-foreground">If last</label>
-                        <Input type="number" min="1" max="50" value={digitWindow}
-                          onChange={e => setDigitWindow(e.target.value)} disabled={botRunning} className="h-7 text-[10px]" />
-                      </div>
-                      <div>
-                        <label className="text-[8px] text-muted-foreground">ticks are</label>
-                        <Select value={digitCondition} onValueChange={setDigitCondition} disabled={botRunning}>
-                          <SelectTrigger className="h-7 text-[10px]"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {['==', '!=', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <label className="text-[8px] text-muted-foreground">Digit</label>
-                        <Input type="number" min="0" max="9" value={digitCompare}
-                          onChange={e => setDigitCompare(e.target.value)} disabled={botRunning} className="h-7 text-[10px]" />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            
+            {/* Stop Loss, Take Profit, Max Trades */}
             <div className="grid grid-cols-3 gap-1.5">
               <div>
-                <label className="text-[8px] text-muted-foreground">Stop Loss</label>
-                <Input type="number" value={botConfig.stopLoss} onChange={e => setBotConfig(p => ({ ...p, stopLoss: e.target.value }))} disabled={botRunning} className="h-7 text-xs" />
+                <label className="text-[8px] text-muted-foreground">Stop Loss ($)</label>
+                <Input type="number" value={botConfig.stopLoss} onChange={e => setBotConfig(p => ({ ...p, stopLoss: e.target.value }))}
+                  disabled={botRunning} className="h-7 text-xs" />
               </div>
               <div>
-                <label className="text-[8px] text-muted-foreground">Take Profit</label>
-                <Input type="number" value={botConfig.takeProfit} onChange={e => setBotConfig(p => ({ ...p, takeProfit: e.target.value }))} disabled={botRunning} className="h-7 text-xs" />
+                <label className="text-[8px] text-muted-foreground">Take Profit ($)</label>
+                <Input type="number" value={botConfig.takeProfit} onChange={e => setBotConfig(p => ({ ...p, takeProfit: e.target.value }))}
+                  disabled={botRunning} className="h-7 text-xs" />
               </div>
               <div>
                 <label className="text-[8px] text-muted-foreground">Max Trades</label>
-                <Input type="number" value={botConfig.maxTrades} onChange={e => setBotConfig(p => ({ ...p, maxTrades: e.target.value }))} disabled={botRunning} className="h-7 text-xs" />
+                <Input type="number" value={botConfig.maxTrades} onChange={e => setBotConfig(p => ({ ...p, maxTrades: e.target.value }))}
+                  disabled={botRunning} className="h-7 text-xs" />
               </div>
             </div>
             
+            {/* Bot Live Stats */}
             {botRunning && (
               <div className="grid grid-cols-3 gap-1 text-center">
                 <div className="bg-muted/30 rounded p-1">
@@ -2022,10 +2084,35 @@ export default function TradingChart() {
               </div>
             )}
             
+            {/* Current Signal Display */}
+            {!botRunning && (
+              <div className="bg-muted/20 rounded-lg p-2 text-center">
+                <div className="text-[8px] text-muted-foreground">Current Signal</div>
+                {(() => {
+                  const signal = getMillieFXSignal();
+                  if (!signal) return <div className="text-[10px] text-warning">No clear signal</div>;
+                  return (
+                    <div className="flex items-center justify-center gap-2">
+                      <Badge className="text-[10px] bg-primary">
+                        {signal.type === 'DIGITEVEN' ? 'EVEN' : 
+                         signal.type === 'DIGITODD' ? 'ODD' :
+                         signal.type === 'DIGITOVER' ? 'OVER' :
+                         signal.type === 'DIGITUNDER' ? 'UNDER' :
+                         signal.type === 'DIGITMATCH' ? `MATCH ${signal.prediction}` :
+                         'DIFFERS'}
+                      </Badge>
+                      <span className="text-[9px] text-muted-foreground">Confidence: {signal.confidence}%</span>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+            
+            {/* Start/Pause/Stop buttons */}
             <div className="flex gap-2">
               {!botRunning ? (
-                <Button onClick={startBot} disabled={!isAuthorized} className="flex-1 h-10 text-xs font-bold bg-profit hover:bg-profit/90">
-                  <Play className="w-4 h-4 mr-1" /> Start Bot
+                <Button onClick={startMillieFXBot} disabled={!isAuthorized} className="flex-1 h-10 text-xs font-bold bg-profit hover:bg-profit/90">
+                  <Play className="w-4 h-4 mr-1" /> Start MillieFX Bot
                 </Button>
               ) : (
                 <>
@@ -2095,7 +2182,13 @@ export default function TradingChart() {
                       <span className={`font-bold ${t.status === 'won' ? 'text-profit' : t.status === 'lost' ? 'text-loss' : 'text-primary'}`}>
                         {t.status === 'open' ? '⏳' : t.status === 'won' ? '✅' : '❌'}
                       </span>
-                      <span className="font-mono text-muted-foreground">{t.type}</span>
+                      <span className="font-mono text-muted-foreground">
+                        {t.type === 'DIGITEVEN' ? 'Even' : 
+                         t.type === 'DIGITODD' ? 'Odd' :
+                         t.type === 'DIGITOVER' ? 'Over' :
+                         t.type === 'DIGITUNDER' ? 'Under' :
+                         t.type === 'DIGITMATCH' ? 'Match' : 'Differs'}
+                      </span>
                       <span className="text-muted-foreground">${t.stake.toFixed(2)}</span>
                     </div>
                     <span className={`font-mono font-bold ${t.profit >= 0 ? 'text-profit' : 'text-loss'}`}>
