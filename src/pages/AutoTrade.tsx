@@ -61,8 +61,37 @@ const GROUPS = [
 ];
 
 const TIMEFRAMES = ['1m','3m','5m','15m','30m','1h','4h','12h','1d'];
-const TF_TICKS: Record<string,number> = {
-  '1m':1000,'3m':2000,'5m':3000,'15m':4000,'30m':4500,'1h':5000,'4h':5000,'12h':5000,'1d':5000,
+
+// Updated tick counts for each timeframe to ensure enough candles
+const getTickCountForTimeframe = (timeframe: string): number => {
+  const seconds: Record<string, number> = {
+    '1m': 60,
+    '3m': 180,
+    '5m': 300,
+    '15m': 900,
+    '30m': 1800,
+    '1h': 3600,
+    '4h': 14400,
+    '12h': 43200,
+    '1d': 86400,
+  };
+  
+  const interval = seconds[timeframe] || 60;
+  const targetCandles = timeframe === '1m' ? 70 : 50;
+  // Get enough ticks to ensure at least target candles (add 50% buffer)
+  return Math.ceil(targetCandles * interval * 1.5);
+};
+
+const TF_TICKS: Record<string, number> = {
+  '1m': getTickCountForTimeframe('1m'),
+  '3m': getTickCountForTimeframe('3m'),
+  '5m': getTickCountForTimeframe('5m'),
+  '15m': getTickCountForTimeframe('15m'),
+  '30m': getTickCountForTimeframe('30m'),
+  '1h': getTickCountForTimeframe('1h'),
+  '4h': getTickCountForTimeframe('4h'),
+  '12h': getTickCountForTimeframe('12h'),
+  '1d': getTickCountForTimeframe('1d'),
 };
 
 const CONTRACT_TYPES = [
@@ -247,7 +276,7 @@ function addTick(symbol: string, digit: number) {
 
 export default function TradingChart() {
   const { isAuthorized } = useAuth();
-  const [showChart, setShowChart] = useState(false);
+  const [showChart, setShowChart] = useState(true); // Default to true
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
   const [timeframe, setTimeframe] = useState('1m');
@@ -259,15 +288,15 @@ export default function TradingChart() {
   const subscriptionRef = useRef<any>(null);
   const reconnectAttempts = useRef(0);
 
-  // Zoom & pan state
-  const [candleWidth, setCandleWidth] = useState(7);
+  // Zoom & pan state - removed auto-remove candles feature
+  const [candleWidth, setCandleWidth] = useState(4); // Smaller width to fit more candles
   const [scrollOffset, setScrollOffset] = useState(0);
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
   const dragStartOffset = useRef(0);
   const isPriceAxisDragging = useRef(false);
   const priceAxisStartY = useRef(0);
-  const priceAxisStartWidth = useRef(7);
+  const priceAxisStartWidth = useRef(4);
 
   // Trade panel
   const [contractType, setContractType] = useState('CALL');
@@ -352,8 +381,11 @@ export default function TradingChart() {
         setPrices([]);
         setTimes([]);
         
-        // Fetch historical data
-        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, 5000);
+        // Get appropriate tick count for current timeframe
+        const tickCount = getTickCountForTimeframe(timeframe);
+        
+        // Fetch historical data with enough ticks for target candles
+        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, tickCount);
         if (!active) return;
         
         // Initialize tick history with digits from historical data
@@ -377,16 +409,16 @@ export default function TradingChart() {
             // Update tick history for pattern strategy
             addTick(symbol, digit);
             
-            // Update prices and times with proper limit
+            // Update prices and times with proper limit (keep more data)
             setPrices(prev => {
               const newPrices = [...prev, quote];
-              // Keep last 5000 ticks
-              return newPrices.slice(-5000);
+              // Keep last 10000 ticks to ensure enough candles
+              return newPrices.slice(-10000);
             });
             
             setTimes(prev => {
               const newTimes = [...prev, epoch];
-              return newTimes.slice(-5000);
+              return newTimes.slice(-10000);
             });
             
             // Visual feedback for price change
@@ -420,7 +452,7 @@ export default function TradingChart() {
       cleanup();
       subscribedRef.current = false;
     };
-  }, [symbol]);
+  }, [symbol, timeframe]); // Added timeframe dependency
 
   // Add effect to handle connection status changes
   useEffect(() => {
@@ -447,14 +479,15 @@ export default function TradingChart() {
     
     setIsLoading(true);
     try {
-      const hist = await derivApi.getTickHistory(symbol as MarketSymbol, 100);
+      const tickCount = getTickCountForTimeframe(timeframe);
+      const hist = await derivApi.getTickHistory(symbol as MarketSymbol, tickCount);
       setPrices(prev => {
         const newPrices = [...prev, ...hist.history.prices];
-        return newPrices.slice(-5000);
+        return newPrices.slice(-10000);
       });
       setTimes(prev => {
         const newTimes = [...prev, ...hist.history.times];
-        return newTimes.slice(-5000);
+        return newTimes.slice(-10000);
       });
       toast.success('Market data refreshed');
     } catch (err) {
@@ -462,10 +495,10 @@ export default function TradingChart() {
     } finally {
       setIsLoading(false);
     }
-  }, [symbol]);
+  }, [symbol, timeframe]);
 
   /* ── Derived data ── */
-  const tfTicks = TF_TICKS[timeframe] || 60;
+  const tfTicks = getTickCountForTimeframe(timeframe);
   const tfPrices = useMemo(() => prices.slice(-tfTicks), [prices, tfTicks]);
   const tfTimes = useMemo(() => times.slice(-tfTicks), [times, tfTicks]);
   const candles = useMemo(() => buildCandles(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
@@ -571,7 +604,7 @@ export default function TradingChart() {
   const bbSeries = useMemo(() => calcBBSeries(tfPrices, 20, 2), [tfPrices]);
   const rsiSeries = useMemo(() => calcRSISeries(tfPrices, 14), [tfPrices]);
 
-  // Canvas mouse handlers for zoom & pan
+  // Canvas mouse handlers for zoom & pan - removed auto-remove candles feature
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !showChart) return;
@@ -579,9 +612,11 @@ export default function TradingChart() {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       if (e.ctrlKey || e.metaKey) {
-        setCandleWidth(prev => Math.max(2, Math.min(20, prev - Math.sign(e.deltaY))));
+        // Zoom in/out on candles
+        setCandleWidth(prev => Math.max(2, Math.min(15, prev - Math.sign(e.deltaY))));
       } else {
-        const delta = Math.sign(e.deltaY) * Math.max(3, Math.floor(candles.length * 0.03));
+        // Pan left/right
+        const delta = Math.sign(e.deltaY) * Math.max(3, Math.floor(candles.length * 0.05));
         setScrollOffset(prev => Math.max(0, Math.min(candles.length - 10, prev + delta)));
       }
     };
@@ -606,7 +641,7 @@ export default function TradingChart() {
     const onMouseMove = (e: MouseEvent) => {
       if (isPriceAxisDragging.current) {
         const dy = priceAxisStartY.current - e.clientY;
-        const newWidth = Math.max(2, Math.min(24, priceAxisStartWidth.current + Math.round(dy / 8)));
+        const newWidth = Math.max(2, Math.min(15, priceAxisStartWidth.current + Math.round(dy / 8)));
         setCandleWidth(newWidth);
         return;
       }
@@ -614,7 +649,7 @@ export default function TradingChart() {
       const dx = dragStartX.current - e.clientX;
       const candlesPerPx = 1 / (candleWidth + 1);
       const delta = Math.round(dx * candlesPerPx);
-      setScrollOffset(Math.max(0, Math.min(candles.length - 10, dragStartOffset.current + delta)));
+      setScrollOffset(Math.max(0, Math.min(candles.length - 5, dragStartOffset.current + delta)));
     };
 
     const onMouseUp = () => {
@@ -777,11 +812,13 @@ export default function TradingChart() {
     ctx.fillStyle = '#0D1117';
     ctx.fillText(`R ${resistance.toFixed(4)}`, chartW + 2, resY + 3);
 
+    // Draw candles with BLUE for bullish, RED for bearish
     for (let i = 0; i < visibleCandles.length; i++) {
       const c = visibleCandles[i];
       const x = offsetX + i * totalCandleW;
       const isGreen = c.close >= c.open;
-      const color = isGreen ? '#3FB950' : '#F85149';
+      // Use BLUE for bullish, RED for bearish
+      const color = isGreen ? '#3B82F6' : '#EF4444';
 
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
@@ -1018,7 +1055,7 @@ export default function TradingChart() {
           <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-primary" /> Trading Chart
           </h1>
-          <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {tfPrices.length} ticks</p>
+          <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {candles.length} candles</p>
         </div>
         <div className="flex items-center gap-2">
           <Button
