@@ -20,7 +20,6 @@ import {
 
 /* ── Markets ── */
 const ALL_MARKETS = [
-  // Vol 1s
   { symbol: '1HZ10V', name: 'Volatility 10 (1s)', group: 'vol1s' },
   { symbol: '1HZ15V', name: 'Volatility 15 (1s)', group: 'vol1s' },
   { symbol: '1HZ25V', name: 'Volatility 25 (1s)', group: 'vol1s' },
@@ -28,24 +27,19 @@ const ALL_MARKETS = [
   { symbol: '1HZ50V', name: 'Volatility 50 (1s)', group: 'vol1s' },
   { symbol: '1HZ75V', name: 'Volatility 75 (1s)', group: 'vol1s' },
   { symbol: '1HZ100V', name: 'Volatility 100 (1s)', group: 'vol1s' },
-  // Vol
   { symbol: 'R_10', name: 'Volatility 10', group: 'vol' },
   { symbol: 'R_25', name: 'Volatility 25', group: 'vol' },
   { symbol: 'R_50', name: 'Volatility 50', group: 'vol' },
   { symbol: 'R_75', name: 'Volatility 75', group: 'vol' },
   { symbol: 'R_100', name: 'Volatility 100', group: 'vol' },
-  // Jump
   { symbol: 'JD10', name: 'Jump 10', group: 'jump' },
   { symbol: 'JD25', name: 'Jump 25', group: 'jump' },
   { symbol: 'JD50', name: 'Jump 50', group: 'jump' },
   { symbol: 'JD75', name: 'Jump 75', group: 'jump' },
   { symbol: 'JD100', name: 'Jump 100', group: 'jump' },
-  // Bear/Bull
   { symbol: 'RDBEAR', name: 'Bear Market', group: 'bear' },
   { symbol: 'RDBULL', name: 'Bull Market', group: 'bull' },
-  // Step
   { symbol: 'stpRNG', name: 'Step Index', group: 'step' },
-  // Range Break
   { symbol: 'RBRK100', name: 'Range Break 100', group: 'range' },
   { symbol: 'RBRK200', name: 'Range Break 200', group: 'range' },
 ];
@@ -68,6 +62,8 @@ const CANDLE_CONFIG = {
   defaultCandles: 1000,
 };
 
+const TICK_RANGES = [50, 100, 200, 300, 500, 1000];
+
 const CONTRACT_TYPES = [
   { value: 'CALL', label: 'Rise' },
   { value: 'PUT', label: 'Fall' },
@@ -79,7 +75,6 @@ const CONTRACT_TYPES = [
   { value: 'DIGITUNDER', label: 'Digits Under' },
 ];
 
-// Indicator types
 type IndicatorType = 'RSI' | 'BB' | 'MA' | 'MACD';
 interface Indicator {
   id: string;
@@ -87,9 +82,33 @@ interface Indicator {
   enabled: boolean;
 }
 
-/* ── Candle builder ── */
 interface Candle {
   open: number; high: number; low: number; close: number; time: number;
+}
+
+interface TradeRecord {
+  id: string;
+  time: number;
+  type: string;
+  stake: number;
+  profit: number;
+  status: 'won' | 'lost' | 'open';
+  symbol: string;
+  resultDigit?: number;
+}
+
+// Independent tick storage for digit analysis
+const globalTickHistory: { [symbol: string]: number[] } = {};
+
+function getTickHistory(symbol: string): number[] {
+  return globalTickHistory[symbol] || [];
+}
+
+function addTick(symbol: string, digit: number) {
+  if (!globalTickHistory[symbol]) globalTickHistory[symbol] = [];
+  globalTickHistory[symbol].push(digit);
+  // Keep up to 2000 ticks for analysis
+  if (globalTickHistory[symbol].length > 2000) globalTickHistory[symbol].shift();
 }
 
 function buildCandles(prices: number[], times: number[], tf: string): Candle[] {
@@ -119,7 +138,6 @@ function buildCandles(prices: number[], times: number[], tf: string): Candle[] {
   return candles;
 }
 
-/* ── EMA helper ── */
 function calcEMA(prices: number[], period: number): number[] {
   const emaValues: number[] = [];
   if (prices.length === 0) return emaValues;
@@ -151,7 +169,6 @@ function calcSMA(prices: number[], period: number): number[] {
   return smaValues;
 }
 
-/* ── Per-candle indicator series ── */
 function calcEMASeries(prices: number[], period: number): (number | null)[] {
   const result: (number | null)[] = [];
   if (prices.length < period) return prices.map(() => null);
@@ -236,7 +253,6 @@ function calcMACDSeries(prices: number[]) {
   return { macd: macdLine, signal: signalLine };
 }
 
-/* ── Map candle index back to price-series index for indicators ── */
 function mapCandlesToPriceIndices(prices: number[], times: number[], tf: string): number[] {
   const seconds: Record<string, number> = {
     '1m':60,'3m':180,'5m':300,'15m':900,'30m':1800,'1h':3600,'4h':14400,'12h':43200,'1d':86400,
@@ -256,7 +272,6 @@ function mapCandlesToPriceIndices(prices: number[], times: number[], tf: string)
   return indices;
 }
 
-/* ── Support/Resistance ── */
 function calcSR(prices: number[]) {
   if (prices.length < 10) return { support: 0, resistance: 0 };
   const sorted = [...prices].sort((a, b) => a - b);
@@ -265,7 +280,6 @@ function calcSR(prices: number[]) {
   return { support: sorted[p5], resistance: sorted[Math.min(p95, sorted.length - 1)] };
 }
 
-/* ── MACD proper ── */
 function calcMACDFull(prices: number[]) {
   const ema12 = calcEMA(prices, 12);
   const ema26 = calcEMA(prices, 26);
@@ -274,33 +288,9 @@ function calcMACDFull(prices: number[]) {
   return { macd, signal, histogram: macd - signal };
 }
 
-interface TradeRecord {
-  id: string;
-  time: number;
-  type: string;
-  stake: number;
-  profit: number;
-  status: 'won' | 'lost' | 'open';
-  symbol: string;
-  resultDigit?: number;
-}
-
-// Tick storage for pattern/digit strategy
-const tickHistoryRef: { [symbol: string]: number[] } = {};
-
-function getTickHistory(symbol: string): number[] {
-  return tickHistoryRef[symbol] || [];
-}
-
-function addTick(symbol: string, digit: number) {
-  if (!tickHistoryRef[symbol]) tickHistoryRef[symbol] = [];
-  tickHistoryRef[symbol].push(digit);
-  if (tickHistoryRef[symbol].length > 1000) tickHistoryRef[symbol].shift();
-}
-
 export default function TradingChart() {
   const { isAuthorized } = useAuth();
-  const [showChart, setShowChart] = useState(true);
+  const [showChart, setShowChart] = useState(false); // Initially hidden
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
   const [timeframe, setTimeframe] = useState('1m');
@@ -308,6 +298,7 @@ export default function TradingChart() {
   const [times, setTimes] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [candleCount, setCandleCount] = useState(CANDLE_CONFIG.defaultCandles);
+  const [tickRange, setTickRange] = useState(100); // Independent tick range for digit analysis
   const subscribedRef = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const subscriptionRef = useRef<any>(null);
@@ -370,7 +361,15 @@ export default function TradingChart() {
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
   const [turboMode, setTurboMode] = useState(false);
 
-  // Add indicator function
+  // Independent digit analysis state - NOT affected by candles
+  const [digitStats, setDigitStats] = useState({
+    frequency: {} as Record<number, number>,
+    percentages: {} as Record<number, number>,
+    mostCommon: 0,
+    leastCommon: 0,
+    totalTicks: 0,
+  });
+
   const addIndicator = useCallback((type: IndicatorType) => {
     const newIndicator: Indicator = {
       id: `${type}-${Date.now()}`,
@@ -381,20 +380,18 @@ export default function TradingChart() {
     toast.success(`${type} indicator added`);
   }, []);
 
-  // Remove indicator function
   const removeIndicator = useCallback((id: string) => {
     setIndicators(prev => prev.filter(ind => ind.id !== id));
     toast.info('Indicator removed');
   }, []);
 
-  // Toggle indicator function
   const toggleIndicator = useCallback((id: string) => {
     setIndicators(prev => prev.map(ind =>
       ind.id === id ? { ...ind, enabled: !ind.enabled } : ind
     ));
   }, []);
 
-  /* ── Load history with configurable candle count (1000-5000) ── */
+  // Load history with configurable candle count
   useEffect(() => {
     let active = true;
     let timeoutId: NodeJS.Timeout;
@@ -430,13 +427,14 @@ export default function TradingChart() {
         setPrices([]);
         setTimes([]);
         
-        // Fetch historical data with selected candle count (1000-5000)
+        // Fetch historical data with selected candle count
         const ticksToLoad = Math.min(candleCount, CANDLE_CONFIG.maxCandles);
         const hist = await derivApi.getTickHistory(symbol as MarketSymbol, ticksToLoad);
         if (!active) return;
         
+        // Store ALL ticks for independent digit analysis
         const historicalDigits = (hist.history.prices || []).map(p => getLastDigit(p));
-        tickHistoryRef[symbol] = historicalDigits.slice(-1000);
+        globalTickHistory[symbol] = historicalDigits;
         
         setPrices(hist.history.prices || []);
         setTimes(hist.history.times || []);
@@ -451,8 +449,10 @@ export default function TradingChart() {
             const digit = getLastDigit(quote);
             const epoch = data.tick.epoch;
             
+            // Update independent tick history for digit analysis
             addTick(symbol, digit);
             
+            // Update prices and times for candles
             setPrices(prev => {
               const newPrices = [...prev, quote];
               return newPrices.slice(-CANDLE_CONFIG.maxCandles);
@@ -463,7 +463,7 @@ export default function TradingChart() {
               return newTimes.slice(-CANDLE_CONFIG.maxCandles);
             });
             
-            if (canvasRef.current) {
+            if (canvasRef.current && showChart) {
               canvasRef.current.style.transition = 'background-color 0.1s';
               canvasRef.current.style.backgroundColor = 'rgba(63, 185, 80, 0.05)';
               setTimeout(() => {
@@ -493,6 +493,54 @@ export default function TradingChart() {
       subscribedRef.current = false;
     };
   }, [symbol, candleCount]);
+
+  // Independent digit analysis - updates based ONLY on tick range, NOT candles
+  useEffect(() => {
+    const updateDigitAnalysis = () => {
+      const ticks = getTickHistory(symbol);
+      const recentTicks = ticks.slice(-tickRange);
+      
+      if (recentTicks.length > 0) {
+        const frequency: Record<number, number> = {};
+        for (let i = 0; i <= 9; i++) frequency[i] = 0;
+        
+        for (const digit of recentTicks) {
+          frequency[digit] = (frequency[digit] || 0) + 1;
+        }
+        
+        const percentages: Record<number, number> = {};
+        for (let i = 0; i <= 9; i++) {
+          percentages[i] = (frequency[i] / recentTicks.length) * 100;
+        }
+        
+        let mostCommon = 0;
+        let leastCommon = 0;
+        let maxFreq = 0;
+        let minFreq = Infinity;
+        
+        for (let i = 0; i <= 9; i++) {
+          if (frequency[i] > maxFreq) {
+            maxFreq = frequency[i];
+            mostCommon = i;
+          }
+          if (frequency[i] < minFreq) {
+            minFreq = frequency[i];
+            leastCommon = i;
+          }
+        }
+        
+        setDigitStats({
+          frequency,
+          percentages,
+          mostCommon,
+          leastCommon,
+          totalTicks: recentTicks.length,
+        });
+      }
+    };
+    
+    updateDigitAnalysis();
+  }, [symbol, tickRange]);
 
   useEffect(() => {
     const checkConnection = setInterval(() => {
@@ -532,45 +580,64 @@ export default function TradingChart() {
     }
   }, [symbol]);
 
-  /* ── Derived data ── */
-  const tfPrices = useMemo(() => prices.slice(-candleCount), [prices, candleCount]);
-  const tfTimes = useMemo(() => times.slice(-candleCount), [times, candleCount]);
-  const candles = useMemo(() => buildCandles(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
+  /* ── Derived data for candles only ── */
+  const candles = useMemo(() => buildCandles(prices, times, timeframe), [prices, times, timeframe]);
   const currentPrice = prices[prices.length - 1] || 0;
   const lastDigit = getLastDigit(currentPrice);
-  const digits = useMemo(() => tfPrices.map(getLastDigit), [tfPrices]);
-  const last26 = useMemo(() => {
-    const tickHistory = getTickHistory(symbol);
-    return tickHistory.slice(-26);
-  }, [symbol, prices]);
-  const { frequency, percentages, mostCommon, leastCommon } = useMemo(() => analyzeDigits(tfPrices), [tfPrices]);
-
-  // Indicators calculations
-  const bb = useMemo(() => calculateBollingerBands(tfPrices, 20), [tfPrices]);
-  const ema50 = useMemo(() => calcEMA(tfPrices, 50), [tfPrices]);
-  const sma20 = useMemo(() => calcSMA(tfPrices, 20), [tfPrices]);
-  const { support, resistance } = useMemo(() => calcSR(tfPrices), [tfPrices]);
-  const rsi = useMemo(() => calculateRSI(tfPrices, 14), [tfPrices]);
-  const macd = useMemo(() => calcMACDFull(tfPrices), [tfPrices]);
+  
+  // Indicators calculations (based on candles/price data)
+  const bb = useMemo(() => calculateBollingerBands(prices, 20), [prices]);
+  const ema50 = useMemo(() => calcEMA(prices, 50), [prices]);
+  const sma20 = useMemo(() => calcSMA(prices, 20), [prices]);
+  const { support, resistance } = useMemo(() => calcSR(prices), [prices]);
+  const rsi = useMemo(() => calculateRSI(prices, 14), [prices]);
+  const macd = useMemo(() => calcMACDFull(prices), [prices]);
 
   // Series for chart rendering
-  const candleEndIndices = useMemo(() => mapCandlesToPriceIndices(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
-  const emaSeries = useMemo(() => calcEMASeries(tfPrices, 50), [tfPrices]);
-  const smaSeries = useMemo(() => calcSMASeries(tfPrices, 20), [tfPrices]);
-  const bbSeries = useMemo(() => calcBBSeries(tfPrices, 20, 2), [tfPrices]);
-  const rsiSeries = useMemo(() => calcRSISeries(tfPrices, 14), [tfPrices]);
-  const macdSeries = useMemo(() => calcMACDSeries(tfPrices), [tfPrices]);
+  const candleEndIndices = useMemo(() => mapCandlesToPriceIndices(prices, times, timeframe), [prices, times, timeframe]);
+  const emaSeries = useMemo(() => calcEMASeries(prices, 50), [prices]);
+  const smaSeries = useMemo(() => calcSMASeries(prices, 20), [prices]);
+  const bbSeries = useMemo(() => calcBBSeries(prices, 20, 2), [prices]);
+  const rsiSeries = useMemo(() => calcRSISeries(prices, 14), [prices]);
+  const macdSeries = useMemo(() => calcMACDSeries(prices), [prices]);
 
-  // Digit stats
-  const evenCount = useMemo(() => digits.filter(d => d % 2 === 0).length, [digits]);
-  const oddCount = digits.length - evenCount;
-  const evenPct = digits.length > 0 ? (evenCount / digits.length * 100) : 50;
+  // Digit stats from independent analysis
+  const { frequency, percentages, mostCommon, leastCommon, totalTicks } = digitStats;
+  
+  const evenCount = useMemo(() => {
+    const ticks = getTickHistory(symbol).slice(-tickRange);
+    return ticks.filter(d => d % 2 === 0).length;
+  }, [symbol, tickRange]);
+  
+  const oddCount = useMemo(() => {
+    const ticks = getTickHistory(symbol).slice(-tickRange);
+    return ticks.length - evenCount;
+  }, [symbol, tickRange, evenCount]);
+  
+  const evenPct = useMemo(() => {
+    const ticks = getTickHistory(symbol).slice(-tickRange);
+    return ticks.length > 0 ? (evenCount / ticks.length * 100) : 50;
+  }, [symbol, tickRange, evenCount]);
+  
   const oddPct = 100 - evenPct;
-  const overCount = useMemo(() => digits.filter(d => d > 4).length, [digits]);
-  const underCount = digits.length - overCount;
-  const overPct = digits.length > 0 ? (overCount / digits.length * 100) : 50;
+  
+  const overCount = useMemo(() => {
+    const ticks = getTickHistory(symbol).slice(-tickRange);
+    return ticks.filter(d => d > 4).length;
+  }, [symbol, tickRange]);
+  
+  const underCount = useMemo(() => {
+    const ticks = getTickHistory(symbol).slice(-tickRange);
+    return ticks.length - overCount;
+  }, [symbol, tickRange, overCount]);
+  
+  const overPct = useMemo(() => {
+    const ticks = getTickHistory(symbol).slice(-tickRange);
+    return ticks.length > 0 ? (overCount / ticks.length * 100) : 50;
+  }, [symbol, tickRange, overCount]);
+  
   const underPct = 100 - overPct;
-
+  
   const bbRange = bb.upper - bb.lower || 1;
   const bbPosition = ((currentPrice - bb.lower) / bbRange * 100);
 
@@ -590,7 +657,7 @@ export default function TradingChart() {
   }, [overPct]);
 
   const matchSignal = useMemo(() => {
-    const bestPct = Math.max(...percentages);
+    const bestPct = Math.max(...Object.values(percentages));
     return { digit: mostCommon, confidence: Math.min(90, Math.round(bestPct * 3)) };
   }, [percentages, mostCommon]);
 
@@ -867,7 +934,7 @@ export default function TradingChart() {
       const c = visibleCandles[i];
       const x = offsetX + i * totalCandleW;
       const isBullish = c.close >= c.open;
-      const color = isBullish ? '#3B82F6' : '#EF4444'; // Blue for bullish, Red for bearish
+      const color = isBullish ? '#3B82F6' : '#EF4444';
 
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
@@ -1064,6 +1131,10 @@ export default function TradingChart() {
 
   const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
   const marketName = ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol;
+  const last26 = useMemo(() => {
+    const ticks = getTickHistory(symbol);
+    return ticks.slice(-26);
+  }, [symbol, tickRange]);
 
   const speak = useCallback((text: string) => {
     if (!voiceEnabled || !window.speechSynthesis) return;
@@ -1184,7 +1255,7 @@ export default function TradingChart() {
   const winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
 
   return (
-    <div className="space-y-4 max-w-[1920px] mx-auto">
+    <div className="space-y-4 max-w-[1920px] mx-auto p-4">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
@@ -1270,7 +1341,7 @@ export default function TradingChart() {
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
         {/* LEFT: Chart + Info */}
         <div className="xl:col-span-8 space-y-3">
-          {/* Candlestick Chart */}
+          {/* Candlestick Chart - Hideable */}
           <AnimatePresence mode="wait">
             {showChart && (
               <motion.div
@@ -1369,9 +1440,27 @@ export default function TradingChart() {
             ))}
           </div>
 
-          {/* Digit Analysis */}
+          {/* Digit Analysis - INDEPENDENT from candles */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-3">
-            <h3 className="text-xs font-semibold text-foreground">Digit Analysis</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-foreground">Digit Analysis (Independent from candles)</h3>
+              <div className="flex items-center gap-2">
+                <label className="text-[9px] text-muted-foreground">Tick Range:</label>
+                <Select value={String(tickRange)} onValueChange={v => setTickRange(parseInt(v))}>
+                  <SelectTrigger className="h-7 text-xs w-20">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TICK_RANGES.map(r => (
+                      <SelectItem key={r} value={String(r)}>{r}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Badge variant="outline" className="text-[9px]">
+                  Ticks: {totalTicks}
+                </Badge>
+              </div>
+            </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
@@ -1419,10 +1508,10 @@ export default function TradingChart() {
                       <div className={`h-full rounded-full ${isHot ? 'bg-loss' : isWarm ? 'bg-warning' : 'bg-primary'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
                     </div>
                     {isBestMatch && (
-                      <Badge className="absolute -top-1 -right-1 text-[7px] px-1 bg-profit text-profit-foreground">Match Digit</Badge>
+                      <Badge className="absolute -top-1 -right-1 text-[7px] px-1 bg-profit text-profit-foreground">Match</Badge>
                     )}
                     {isBestDiffer && (
-                      <Badge className="absolute -top-1 -left-1 text-[7px] px-1 bg-loss text-loss-foreground">Differ</Badge>
+                      <Badge className="absolute -top-1 -left-1 text-[7px] px-1 bg-loss text-loss-foreground">Diff</Badge>
                     )}
                   </button>
                 );
@@ -1459,7 +1548,7 @@ export default function TradingChart() {
           </div>
         </div>
 
-        {/* RIGHT: Signals + Trade + Tech */}
+        {/* RIGHT: Signals + Trade + Tech - Same as before */}
         <div className="xl:col-span-4 space-y-3">
           {/* Voice AI Toggle */}
           <div className="bg-card border border-primary/30 rounded-xl p-3">
@@ -1559,9 +1648,9 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* Last 26 Digits */}
+          {/* Last 26 Digits - from independent tick history */}
           <div className="bg-card border border-border rounded-xl p-3">
-            <h3 className="text-xs font-semibold text-foreground mb-2">Last 26 Digits</h3>
+            <h3 className="text-xs font-semibold text-foreground mb-2">Last 26 Digits (from {tickRange} ticks)</h3>
             <div className="flex gap-1 flex-wrap justify-center">
               {last26.map((d, i) => {
                 const isLast = i === last26.length - 1;
@@ -1586,7 +1675,7 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* AUTO BOT PANEL */}
+          {/* AUTO BOT PANEL - same as before */}
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
@@ -1914,7 +2003,7 @@ export default function TradingChart() {
               </div>
               <div className="flex items-center justify-between text-[10px]">
                 <span className="text-muted-foreground">EMA 50</span>
-                <span className={`font-mono font-bold ${currentPrice > ema50[ema50.length - 1] ? 'text-profit' : 'text-loss'}`}>
+                <span className={`font-mono font-bold ${currentPrice > (ema50[ema50.length - 1] || 0) ? 'text-profit' : 'text-loss'}`}>
                   {currentPrice > (ema50[ema50.length - 1] || 0) ? '📈 Above' : '📉 Below'} ({(ema50[ema50.length - 1] || 0).toFixed(2)})
                 </span>
               </div>
