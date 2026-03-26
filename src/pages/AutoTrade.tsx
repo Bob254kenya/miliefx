@@ -107,11 +107,12 @@ interface DigitStats {
   oddPercentage: number;
   overPercentage: number;
   underPercentage: number;
+  last26Digits: number[];
 }
 
 // Independent tick storage for digit analysis
 const globalTickHistory: { [symbol: string]: number[] } = {};
-const tickCallbacks: { [symbol: string]: (() => void)[] } = {};
+const tickCallbacks: { [symbol: string]: (() => void)[] } = [];
 
 function getTickHistory(symbol: string): number[] {
   return globalTickHistory[symbol] || [];
@@ -350,6 +351,7 @@ function calculateDigitStats(symbol: string, tickRange: number): DigitStats {
   const oddCount = recentTicks.length - evenCount;
   const overCount = recentTicks.filter(d => d > 4).length;
   const underCount = recentTicks.length - overCount;
+  const last26Digits = ticks.slice(-26);
   
   return {
     frequency,
@@ -361,6 +363,7 @@ function calculateDigitStats(symbol: string, tickRange: number): DigitStats {
     oddPercentage: recentTicks.length > 0 ? (oddCount / recentTicks.length * 100) : 50,
     overPercentage: recentTicks.length > 0 ? (overCount / recentTicks.length * 100) : 50,
     underPercentage: recentTicks.length > 0 ? (underCount / recentTicks.length * 100) : 50,
+    last26Digits,
   };
 }
 
@@ -395,6 +398,7 @@ export default function TradingChart() {
     oddPercentage: 50,
     overPercentage: 50,
     underPercentage: 50,
+    last26Digits: [],
   });
 
   // Zoom & pan state
@@ -655,7 +659,7 @@ export default function TradingChart() {
   const macdSeries = useMemo(() => calcMACDSeries(prices), [prices]);
 
   // Use digit stats from real-time updates
-  const { frequency, percentages, mostCommon, leastCommon, totalTicks, evenPercentage, oddPercentage, overPercentage, underPercentage } = digitStats;
+  const { frequency, percentages, mostCommon, leastCommon, totalTicks, evenPercentage, oddPercentage, overPercentage, underPercentage, last26Digits } = digitStats;
   
   const bbRange = bb.upper - bb.lower || 1;
   const bbPosition = ((currentPrice - bb.lower) / bbRange * 100);
@@ -1150,10 +1154,6 @@ export default function TradingChart() {
 
   const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
   const marketName = ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol;
-  const last26 = useMemo(() => {
-    const ticks = getTickHistory(symbol);
-    return ticks.slice(-26);
-  }, [symbol, tickRange]);
 
   const speak = useCallback((text: string) => {
     if (!voiceEnabled || !window.speechSynthesis) return;
@@ -1360,7 +1360,7 @@ export default function TradingChart() {
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
         {/* LEFT: Chart + Info */}
         <div className="xl:col-span-8 space-y-3">
-          {/* Candlestick Chart - Hideable */}
+          {/* Candlestick Chart */}
           <AnimatePresence mode="wait">
             {showChart && (
               <motion.div
@@ -1459,10 +1459,10 @@ export default function TradingChart() {
             ))}
           </div>
 
-          {/* Digit Analysis - REAL-TIME UPDATES */}
+          {/* Digit Analysis - Real-Time Updates */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold text-foreground">Digit Analysis (Real-Time Updates)</h3>
+              <h3 className="text-xs font-semibold text-foreground">Digit Analysis (Real-Time)</h3>
               <div className="flex items-center gap-2">
                 <label className="text-[9px] text-muted-foreground">Tick Range:</label>
                 <Select value={String(tickRange)} onValueChange={v => setTickRange(parseInt(v))}>
@@ -1542,6 +1542,47 @@ export default function TradingChart() {
             </div>
           </div>
 
+          {/* Last 26 Digits - Real-Time Updates */}
+          <div className="bg-card border border-border rounded-xl p-3">
+            <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center justify-between">
+              <span>Last 26 Digits (Real-Time)</span>
+              <Badge variant="outline" className="text-[8px] animate-pulse">
+                Auto Updates
+              </Badge>
+            </h3>
+            <div className="flex gap-1 flex-wrap justify-center">
+              {last26Digits.length > 0 ? (
+                last26Digits.map((d, i) => {
+                  const isLast = i === last26Digits.length - 1;
+                  const isEven = d % 2 === 0;
+                  return (
+                    <motion.div
+                      key={i}
+                      initial={isLast ? { scale: 0.8 } : {}}
+                      animate={isLast ? { scale: [1, 1.2, 1] } : {}}
+                      transition={isLast ? { duration: 0.5 } : {}}
+                      className={`w-7 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-xs border-2 transition-all ${
+                        isLast ? 'w-9 h-11 text-sm ring-2 ring-primary bg-primary/20' : ''
+                      } ${isEven
+                        ? 'border-[#3FB950] text-[#3FB950] bg-[#3FB950]/10'
+                        : 'border-[#D29922] text-[#D29922] bg-[#D29922]/10'
+                      }`}
+                    >
+                      {d}
+                    </motion.div>
+                  );
+                })
+              ) : (
+                <div className="text-center text-xs text-muted-foreground py-4">
+                  Waiting for tick data...
+                </div>
+              )}
+            </div>
+            <div className="text-center text-[8px] text-muted-foreground mt-2">
+              Latest digit highlighted • Updates every tick
+            </div>
+          </div>
+
           {/* Strategic Recommendations */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <div className="bg-card border border-profit/30 rounded-lg p-2">
@@ -1571,7 +1612,7 @@ export default function TradingChart() {
           </div>
         </div>
 
-        {/* RIGHT: Signals + Trade + Tech (same as before) */}
+        {/* RIGHT: Signals + Trade + Tech */}
         <div className="xl:col-span-4 space-y-3">
           {/* Voice AI Toggle */}
           <div className="bg-card border border-primary/30 rounded-xl p-3">
@@ -1605,7 +1646,6 @@ export default function TradingChart() {
 
           {/* Trading Signals */}
           <div className="grid grid-cols-2 gap-2">
-            {/* Rise/Fall */}
             <div className="bg-card border border-border rounded-xl p-3">
               <div className="flex items-center gap-1 mb-1">
                 {riseSignal.direction === 'Rise' ? <TrendingUp className="w-3.5 h-3.5 text-profit" /> : <TrendingDown className="w-3.5 h-3.5 text-loss" />}
@@ -1619,10 +1659,8 @@ export default function TradingChart() {
                 <div className={`h-full rounded-full ${riseSignal.direction === 'Rise' ? 'bg-profit' : 'bg-loss'}`}
                   style={{ width: `${riseSignal.confidence}%` }} />
               </div>
-              <div className="text-[8px] text-right text-muted-foreground mt-0.5">{riseSignal.confidence}%</div>
             </div>
 
-            {/* Even/Odd */}
             <div className="bg-card border border-border rounded-xl p-3">
               <div className="flex items-center gap-1 mb-1">
                 <Activity className="w-3.5 h-3.5 text-primary" />
@@ -1636,10 +1674,8 @@ export default function TradingChart() {
                 <div className={`h-full rounded-full ${eoSignal.direction === 'Even' ? 'bg-[#3FB950]' : 'bg-[#D29922]'}`}
                   style={{ width: `${eoSignal.confidence}%` }} />
               </div>
-              <div className="text-[8px] text-right text-muted-foreground mt-0.5">{eoSignal.confidence}%</div>
             </div>
 
-            {/* Over/Under */}
             <div className="bg-card border border-border rounded-xl p-3">
               <div className="flex items-center gap-1 mb-1">
                 <ArrowUp className="w-3.5 h-3.5 text-primary" />
@@ -1653,57 +1689,26 @@ export default function TradingChart() {
                 <div className={`h-full rounded-full ${ouSignal.direction === 'Over' ? 'bg-primary' : 'bg-[#D29922]'}`}
                   style={{ width: `${ouSignal.confidence}%` }} />
               </div>
-              <div className="text-[8px] text-right text-muted-foreground mt-0.5">{ouSignal.confidence}%</div>
             </div>
 
-            {/* Match */}
             <div className="bg-card border border-border rounded-xl p-3">
               <div className="flex items-center gap-1 mb-1">
                 <Target className="w-3.5 h-3.5 text-profit" />
                 <span className="text-[10px] font-semibold">Best Match</span>
               </div>
               <div className="font-mono text-sm font-bold text-profit">Digit {matchSignal.digit}</div>
-              <div className="text-[8px] text-muted-foreground mb-1">{percentages[mostCommon]?.toFixed(1)}% freq</div>
+              <div className="text-[8px] text-muted-foreground mb-1">{percentages[mostCommon]?.toFixed(1)}%</div>
               <div className="h-1.5 bg-muted rounded-full">
                 <div className="h-full bg-profit rounded-full" style={{ width: `${matchSignal.confidence}%` }} />
               </div>
-              <div className="text-[8px] text-right text-muted-foreground mt-0.5">{matchSignal.confidence}%</div>
             </div>
           </div>
 
-          {/* Last 26 Digits - Real-time */}
-          <div className="bg-card border border-border rounded-xl p-3">
-            <h3 className="text-xs font-semibold text-foreground mb-2">Last 26 Digits (Real-Time)</h3>
-            <div className="flex gap-1 flex-wrap justify-center">
-              {last26.map((d, i) => {
-                const isLast = i === last26.length - 1;
-                const isEven = d % 2 === 0;
-                return (
-                  <motion.div
-                    key={i}
-                    initial={isLast ? { scale: 0.8 } : {}}
-                    animate={isLast ? { scale: [1, 1.1, 1] } : {}}
-                    transition={isLast ? { duration: 1, repeat: Infinity } : {}}
-                    className={`w-7 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-xs border-2 transition-all ${
-                      isLast ? 'w-9 h-11 text-sm ring-2 ring-primary' : ''
-                    } ${isEven
-                      ? 'border-[#3FB950] text-[#3FB950] bg-[#3FB950]/10'
-                      : 'border-[#D29922] text-[#D29922] bg-[#D29922]/10'
-                    }`}
-                  >
-                    {d}
-                  </motion.div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* AUTO BOT PANEL - same as before (kept for brevity) */}
+          {/* AUTO BOT PANEL */}
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
-            {/* Bot panel content - same as original */}
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                <Zap className="w-3.5 h-3.5 text-primary" /> Ramzfx Speed Bot 
+                <Zap className="w-3.5 h-3.5 text-primary" /> Auto Bot
               </h3>
               <div className="flex items-center gap-2">
                 <Button
