@@ -14,7 +14,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   TrendingUp, TrendingDown, Activity, BarChart3, ArrowUp, ArrowDown,
   Target, ShieldAlert, Volume2, VolumeX, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, RefreshCw,
-  Plus, X, Settings
+  Plus, X, Settings, LineChart
 } from 'lucide-react';
 
 /* ── Markets ── */
@@ -99,9 +99,14 @@ interface TradeRecord {
   resultDigit?: number;
 }
 
+interface SupportResistance {
+  level: number;
+  strength: number;
+  type: 'support' | 'resistance';
+}
+
 // Global tick storage
 const globalTickHistory: { [symbol: string]: number[] } = {};
-let lastDigitUpdate: { [symbol: string]: number } = {};
 
 function getTickHistory(symbol: string): number[] {
   return globalTickHistory[symbol] || [];
@@ -111,7 +116,6 @@ function addTick(symbol: string, digit: number) {
   if (!globalTickHistory[symbol]) globalTickHistory[symbol] = [];
   globalTickHistory[symbol].push(digit);
   if (globalTickHistory[symbol].length > 1000) globalTickHistory[symbol].shift();
-  lastDigitUpdate[symbol] = Date.now();
 }
 
 function buildCandles(prices: number[], times: number[], tf: string): Candle[] {
@@ -142,92 +146,161 @@ function buildCandles(prices: number[], times: number[], tf: string): Candle[] {
   return candles;
 }
 
-function calcEMA(prices: number[], period: number): number {
-  if (prices.length < period) return prices[prices.length - 1] || 0;
+function calcEMA(prices: number[], period: number): number[] {
+  const emaValues: number[] = [];
+  if (prices.length === 0) return emaValues;
+  
   const k = 2 / (period + 1);
-  let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  for (let i = period; i < prices.length; i++) {
-    ema = prices[i] * k + ema * (1 - k);
+  let ema = prices[0];
+  
+  for (let i = 0; i < prices.length; i++) {
+    if (i === 0) {
+      ema = prices[i];
+    } else {
+      ema = prices[i] * k + ema * (1 - k);
+    }
+    emaValues.push(ema);
   }
-  return ema;
+  return emaValues;
 }
 
-function calcSMA(prices: number[], period: number): number {
-  if (prices.length < period) return prices[prices.length - 1] || 0;
-  return prices.slice(-period).reduce((a, b) => a + b, 0) / period;
+function calcSMA(prices: number[], period: number): number[] {
+  const smaValues: number[] = [];
+  for (let i = 0; i < prices.length; i++) {
+    if (i < period - 1) {
+      smaValues.push(prices[i]);
+    } else {
+      const sum = prices.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
+      smaValues.push(sum / period);
+    }
+  }
+  return smaValues;
 }
 
-function calcRSI(prices: number[], period: number = 14): number {
-  if (prices.length < period + 1) return 50;
+function calcRSI(prices: number[], period: number = 14): number[] {
+  const rsiValues: number[] = [];
+  if (prices.length < period + 1) {
+    for (let i = 0; i < prices.length; i++) rsiValues.push(50);
+    return rsiValues;
+  }
+  
   let gains = 0, losses = 0;
   for (let i = 1; i <= period; i++) {
     const diff = prices[i] - prices[i - 1];
     if (diff > 0) gains += diff;
     else losses -= diff;
   }
+  
   let avgGain = gains / period;
   let avgLoss = losses / period;
+  let rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  let rsi = 100 - (100 / (1 + rs));
+  rsiValues.push(50); // First value placeholder
+  for (let i = 0; i < period; i++) rsiValues.push(rsi);
+  
   for (let i = period + 1; i < prices.length; i++) {
     const diff = prices[i] - prices[i - 1];
     avgGain = (avgGain * (period - 1) + Math.max(0, diff)) / period;
     avgLoss = (avgLoss * (period - 1) + Math.max(0, -diff)) / period;
+    rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+    rsi = 100 - (100 / (1 + rs));
+    rsiValues.push(rsi);
   }
-  return avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  
+  return rsiValues;
 }
 
-function calcBollinger(prices: number[], period: number = 20, multiplier: number = 2) {
-  if (prices.length < period) {
-    return { upper: prices[prices.length - 1] || 0, middle: prices[prices.length - 1] || 0, lower: prices[prices.length - 1] || 0 };
+function calcBollingerBands(prices: number[], period: number = 20, multiplier: number = 2) {
+  const upper: number[] = [];
+  const middle: number[] = [];
+  const lower: number[] = [];
+  
+  for (let i = 0; i < prices.length; i++) {
+    if (i < period - 1) {
+      upper.push(prices[i]);
+      middle.push(prices[i]);
+      lower.push(prices[i]);
+    } else {
+      const slice = prices.slice(i - period + 1, i + 1);
+      const mean = slice.reduce((a, b) => a + b, 0) / period;
+      const variance = slice.reduce((s, p) => s + Math.pow(p - mean, 2), 0) / period;
+      const std = Math.sqrt(variance);
+      upper.push(mean + multiplier * std);
+      middle.push(mean);
+      lower.push(mean - multiplier * std);
+    }
   }
-  const slice = prices.slice(-period);
-  const middle = slice.reduce((a, b) => a + b, 0) / period;
-  const variance = slice.reduce((s, p) => s + Math.pow(p - middle, 2), 0) / period;
-  const std = Math.sqrt(variance);
-  return { upper: middle + multiplier * std, middle, lower: middle - multiplier * std };
+  
+  return { upper, middle, lower };
 }
 
 function calcMACD(prices: number[]) {
   const ema12 = calcEMA(prices, 12);
   const ema26 = calcEMA(prices, 26);
-  const macd = ema12 - ema26;
-  const signal = macd * 0.8;
-  return { macd, signal, histogram: macd - signal };
+  const macdLine: number[] = [];
+  const signalLine: number[] = [];
+  const histogram: number[] = [];
+  
+  for (let i = 0; i < prices.length; i++) {
+    const macd = ema12[i] - ema26[i];
+    macdLine.push(macd);
+    
+    if (i < 9) {
+      signalLine.push(macd);
+    } else {
+      const signal = macdLine.slice(i - 8, i + 1).reduce((a, b) => a + b, 0) / 9;
+      signalLine.push(signal);
+    }
+    histogram.push(macdLine[i] - signalLine[i]);
+  }
+  
+  return { macd: macdLine, signal: signalLine, histogram };
 }
 
-function calcPSAR(highs: number[], lows: number[]) {
-  if (highs.length < 2) return { sar: highs[highs.length - 1] || 0, trend: 'bullish' };
-  let sar = lows[0];
-  let trend = 1;
-  let ep = highs[0];
-  let af = 0.02;
-  const step = 0.02;
-  const maxStep = 0.2;
-
-  for (let i = 1; i < highs.length; i++) {
-    sar = sar + af * (ep - sar);
-    if (trend === 1) {
-      if (lows[i] < sar) {
-        trend = -1;
-        sar = ep;
-        ep = lows[i];
-        af = step;
-      } else if (highs[i] > ep) {
-        ep = highs[i];
-        af = Math.min(af + step, maxStep);
-      }
-    } else {
-      if (highs[i] > sar) {
-        trend = 1;
-        sar = ep;
-        ep = highs[i];
-        af = step;
-      } else if (lows[i] < ep) {
-        ep = lows[i];
-        af = Math.min(af + step, maxStep);
-      }
+function findSupportResistance(prices: number[], candles: Candle[]): SupportResistance[] {
+  const levels: SupportResistance[] = [];
+  const windowSize = 20;
+  
+  // Find pivot points
+  for (let i = windowSize; i < candles.length - windowSize; i++) {
+    let isHigh = true;
+    let isLow = true;
+    
+    for (let j = i - windowSize; j <= i + windowSize; j++) {
+      if (j === i) continue;
+      if (candles[j].high >= candles[i].high) isHigh = false;
+      if (candles[j].low <= candles[i].low) isLow = false;
+    }
+    
+    if (isHigh) {
+      levels.push({ level: candles[i].high, strength: 1, type: 'resistance' });
+    }
+    if (isLow) {
+      levels.push({ level: candles[i].low, strength: 1, type: 'support' });
     }
   }
-  return { sar, trend: trend === 1 ? 'bullish' : 'bearish' };
+  
+  // Merge nearby levels
+  const mergedLevels: SupportResistance[] = [];
+  const tolerance = (Math.max(...prices) - Math.min(...prices)) * 0.005;
+  
+  for (const level of levels) {
+    let merged = false;
+    for (const existing of mergedLevels) {
+      if (Math.abs(existing.level - level.level) < tolerance && existing.type === level.type) {
+        existing.strength++;
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) mergedLevels.push({ ...level });
+  }
+  
+  // Sort by strength and take top 3 for each type
+  const supports = mergedLevels.filter(l => l.type === 'support').sort((a, b) => b.strength - a.strength).slice(0, 3);
+  const resistances = mergedLevels.filter(l => l.type === 'resistance').sort((a, b) => b.strength - a.strength).slice(0, 3);
+  
+  return [...supports, ...resistances];
 }
 
 export default function TradingChart() {
@@ -242,7 +315,6 @@ export default function TradingChart() {
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('disconnected');
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animationRef = useRef<number>();
   const subscriptionRef = useRef<any>(null);
   
   // Candle management
@@ -255,10 +327,15 @@ export default function TradingChart() {
     percentages: {} as Record<number, number>,
     mostCommon: 0,
     leastCommon: 0,
+    totalTicks: 0,
   });
   
   // Indicators
-  const [indicators, setIndicators] = useState<Indicator[]>([]);
+  const [indicators, setIndicators] = useState<Indicator[]>([
+    { id: 'rsi-1', type: 'RSI', enabled: true },
+    { id: 'bb-1', type: 'BB', enabled: true },
+    { id: 'ma-1', type: 'MA', enabled: true },
+  ]);
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false);
   
   // Chart state
@@ -312,17 +389,67 @@ export default function TradingChart() {
   const currentPrice = prices[prices.length - 1] || 0;
   const lastDigit = getLastDigit(currentPrice);
   
-  // Update digit analysis when tick range changes
+  // Build candles
+  const candles = useMemo(() => buildCandles(prices, times, timeframe), [prices, times, timeframe]);
+  
+  // Calculate indicators
+  const ema50 = useMemo(() => calcEMA(prices, 50), [prices]);
+  const sma20 = useMemo(() => calcSMA(prices, 20), [prices]);
+  const rsiValues = useMemo(() => calcRSI(prices, 14), [prices]);
+  const bb = useMemo(() => calcBollingerBands(prices, 20, 2), [prices]);
+  const macd = useMemo(() => calcMACD(prices), [prices]);
+  const currentRSI = rsiValues[rsiValues.length - 1] || 50;
+  const currentBBUpper = bb.upper[bb.upper.length - 1] || currentPrice;
+  const currentBBMiddle = bb.middle[bb.middle.length - 1] || currentPrice;
+  const currentBBLower = bb.lower[bb.lower.length - 1] || currentPrice;
+  const currentEMA50 = ema50[ema50.length - 1] || currentPrice;
+  const currentSMA20 = sma20[sma20.length - 1] || currentPrice;
+  
+  // Find support and resistance levels
+  const supportResistanceLevels = useMemo(() => findSupportResistance(prices, candles), [prices, candles]);
+  const supports = supportResistanceLevels.filter(l => l.type === 'support');
+  const resistances = supportResistanceLevels.filter(l => l.type === 'resistance');
+  
+  // Update digit analysis
   useEffect(() => {
     const ticks = getTickHistory(symbol);
     const recentTicks = ticks.slice(-tickRange);
+    
     if (recentTicks.length > 0) {
-      const analysis = analyzeDigits(recentTicks);
+      const frequency: Record<number, number> = {};
+      for (let i = 0; i <= 9; i++) frequency[i] = 0;
+      
+      for (const digit of recentTicks) {
+        frequency[digit] = (frequency[digit] || 0) + 1;
+      }
+      
+      const percentages: Record<number, number> = {};
+      for (let i = 0; i <= 9; i++) {
+        percentages[i] = (frequency[i] / recentTicks.length) * 100;
+      }
+      
+      let mostCommon = 0;
+      let leastCommon = 0;
+      let maxFreq = 0;
+      let minFreq = Infinity;
+      
+      for (let i = 0; i <= 9; i++) {
+        if (frequency[i] > maxFreq) {
+          maxFreq = frequency[i];
+          mostCommon = i;
+        }
+        if (frequency[i] < minFreq) {
+          minFreq = frequency[i];
+          leastCommon = i;
+        }
+      }
+      
       setDigitStats({
-        frequency: analysis.frequency,
-        percentages: analysis.percentages,
-        mostCommon: analysis.mostCommon,
-        leastCommon: analysis.leastCommon,
+        frequency,
+        percentages,
+        mostCommon,
+        leastCommon,
+        totalTicks: recentTicks.length,
       });
     }
   }, [symbol, tickRange]);
@@ -330,7 +457,6 @@ export default function TradingChart() {
   // Load market data
   useEffect(() => {
     let mounted = true;
-    let reconnectTimeout: NodeJS.Timeout;
     
     const loadData = async () => {
       if (!derivApi.isConnected) {
@@ -343,13 +469,11 @@ export default function TradingChart() {
       setIsLoading(true);
       
       try {
-        // Unsubscribe from previous
         if (subscriptionRef.current) {
           await derivApi.unsubscribeTicks(symbol as MarketSymbol);
           subscriptionRef.current = null;
         }
         
-        // Load historical data
         const hist = await derivApi.getTickHistory(symbol as MarketSymbol, candleCount);
         if (!mounted) return;
         
@@ -361,7 +485,6 @@ export default function TradingChart() {
         setScrollOffset(0);
         setIsLoading(false);
         
-        // Subscribe to new ticks
         subscriptionRef.current = await derivApi.subscribeTicks(symbol as MarketSymbol, (data: any) => {
           if (!mounted || !data?.tick) return;
           
@@ -393,7 +516,6 @@ export default function TradingChart() {
     
     loadData();
     
-    // Reconnect check
     const interval = setInterval(() => {
       if (!derivApi.isConnected && mounted) {
         setConnectionStatus('disconnected');
@@ -404,7 +526,6 @@ export default function TradingChart() {
     return () => {
       mounted = false;
       clearInterval(interval);
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (subscriptionRef.current) {
         derivApi.unsubscribeTicks(symbol as MarketSymbol).catch(console.error);
       }
@@ -413,7 +534,7 @@ export default function TradingChart() {
   
   // Chart rendering
   useEffect(() => {
-    if (!showChart || !canvasRef.current || prices.length === 0) return;
+    if (!showChart || !canvasRef.current || candles.length === 0) return;
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -440,11 +561,8 @@ export default function TradingChart() {
       ctx.fillStyle = '#0D1117';
       ctx.fillRect(0, 0, width, height);
       
-      // Build candles
-      const candles = buildCandles(prices, times, timeframe);
-      if (candles.length === 0) return;
-      
-      const priceAxisWidth = 70;
+      // Calculate visible candles
+      const priceAxisWidth = 80;
       const chartWidth = width - priceAxisWidth;
       const gap = 1;
       const totalCandleWidth = candleWidth + gap;
@@ -452,21 +570,35 @@ export default function TradingChart() {
       const endIdx = candles.length - scrollOffset;
       const startIdx = Math.max(0, endIdx - maxVisible);
       const visibleCandles = candles.slice(startIdx, endIdx);
+      const visibleStartIndex = startIdx;
       
       if (visibleCandles.length === 0) return;
       
       // Calculate price range
       const allPrices = visibleCandles.flatMap(c => [c.high, c.low]);
+      
+      // Add indicator values to price range
+      if (indicators.some(i => i.enabled && i.type === 'BB')) {
+        const bbSliceUpper = bb.upper.slice(startIdx, endIdx);
+        const bbSliceLower = bb.lower.slice(startIdx, endIdx);
+        allPrices.push(...bbSliceUpper, ...bbSliceLower);
+      }
+      if (indicators.some(i => i.enabled && i.type === 'MA')) {
+        const emaSlice = ema50.slice(startIdx, endIdx);
+        const smaSlice = sma20.slice(startIdx, endIdx);
+        allPrices.push(...emaSlice, ...smaSlice);
+      }
+      
       const minPrice = Math.min(...allPrices);
       const maxPrice = Math.max(...allPrices);
       const priceRange = maxPrice - minPrice;
-      const padding = priceRange * 0.1 || 0.001;
+      const padding = priceRange * 0.08 || 0.001;
       const yMin = minPrice - padding;
       const yMax = maxPrice + padding;
       const yRange = yMax - yMin;
       
-      const chartTop = 20;
-      const chartBottom = height - 60;
+      const chartTop = 40;
+      const chartBottom = height - 80;
       const chartHeight = chartBottom - chartTop;
       
       const toY = (price: number) => chartTop + ((yMax - price) / yRange) * chartHeight;
@@ -488,6 +620,158 @@ export default function TradingChart() {
       }
       
       const offsetX = 10;
+      
+      // Draw Bollinger Bands if enabled
+      if (indicators.some(i => i.enabled && i.type === 'BB')) {
+        ctx.beginPath();
+        ctx.strokeStyle = '#BC8CFF';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 5]);
+        
+        // Upper band
+        let started = false;
+        for (let i = 0; i < visibleCandles.length; i++) {
+          const idx = visibleStartIndex + i;
+          const value = bb.upper[idx];
+          if (value !== undefined && !isNaN(value)) {
+            const x = offsetX + i * totalCandleWidth + candleWidth / 2;
+            const y = toY(value);
+            if (!started) {
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              started = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
+          }
+        }
+        ctx.stroke();
+        
+        // Lower band
+        started = false;
+        for (let i = 0; i < visibleCandles.length; i++) {
+          const idx = visibleStartIndex + i;
+          const value = bb.lower[idx];
+          if (value !== undefined && !isNaN(value)) {
+            const x = offsetX + i * totalCandleWidth + candleWidth / 2;
+            const y = toY(value);
+            if (!started) {
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              started = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
+          }
+        }
+        ctx.stroke();
+        
+        // Middle band
+        started = false;
+        ctx.setLineDash([]);
+        for (let i = 0; i < visibleCandles.length; i++) {
+          const idx = visibleStartIndex + i;
+          const value = bb.middle[idx];
+          if (value !== undefined && !isNaN(value)) {
+            const x = offsetX + i * totalCandleWidth + candleWidth / 2;
+            const y = toY(value);
+            if (!started) {
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              started = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
+          }
+        }
+        ctx.stroke();
+      }
+      
+      // Draw Moving Averages if enabled
+      if (indicators.some(i => i.enabled && i.type === 'MA')) {
+        // EMA 50
+        ctx.beginPath();
+        ctx.strokeStyle = '#2F81F7';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([]);
+        let started = false;
+        for (let i = 0; i < visibleCandles.length; i++) {
+          const idx = visibleStartIndex + i;
+          const value = ema50[idx];
+          if (value !== undefined && !isNaN(value)) {
+            const x = offsetX + i * totalCandleWidth + candleWidth / 2;
+            const y = toY(value);
+            if (!started) {
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              started = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
+          }
+        }
+        ctx.stroke();
+        
+        // SMA 20
+        ctx.beginPath();
+        ctx.strokeStyle = '#E6B422';
+        ctx.lineWidth = 1.5;
+        started = false;
+        for (let i = 0; i < visibleCandles.length; i++) {
+          const idx = visibleStartIndex + i;
+          const value = sma20[idx];
+          if (value !== undefined && !isNaN(value)) {
+            const x = offsetX + i * totalCandleWidth + candleWidth / 2;
+            const y = toY(value);
+            if (!started) {
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              started = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
+          }
+        }
+        ctx.stroke();
+      }
+      
+      // Draw Support and Resistance levels (top 3 each)
+      ctx.setLineDash([8, 4]);
+      ctx.lineWidth = 1.5;
+      
+      supports.forEach((support, idx) => {
+        const y = toY(support.level);
+        const opacity = 0.5 + (support.strength / 20) * 0.5;
+        ctx.strokeStyle = `rgba(63, 185, 80, ${opacity})`;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(chartWidth, y);
+        ctx.stroke();
+        
+        ctx.fillStyle = `rgba(63, 185, 80, ${opacity})`;
+        ctx.fillRect(chartWidth, y - 6, priceAxisWidth, 12);
+        ctx.fillStyle = '#0D1117';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(`S${idx + 1} ${support.level.toFixed(4)}`, chartWidth + 5, y + 3);
+      });
+      
+      resistances.forEach((resistance, idx) => {
+        const y = toY(resistance.level);
+        const opacity = 0.5 + (resistance.strength / 20) * 0.5;
+        ctx.strokeStyle = `rgba(248, 81, 73, ${opacity})`;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(chartWidth, y);
+        ctx.stroke();
+        
+        ctx.fillStyle = `rgba(248, 81, 73, ${opacity})`;
+        ctx.fillRect(chartWidth, y - 6, priceAxisWidth, 12);
+        ctx.fillStyle = '#0D1117';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(`R${idx + 1} ${resistance.level.toFixed(4)}`, chartWidth + 5, y + 3);
+      });
+      
+      ctx.setLineDash([]);
       
       // Draw candles
       for (let i = 0; i < visibleCandles.length; i++) {
@@ -527,34 +811,92 @@ export default function TradingChart() {
       ctx.font = 'bold 10px monospace';
       ctx.fillText(currentPrice.toFixed(4), chartWidth + 5, currentY + 4);
       
-      // Draw indicator legends
-      ctx.font = '10px monospace';
-      let legendX = 10;
-      const legends = [
-        { label: 'Support', color: '#3FB950' },
-        { label: 'Resistance', color: '#F85149' },
-      ];
-      
-      indicators.forEach(ind => {
-        if (ind.enabled) {
-          switch (ind.type) {
-            case 'BB': legends.push({ label: 'BB', color: '#BC8CFF' }); break;
-            case 'MA': legends.push({ label: 'MA', color: '#E6B422' }); break;
-            case 'PSAR': legends.push({ label: 'PSAR', color: '#FF6B6B' }); break;
+      // Draw RSI panel if enabled
+      if (indicators.some(i => i.enabled && i.type === 'RSI')) {
+        const rsiHeight = 80;
+        const rsiTop = chartBottom + 10;
+        
+        ctx.fillStyle = '#161B22';
+        ctx.fillRect(0, rsiTop, width, rsiHeight);
+        ctx.strokeStyle = '#21262D';
+        ctx.beginPath();
+        ctx.moveTo(0, rsiTop);
+        ctx.lineTo(width, rsiTop);
+        ctx.stroke();
+        
+        const rsiToY = (value: number) => rsiTop + 5 + ((100 - value) / 100) * (rsiHeight - 10);
+        
+        // Draw RSI levels
+        ctx.setLineDash([3, 3]);
+        [30, 50, 70].forEach(level => {
+          const y = rsiToY(level);
+          ctx.strokeStyle = level === 50 ? '#484F58' : level === 70 ? '#F8514950' : '#3FB95050';
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(chartWidth, y);
+          ctx.stroke();
+          ctx.fillStyle = '#484F58';
+          ctx.fillText(String(level), chartWidth + 5, y + 3);
+        });
+        ctx.setLineDash([]);
+        
+        // Draw RSI line
+        ctx.beginPath();
+        ctx.strokeStyle = '#D29922';
+        ctx.lineWidth = 1.5;
+        let rsiStarted = false;
+        for (let i = 0; i < visibleCandles.length; i++) {
+          const idx = visibleStartIndex + i;
+          const value = rsiValues[idx];
+          if (value !== undefined && !isNaN(value)) {
+            const x = offsetX + i * totalCandleWidth + candleWidth / 2;
+            const y = rsiToY(value);
+            if (!rsiStarted) {
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              rsiStarted = true;
+            } else {
+              ctx.lineTo(x, y);
+            }
           }
         }
-      });
+        ctx.stroke();
+        
+        // Current RSI value
+        const currentRsiY = rsiToY(currentRSI);
+        ctx.fillStyle = '#D29922';
+        ctx.fillRect(chartWidth, currentRsiY - 6, priceAxisWidth, 12);
+        ctx.fillStyle = '#0D1117';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(`RSI ${currentRSI.toFixed(1)}`, chartWidth + 5, currentRsiY + 3);
+        
+        ctx.fillStyle = '#8B949E';
+        ctx.font = '9px monospace';
+        ctx.fillText('RSI(14)', 5, rsiTop + 12);
+      }
+      
+      // Draw legend
+      ctx.font = '9px monospace';
+      let legendX = 10;
+      const legends = [];
+      
+      if (indicators.some(i => i.enabled && i.type === 'BB')) legends.push({ label: 'BB(20,2)', color: '#BC8CFF' });
+      if (indicators.some(i => i.enabled && i.type === 'MA')) {
+        legends.push({ label: 'EMA 50', color: '#2F81F7' });
+        legends.push({ label: 'SMA 20', color: '#E6B422' });
+      }
+      legends.push({ label: 'Support', color: '#3FB950' });
+      legends.push({ label: 'Resistance', color: '#F85149' });
       
       legends.forEach(legend => {
         ctx.fillStyle = legend.color;
-        ctx.fillRect(legendX, 5, 10, 3);
+        ctx.fillRect(legendX, 8, 10, 3);
         ctx.fillStyle = '#8B949E';
-        ctx.fillText(legend.label, legendX + 12, 10);
+        ctx.fillText(legend.label, legendX + 12, 12);
         legendX += ctx.measureText(legend.label).width + 30;
       });
       
       ctx.fillStyle = '#484F58';
-      ctx.font = '9px monospace';
       ctx.fillText(`${visibleCandles.length} candles | Wheel: scroll | Ctrl+Wheel: zoom`, 10, height - 15);
     };
     
@@ -566,14 +908,12 @@ export default function TradingChart() {
     return () => {
       window.removeEventListener('resize', handleResize);
     };
-  }, [prices, times, timeframe, candleWidth, scrollOffset, showChart, currentPrice, indicators, symbol]);
+  }, [candles, prices, timeframe, candleWidth, scrollOffset, showChart, currentPrice, indicators, ema50, sma20, bb, rsiValues, currentRSI, supports, resistances]);
   
-  // Mouse handlers for chart interaction
+  // Mouse handlers
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !showChart) return;
-    
-    const candles = buildCandles(prices, times, timeframe);
     
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -615,32 +955,14 @@ export default function TradingChart() {
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, [prices, times, timeframe, scrollOffset, candleWidth, showChart]);
+  }, [candles.length, scrollOffset, candleWidth, showChart]);
   
-  // Calculate indicators
-  const rsi = useMemo(() => calculateRSI(prices, 14), [prices]);
-  const bb = useMemo(() => calculateBollingerBands(prices, 20), [prices]);
-  const ema50 = useMemo(() => calcEMA(prices, 50), [prices]);
-  const sma20 = useMemo(() => calcSMA(prices, 20), [prices]);
-  const macd = useMemo(() => calcMACD(prices), [prices]);
-  const psar = useMemo(() => {
-    const candles = buildCandles(prices, times, timeframe);
-    const highs = candles.map(c => c.high);
-    const lows = candles.map(c => c.low);
-    return calcPSAR(highs, lows);
-  }, [prices, times, timeframe]);
+  // Calculate signals
+  const riseSignal = useMemo(() => {
+    const conf = currentRSI < 30 ? 85 : currentRSI > 70 ? 25 : 50 + (50 - currentRSI);
+    return { direction: currentRSI < 45 ? 'Rise' : 'Fall', confidence: Math.min(95, Math.max(10, Math.round(conf))) };
+  }, [currentRSI]);
   
-  // Support/Resistance
-  const { support, resistance } = useMemo(() => {
-    if (prices.length < 10) return { support: 0, resistance: 0 };
-    const sorted = [...prices].sort((a, b) => a - b);
-    return {
-      support: sorted[Math.floor(sorted.length * 0.05)],
-      resistance: sorted[Math.floor(sorted.length * 0.95)],
-    };
-  }, [prices]);
-  
-  // Digit stats
   const ticks = useMemo(() => getTickHistory(symbol).slice(-tickRange), [symbol, tickRange]);
   const evenCount = ticks.filter(d => d % 2 === 0).length;
   const oddCount = ticks.length - evenCount;
@@ -650,12 +972,6 @@ export default function TradingChart() {
   const underCount = ticks.length - overCount;
   const overPct = ticks.length > 0 ? (overCount / ticks.length * 100) : 50;
   const underPct = 100 - overPct;
-  
-  // Signals
-  const riseSignal = useMemo(() => {
-    const conf = rsi < 30 ? 85 : rsi > 70 ? 25 : 50 + (50 - rsi);
-    return { direction: rsi < 45 ? 'Rise' : 'Fall', confidence: Math.min(95, Math.max(10, Math.round(conf))) };
-  }, [rsi]);
   
   const eoSignal = useMemo(() => {
     const conf = Math.abs(evenPct - 50) * 2 + 50;
@@ -671,93 +987,6 @@ export default function TradingChart() {
     const bestPct = Math.max(...Object.values(digitStats.percentages));
     return { digit: digitStats.mostCommon, confidence: Math.min(90, Math.round(bestPct * 3)) };
   }, [digitStats]);
-  
-  // Get indicator signals
-  const getIndicatorSignals = useCallback(() => {
-    const signals: { indicator: string; signal: 'OVER' | 'UNDER' | 'NEUTRAL'; confidence: number }[] = [];
-    
-    indicators.forEach(indicator => {
-      if (!indicator.enabled) return;
-      
-      switch (indicator.type) {
-        case 'RSI':
-          if (rsi > 70) signals.push({ indicator: 'RSI', signal: 'UNDER', confidence: 80 });
-          else if (rsi < 30) signals.push({ indicator: 'RSI', signal: 'OVER', confidence: 80 });
-          break;
-        case 'BB':
-          if (currentPrice > bb.upper) signals.push({ indicator: 'BB', signal: 'UNDER', confidence: 75 });
-          else if (currentPrice < bb.lower) signals.push({ indicator: 'BB', signal: 'OVER', confidence: 75 });
-          break;
-        case 'MA':
-          if (currentPrice > ema50 && currentPrice > sma20) signals.push({ indicator: 'MA', signal: 'OVER', confidence: 70 });
-          else if (currentPrice < ema50 && currentPrice < sma20) signals.push({ indicator: 'MA', signal: 'UNDER', confidence: 70 });
-          break;
-        case 'MACD':
-          if (macd.macd > macd.signal) signals.push({ indicator: 'MACD', signal: 'OVER', confidence: 65 });
-          else if (macd.macd < macd.signal) signals.push({ indicator: 'MACD', signal: 'UNDER', confidence: 65 });
-          break;
-        case 'PSAR':
-          if (psar.trend === 'bullish') signals.push({ indicator: 'PSAR', signal: 'OVER', confidence: 60 });
-          else signals.push({ indicator: 'PSAR', signal: 'UNDER', confidence: 60 });
-          break;
-      }
-    });
-    
-    return signals;
-  }, [indicators, rsi, currentPrice, bb, ema50, sma20, macd, psar]);
-  
-  const aggregatedSignal = useMemo(() => {
-    const signals = getIndicatorSignals();
-    if (signals.length === 0) return { direction: 'NEUTRAL' as const, confidence: 50 };
-    
-    const overCount = signals.filter(s => s.signal === 'OVER').length;
-    const underCount = signals.filter(s => s.signal === 'UNDER').length;
-    
-    if (overCount > underCount) return { direction: 'OVER' as const, confidence: (overCount / signals.length) * 100 };
-    if (underCount > overCount) return { direction: 'UNDER' as const, confidence: (underCount / signals.length) * 100 };
-    return { direction: 'NEUTRAL' as const, confidence: 50 };
-  }, [getIndicatorSignals]);
-  
-  // Strategy helpers
-  const cleanPattern = patternInput.toUpperCase().replace(/[^EO]/g, '');
-  const patternValid = cleanPattern.length >= 2;
-  
-  const checkPatternMatch = useCallback((): boolean => {
-    const ticks = getTickHistory(botConfig.botSymbol);
-    if (ticks.length < cleanPattern.length) return false;
-    const recent = ticks.slice(-cleanPattern.length);
-    for (let i = 0; i < cleanPattern.length; i++) {
-      const expected = cleanPattern[i];
-      const actual = recent[i] % 2 === 0 ? 'E' : 'O';
-      if (expected !== actual) return false;
-    }
-    return true;
-  }, [botConfig.botSymbol, cleanPattern]);
-  
-  const checkDigitCondition = useCallback((): boolean => {
-    const ticks = getTickHistory(botConfig.botSymbol);
-    const win = parseInt(digitWindow) || 3;
-    const comp = parseInt(digitCompare);
-    if (ticks.length < win) return false;
-    const recent = ticks.slice(-win);
-    return recent.every(d => {
-      switch (digitCondition) {
-        case '>': return d > comp;
-        case '<': return d < comp;
-        case '>=': return d >= comp;
-        case '<=': return d <= comp;
-        case '==': return d === comp;
-        case '!=': return d !== comp;
-        default: return false;
-      }
-    });
-  }, [botConfig.botSymbol, digitCondition, digitCompare, digitWindow]);
-  
-  const checkStrategyCondition = useCallback((): boolean => {
-    if (!strategyEnabled) return true;
-    if (strategyMode === 'pattern') return checkPatternMatch();
-    return checkDigitCondition();
-  }, [strategyEnabled, strategyMode, checkPatternMatch, checkDigitCondition]);
   
   // Voice
   const speak = useCallback((text: string) => {
@@ -827,6 +1056,47 @@ export default function TradingChart() {
       setIsTrading(false);
     }
   };
+  
+  // Strategy helpers
+  const cleanPattern = patternInput.toUpperCase().replace(/[^EO]/g, '');
+  const patternValid = cleanPattern.length >= 2;
+  
+  const checkPatternMatch = useCallback((): boolean => {
+    const ticks = getTickHistory(botConfig.botSymbol);
+    if (ticks.length < cleanPattern.length) return false;
+    const recent = ticks.slice(-cleanPattern.length);
+    for (let i = 0; i < cleanPattern.length; i++) {
+      const expected = cleanPattern[i];
+      const actual = recent[i] % 2 === 0 ? 'E' : 'O';
+      if (expected !== actual) return false;
+    }
+    return true;
+  }, [botConfig.botSymbol, cleanPattern]);
+  
+  const checkDigitCondition = useCallback((): boolean => {
+    const ticks = getTickHistory(botConfig.botSymbol);
+    const win = parseInt(digitWindow) || 3;
+    const comp = parseInt(digitCompare);
+    if (ticks.length < win) return false;
+    const recent = ticks.slice(-win);
+    return recent.every(d => {
+      switch (digitCondition) {
+        case '>': return d > comp;
+        case '<': return d < comp;
+        case '>=': return d >= comp;
+        case '<=': return d <= comp;
+        case '==': return d === comp;
+        case '!=': return d !== comp;
+        default: return false;
+      }
+    });
+  }, [botConfig.botSymbol, digitCondition, digitCompare, digitWindow]);
+  
+  const checkStrategyCondition = useCallback((): boolean => {
+    if (!strategyEnabled) return true;
+    if (strategyMode === 'pattern') return checkPatternMatch();
+    return checkDigitCondition();
+  }, [strategyEnabled, strategyMode, checkPatternMatch, checkDigitCondition]);
   
   // Auto Bot
   const startBot = useCallback(async () => {
@@ -998,7 +1268,7 @@ export default function TradingChart() {
             <BarChart3 className="w-5 h-5 text-primary" /> Trading Chart
           </h1>
           <p className="text-xs text-muted-foreground">
-            {marketName} • {timeframe} • {prices.length} ticks
+            {marketName} • {timeframe} • {candles.length} candles
             {connectionStatus !== 'connected' && (
               <Badge variant="destructive" className="ml-2">Disconnected</Badge>
             )}
@@ -1107,7 +1377,7 @@ export default function TradingChart() {
                   <canvas
                     ref={canvasRef}
                     className="w-full"
-                    style={{ height: 500, cursor: 'crosshair' }}
+                    style={{ height: 550, cursor: 'crosshair' }}
                   />
                 </div>
               </motion.div>
@@ -1119,11 +1389,11 @@ export default function TradingChart() {
             {[
               { label: 'Price', value: currentPrice.toFixed(4), color: 'text-foreground' },
               { label: 'Last Digit', value: String(lastDigit), color: 'text-primary' },
-              { label: 'Support', value: support.toFixed(2), color: 'text-[#3FB950]' },
-              { label: 'Resistance', value: resistance.toFixed(2), color: 'text-[#F85149]' },
-              { label: 'BB Upper', value: bb.upper.toFixed(2), color: 'text-[#BC8CFF]' },
-              { label: 'BB Middle', value: bb.middle.toFixed(2), color: 'text-[#BC8CFF]' },
-              { label: 'BB Lower', value: bb.lower.toFixed(2), color: 'text-[#BC8CFF]' },
+              { label: `S1 ${supports[0]?.level.toFixed(2) || 'N/A'}`, value: supports[0]?.level.toFixed(2) || '-', color: 'text-[#3FB950]' },
+              { label: `R1 ${resistances[0]?.level.toFixed(2) || 'N/A'}`, value: resistances[0]?.level.toFixed(2) || '-', color: 'text-[#F85149]' },
+              { label: 'BB Upper', value: currentBBUpper.toFixed(2), color: 'text-[#BC8CFF]' },
+              { label: 'BB Middle', value: currentBBMiddle.toFixed(2), color: 'text-[#BC8CFF]' },
+              { label: 'BB Lower', value: currentBBLower.toFixed(2), color: 'text-[#BC8CFF]' },
             ].map(item => (
               <div key={item.label} className="bg-card border rounded-lg p-2 text-center">
                 <div className="text-[9px] text-muted-foreground">{item.label}</div>
@@ -1136,7 +1406,7 @@ export default function TradingChart() {
           <div className="bg-card border rounded-xl p-3 space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold flex items-center gap-1">
-                <Settings className="w-3.5 h-3.5 text-primary" /> Indicators
+                <LineChart className="w-3.5 h-3.5 text-primary" /> Indicators
               </h3>
               <Button
                 size="sm"
@@ -1191,18 +1461,39 @@ export default function TradingChart() {
               </div>
             )}
             
-            {aggregatedSignal.direction !== 'NEUTRAL' && indicators.length > 0 && (
-              <div className={`p-2 rounded-lg text-center ${aggregatedSignal.direction === 'OVER' ? 'bg-profit/20 text-profit' : 'bg-loss/20 text-loss'}`}>
-                <div className="text-[9px] font-semibold">Aggregated Signal: {aggregatedSignal.direction}</div>
-                <div className="text-[8px] text-muted-foreground">Confidence: {aggregatedSignal.confidence.toFixed(0)}%</div>
+            {/* Current Indicator Values */}
+            <div className="grid grid-cols-2 gap-2 text-[10px]">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">RSI:</span>
+                <span className={`font-mono font-bold ${currentRSI > 70 ? 'text-loss' : currentRSI < 30 ? 'text-profit' : 'text-foreground'}`}>
+                  {currentRSI.toFixed(1)}
+                </span>
               </div>
-            )}
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">EMA 50:</span>
+                <span className={`font-mono font-bold ${currentPrice > currentEMA50 ? 'text-profit' : 'text-loss'}`}>
+                  {currentEMA50.toFixed(4)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">SMA 20:</span>
+                <span className={`font-mono font-bold ${currentPrice > currentSMA20 ? 'text-profit' : 'text-loss'}`}>
+                  {currentSMA20.toFixed(4)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">BB Width:</span>
+                <span className="font-mono font-bold text-[#BC8CFF]">
+                  {((currentBBUpper - currentBBLower) / currentBBMiddle * 100).toFixed(1)}%
+                </span>
+              </div>
+            </div>
           </div>
           
-          {/* Digit Analysis */}
+          {/* Digit Analysis - Fixed Percentages */}
           <div className="bg-card border rounded-xl p-3 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold">Digit Analysis</h3>
+              <h3 className="text-xs font-semibold">Digit Analysis (0-9)</h3>
               <div className="flex items-center gap-2">
                 <label className="text-[9px] text-muted-foreground">Tick Range:</label>
                 <Select value={String(tickRange)} onValueChange={v => setTickRange(parseInt(v))}>
@@ -1215,19 +1506,22 @@ export default function TradingChart() {
                     ))}
                   </SelectContent>
                 </Select>
+                <Badge variant="outline" className="text-[9px]">
+                  Total: {digitStats.totalTicks}
+                </Badge>
               </div>
             </div>
             
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
-                <div className="text-[9px] text-[#D29922]">Odd</div>
+                <div className="text-[9px] text-[#D29922]">Odd Digits (1,3,5,7,9)</div>
                 <div className="font-mono text-sm font-bold text-[#D29922]">{oddPct.toFixed(1)}%</div>
                 <div className="h-1.5 bg-muted rounded-full mt-1">
                   <div className="h-full bg-[#D29922] rounded-full" style={{ width: `${oddPct}%` }} />
                 </div>
               </div>
               <div className="bg-[#3FB950]/10 border border-[#3FB950]/30 rounded-lg p-2">
-                <div className="text-[9px] text-[#3FB950]">Even</div>
+                <div className="text-[9px] text-[#3FB950]">Even Digits (0,2,4,6,8)</div>
                 <div className="font-mono text-sm font-bold text-[#3FB950]">{evenPct.toFixed(1)}%</div>
                 <div className="h-1.5 bg-muted rounded-full mt-1">
                   <div className="h-full bg-[#3FB950] rounded-full" style={{ width: `${evenPct}%` }} />
@@ -1253,30 +1547,27 @@ export default function TradingChart() {
               {Array.from({ length: 10 }, (_, d) => {
                 const pct = digitStats.percentages[d] || 0;
                 const count = digitStats.frequency[d] || 0;
-                const isHot = pct > 12;
-                const isWarm = pct > 9;
-                const isBestMatch = d === digitStats.mostCommon;
-                const isBestDiffer = d === digitStats.leastCommon;
+                const isHighest = d === digitStats.mostCommon;
+                const isLowest = d === digitStats.leastCommon;
                 return (
                   <button
                     key={d}
                     onClick={() => { setSelectedDigit(d); setPrediction(String(d)); }}
                     className={`relative rounded-lg p-2 text-center transition-all border cursor-pointer hover:ring-2 hover:ring-primary ${
                       selectedDigit === d ? 'ring-2 ring-primary' : ''
-                    } ${isHot ? 'bg-loss/10 border-loss/40 text-loss' :
-                      isWarm ? 'bg-warning/10 border-warning/40 text-warning' :
-                      'bg-card border-border text-primary'}`}
+                    } ${isHighest ? 'bg-profit/20 border-profit' : isLowest ? 'bg-loss/20 border-loss' : 'bg-card border-border'}`}
                   >
                     <div className="font-mono text-lg font-bold">{d}</div>
-                    <div className="text-[8px]">{count} ({pct.toFixed(1)}%)</div>
+                    <div className="text-[10px] font-mono">{count}</div>
+                    <div className="text-[9px] font-bold text-primary">{pct.toFixed(1)}%</div>
                     <div className="h-1 bg-muted rounded-full mt-1">
-                      <div className={`h-full rounded-full ${isHot ? 'bg-loss' : isWarm ? 'bg-warning' : 'bg-primary'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
+                      <div className="h-full bg-primary rounded-full" style={{ width: `${Math.min(100, pct * 2)}%` }} />
                     </div>
-                    {isBestMatch && (
-                      <Badge className="absolute -top-1 -right-1 text-[7px] px-1 bg-profit text-profit-foreground">Match</Badge>
+                    {isHighest && (
+                      <Badge className="absolute -top-1 -right-1 text-[7px] px-1 bg-profit text-profit-foreground">HOT</Badge>
                     )}
-                    {isBestDiffer && (
-                      <Badge className="absolute -top-1 -left-1 text-[7px] px-1 bg-loss text-loss-foreground">Diff</Badge>
+                    {isLowest && (
+                      <Badge className="absolute -top-1 -left-1 text-[7px] px-1 bg-loss text-loss-foreground">COLD</Badge>
                     )}
                   </button>
                 );
@@ -1289,12 +1580,12 @@ export default function TradingChart() {
             <div className="bg-card border border-profit/30 rounded-lg p-2">
               <div className="text-[9px] text-muted-foreground">Best Match</div>
               <div className="font-mono text-lg font-bold text-profit">{digitStats.mostCommon}</div>
-              <div className="text-[8px] text-muted-foreground">{digitStats.percentages[digitStats.mostCommon]?.toFixed(1)}%</div>
+              <div className="text-[8px] text-muted-foreground">{digitStats.percentages[digitStats.mostCommon]?.toFixed(1)}% frequency</div>
             </div>
             <div className="bg-card border border-loss/30 rounded-lg p-2">
               <div className="text-[9px] text-muted-foreground">Best Differ</div>
               <div className="font-mono text-lg font-bold text-loss">{digitStats.leastCommon}</div>
-              <div className="text-[8px] text-muted-foreground">{digitStats.percentages[digitStats.leastCommon]?.toFixed(1)}%</div>
+              <div className="text-[8px] text-muted-foreground">{digitStats.percentages[digitStats.leastCommon]?.toFixed(1)}% frequency</div>
             </div>
             <div className="bg-card border border-[#D29922]/30 rounded-lg p-2">
               <div className="text-[9px] text-muted-foreground">Even/Odd</div>
@@ -1343,7 +1634,7 @@ export default function TradingChart() {
               <div className={`font-mono text-sm font-bold ${riseSignal.direction === 'Rise' ? 'text-profit' : 'text-loss'}`}>
                 {riseSignal.direction}
               </div>
-              <div className="text-[8px] text-muted-foreground mb-1">RSI: {rsi.toFixed(1)}</div>
+              <div className="text-[8px] text-muted-foreground mb-1">RSI: {currentRSI.toFixed(1)}</div>
               <div className="h-1.5 bg-muted rounded-full">
                 <div className={`h-full rounded-full ${riseSignal.direction === 'Rise' ? 'bg-profit' : 'bg-loss'}`}
                   style={{ width: `${riseSignal.confidence}%` }} />
@@ -1710,43 +2001,6 @@ export default function TradingChart() {
                 ))}
               </div>
             )}
-          </div>
-          
-          {/* Technical Status */}
-          <div className="bg-card border rounded-xl p-3 space-y-2">
-            <h3 className="text-xs font-semibold flex items-center gap-1">
-              <ShieldAlert className="w-3.5 h-3.5 text-primary" /> Technical Status
-            </h3>
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-[10px]">
-                <span className="text-muted-foreground">RSI (14)</span>
-                <span className={`font-mono font-bold ${rsi > 70 ? 'text-loss' : rsi < 30 ? 'text-profit' : 'text-foreground'}`}>
-                  {rsi.toFixed(1)} {rsi > 70 ? '🔴 Overbought' : rsi < 30 ? '🟢 Oversold' : '⚪ Neutral'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-[10px]">
-                <span className="text-muted-foreground">MACD</span>
-                <span className={`font-mono font-bold ${macd.macd > 0 ? 'text-profit' : 'text-loss'}`}>
-                  {macd.macd.toFixed(4)} {macd.macd > 0 ? '📈 Bullish' : '📉 Bearish'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-[10px]">
-                <span className="text-muted-foreground">EMA 50</span>
-                <span className={`font-mono font-bold ${currentPrice > ema50 ? 'text-profit' : 'text-loss'}`}>
-                  {currentPrice > ema50 ? '📈 Above' : '📉 Below'} ({ema50.toFixed(2)})
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-[10px]">
-                <span className="text-muted-foreground">BB Position</span>
-                <span className="font-mono font-bold text-[#BC8CFF]">
-                  {((currentPrice - bb.lower) / (bb.upper - bb.lower) * 100).toFixed(1)}%
-                </span>
-              </div>
-              <div className="h-1.5 bg-muted rounded-full">
-                <div className="h-full bg-[#BC8CFF] rounded-full"
-                  style={{ width: `${Math.min(100, Math.max(0, (currentPrice - bb.lower) / (bb.upper - bb.lower) * 100))}%` }} />
-              </div>
-            </div>
           </div>
         </div>
       </div>
