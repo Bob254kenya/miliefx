@@ -76,18 +76,7 @@ const getRequiredTicksForTimeframe = (timeframe: string): number => {
   return Math.ceil(TARGET_CANDLES * interval * 1.5);
 };
 
-const CONTRACT_TYPES = [
-  { value: 'CALL', label: 'Rise' },
-  { value: 'PUT', label: 'Fall' },
-  { value: 'DIGITMATCH', label: 'Digits Match' },
-  { value: 'DIGITDIFF', label: 'Digits Differs' },
-  { value: 'DIGITEVEN', label: 'Digits Even' },
-  { value: 'DIGITODD', label: 'Digits Odd' },
-  { value: 'DIGITOVER', label: 'Digits Over' },
-  { value: 'DIGITUNDER', label: 'Digits Under' },
-];
-
-// MillieFX Speed Bot contract types (Over/Under, Even/Odd, Matches/Differs)
+// MillieFX Speed Bot contract types (Only digit-based contracts)
 const MILLIEFX_CONTRACT_TYPES = [
   { value: 'DIGITEVEN', label: 'Even' },
   { value: 'DIGITODD', label: 'Odd' },
@@ -157,6 +146,9 @@ interface MillieFXBotConfig {
   takeProfit: string;
   maxTrades: string;
 }
+
+// Strategy Types
+type StrategyMode = 'pattern' | 'digit';
 
 /* ============================================
    HELPER FUNCTIONS
@@ -306,7 +298,7 @@ function calcParabolicSAR(highs: number[], lows: number[], step: number = 0.02, 
   return sar;
 }
 
-// Support & Resistance Levels (3 each)
+// Support & Resistance Levels
 function calcSupportResistanceLevels(prices: number[], candles: Candle[]): SupportResistanceLevel[] {
   const levels: SupportResistanceLevel[] = [];
   const windowSize = Math.min(20, Math.floor(candles.length / 15));
@@ -393,7 +385,7 @@ function calcMACDFull(prices: number[]) {
   return { macd, signal, histogram: macd - signal };
 }
 
-// Tick history storage (for digit analysis)
+// Tick history storage (for pattern/digit strategy)
 const tickHistoryRef: { [symbol: string]: number[] } = {};
 
 function getTickHistory(symbol: string): number[] {
@@ -460,6 +452,14 @@ export default function TradingChart() {
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const lastSpokenSignal = useRef('');
   
+  // Strategy State
+  const [strategyEnabled, setStrategyEnabled] = useState(false);
+  const [strategyMode, setStrategyMode] = useState<StrategyMode>('pattern');
+  const [patternInput, setPatternInput] = useState('');
+  const [digitCondition, setDigitCondition] = useState('==');
+  const [digitCompare, setDigitCompare] = useState('5');
+  const [digitWindow, setDigitWindow] = useState('3');
+  
   // MillieFX Speed Bot State
   const [botRunning, setBotRunning] = useState(false);
   const [botPaused, setBotPaused] = useState(false);
@@ -481,7 +481,7 @@ export default function TradingChart() {
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
   const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
   
-  // Digit Analysis - Using digitAnalysisTicks for calculation (NOT candles)
+  // Digit Analysis - Using digitAnalysisTicks for calculation
   const [digitPrices, setDigitPrices] = useState<number[]>([]);
   
   /* ============================================
@@ -521,7 +521,6 @@ export default function TradingChart() {
         setPrices([]);
         setTimes([]);
         
-        // Load enough ticks for 1000 candles
         const requiredTicks = getRequiredTicksForTimeframe(timeframe);
         const hist = await derivApi.getTickHistory(symbol as MarketSymbol, requiredTicks);
         if (!active) return;
@@ -532,7 +531,6 @@ export default function TradingChart() {
         setPrices(hist.history.prices || []);
         setTimes(hist.history.times || []);
         
-        // Store prices for digit analysis based on selected ticks
         const digitPricesSlice = (hist.history.prices || []).slice(-digitAnalysisTicks);
         setDigitPrices(digitPricesSlice);
         
@@ -559,7 +557,6 @@ export default function TradingChart() {
               return newTimes.slice(-30000);
             });
             
-            // Update digit prices with latest tick
             setDigitPrices(prev => {
               const newPrices = [...prev, quote];
               return newPrices.slice(-digitAnalysisTicks);
@@ -626,20 +623,19 @@ export default function TradingChart() {
      DERIVED DATA & INDICATORS
      ============================================ */
   
-  // Use ALL available prices for candles (ensures 1000 candles)
   const tfPrices = useMemo(() => prices.slice(), [prices]);
   const tfTimes = useMemo(() => times.slice(), [times]);
   const candles = useMemo(() => buildCandles(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
   const currentPrice = prices[prices.length - 1] || 0;
   const lastDigit = getLastDigit(currentPrice);
   
-  // Digit analysis - ONLY based on digitAnalysisTicks (selected ticks)
+  // Digit analysis - ONLY based on digitAnalysisTicks
   const digitPricesForAnalysis = useMemo(() => digitPrices, [digitPrices]);
   const digits = useMemo(() => digitPricesForAnalysis.map(getLastDigit), [digitPricesForAnalysis]);
   const { frequency, percentages, mostCommon, leastCommon } = useMemo(() => analyzeDigits(digitPricesForAnalysis), [digitPricesForAnalysis]);
   const last26 = useMemo(() => digits.slice(-26), [digits]);
   
-  // Indicators (using all prices)
+  // Indicators
   const bb = useMemo(() => calculateBollingerBands(tfPrices, 20), [tfPrices]);
   const ema9 = useMemo(() => calcEMA(tfPrices, 9), [tfPrices]);
   const ema20 = useMemo(() => calcEMA(tfPrices, 20), [tfPrices]);
@@ -662,7 +658,7 @@ export default function TradingChart() {
   }, [candles]);
   const supportResistanceLevels = useMemo(() => calcSupportResistanceLevels(tfPrices, candles), [tfPrices, candles]);
   
-  // Digit stats (using digit analysis prices)
+  // Digit stats
   const evenCount = digits.filter(d => d % 2 === 0).length;
   const oddCount = digits.length - evenCount;
   const evenPct = digits.length > 0 ? (evenCount / digits.length * 100) : 50;
@@ -1265,6 +1261,57 @@ export default function TradingChart() {
   }, [candles.length, scrollOffset, candleWidth, showChart, activeTool, isDrawing, currentDrawing]);
   
   /* ============================================
+     PATTERN/DIGIT STRATEGY FUNCTIONS
+     ============================================ */
+  
+  // Clean pattern input (only E and O)
+  const cleanPattern = useMemo(() => patternInput.toUpperCase().replace(/[^EO]/g, ''), [patternInput]);
+  const patternValid = cleanPattern.length >= 2;
+  
+  // Check if current ticks match the pattern
+  const checkPatternMatch = useCallback((): boolean => {
+    const ticks = getTickHistory(botConfig.symbol);
+    if (ticks.length < cleanPattern.length) return false;
+    const recent = ticks.slice(-cleanPattern.length);
+    for (let i = 0; i < cleanPattern.length; i++) {
+      const expected = cleanPattern[i];
+      const actual = recent[i] % 2 === 0 ? 'E' : 'O';
+      if (expected !== actual) return false;
+    }
+    return true;
+  }, [botConfig.symbol, cleanPattern]);
+  
+  // Check if digit condition is met
+  const checkDigitCondition = useCallback((): boolean => {
+    const ticks = getTickHistory(botConfig.symbol);
+    const win = parseInt(digitWindow) || 3;
+    const comp = parseInt(digitCompare);
+    if (ticks.length < win) return false;
+    const recent = ticks.slice(-win);
+    return recent.every(d => {
+      switch (digitCondition) {
+        case '>': return d > comp;
+        case '<': return d < comp;
+        case '>=': return d >= comp;
+        case '<=': return d <= comp;
+        case '==': return d === comp;
+        case '!=': return d !== comp;
+        default: return false;
+      }
+    });
+  }, [botConfig.symbol, digitCondition, digitCompare, digitWindow]);
+  
+  // Check if strategy condition is met
+  const checkStrategyCondition = useCallback((): boolean => {
+    if (!strategyEnabled) return true;
+    if (strategyMode === 'pattern') {
+      return checkPatternMatch();
+    } else {
+      return checkDigitCondition();
+    }
+  }, [strategyEnabled, strategyMode, checkPatternMatch, checkDigitCondition]);
+  
+  /* ============================================
      MILLIEFX SPEED BOT FUNCTIONS
      ============================================ */
   
@@ -1280,52 +1327,6 @@ export default function TradingChart() {
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
   }, [voiceEnabled]);
-  
-  // MillieFX Speed Bot Trade Execution
-  const executeMillieFXTrade = useCallback(async (stake: number) => {
-    const ct = botConfig.contractType;
-    const params: any = {
-      contract_type: ct,
-      symbol: botConfig.symbol,
-      duration: parseInt(botConfig.duration),
-      duration_unit: botConfig.durationUnit,
-      basis: 'stake',
-      amount: stake
-    };
-    
-    if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER', 'DIGITEVEN', 'DIGITODD'].includes(ct)) {
-      params.barrier = botConfig.prediction;
-    }
-    
-    try {
-      const { contractId } = await derivApi.buyContract(params);
-      const tr: TradeRecord = {
-        id: contractId,
-        time: Date.now(),
-        type: ct,
-        stake,
-        profit: 0,
-        status: 'open',
-        symbol: botConfig.symbol
-      };
-      setTradeHistory(prev => [tr, ...prev].slice(0, 100));
-      
-      const result = await derivApi.waitForContractResult(contractId);
-      const resultDigit = getLastDigit(result.price || 0);
-      
-      setTradeHistory(prev => prev.map(t => t.id === contractId ? {
-        ...t,
-        profit: result.profit,
-        status: result.status,
-        resultDigit
-      } : t));
-      
-      return { status: result.status, profit: result.profit, resultDigit };
-    } catch (err: any) {
-      toast.error(`MillieFX trade error: ${err.message}`);
-      throw err;
-    }
-  }, [botConfig]);
   
   // Get signal based on digit analysis
   const getMillieFXSignal = useCallback((): { type: string; prediction: string; confidence: number } | null => {
@@ -1347,8 +1348,8 @@ export default function TradingChart() {
     
     // Choose the best signal based on confidence
     const signals = [];
-    if (evenSignal) signals.push({ type: evenSignal, prediction: evenSignal === 'DIGITEVEN' ? '' : '', confidence: evenConfidence });
-    if (overSignal) signals.push({ type: overSignal, prediction: overSignal === 'DIGITOVER' ? '5' : '5', confidence: overConfidence });
+    if (evenSignal) signals.push({ type: evenSignal, prediction: '', confidence: evenConfidence });
+    if (overSignal) signals.push({ type: overSignal, prediction: '5', confidence: overConfidence });
     if (matchSignal) signals.push({ type: matchSignal, prediction: String(bestDigit), confidence: matchConfidence });
     
     if (signals.length === 0) return null;
@@ -1356,12 +1357,34 @@ export default function TradingChart() {
     const bestSignal = signals.reduce((a, b) => a.confidence > b.confidence ? a : b);
     return {
       type: bestSignal.type,
-      prediction: bestSignal.type === 'DIGITMATCH' ? String(bestDigit) : bestSignal.type === 'DIGITOVER' ? '5' : bestSignal.type === 'DIGITUNDER' ? '5' : '',
+      prediction: bestSignal.type === 'DIGITMATCH' ? String(bestDigit) : bestSignal.type === 'DIGITDIFF' ? String(bestDigit) : bestSignal.prediction,
       confidence: Math.min(95, Math.round(bestSignal.confidence))
     };
   }, [mostCommon, percentages, evenPct, oddPct, overPct, underPct]);
   
-  // Start MillieFX Speed Bot
+  // Execute a single trade
+  const executeTrade = useCallback(async (stake: number, contractType: string, prediction: string): Promise<{ status: string; profit: number; resultDigit: number }> => {
+    const params: any = {
+      contract_type: contractType,
+      symbol: botConfig.symbol,
+      duration: parseInt(botConfig.duration),
+      duration_unit: botConfig.durationUnit,
+      basis: 'stake',
+      amount: stake
+    };
+    
+    if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER', 'DIGITEVEN', 'DIGITODD'].includes(contractType)) {
+      params.barrier = prediction;
+    }
+    
+    const { contractId } = await derivApi.buyContract(params);
+    const result = await derivApi.waitForContractResult(contractId);
+    const resultDigit = getLastDigit(result.price || 0);
+    
+    return { status: result.status, profit: result.profit, resultDigit };
+  }, [botConfig]);
+  
+  // Start MillieFX Speed Bot with Pattern/Digit Strategy
   const startMillieFXBot = useCallback(async () => {
     if (!isAuthorized) {
       toast.error('Please login to your Deriv account first');
@@ -1391,17 +1414,51 @@ export default function TradingChart() {
     toast.info('MillieFX Speed Bot is now running');
     
     while (botRunningRef.current) {
+      // Check if paused
       if (botPausedRef.current) {
         await new Promise(r => setTimeout(r, 500));
         continue;
       }
       
+      // Check stop loss / take profit / max trades
       if (trades >= maxT || pnl <= -sl || pnl >= tp) {
         const reason = trades >= maxT ? 'Max trades reached' : pnl <= -sl ? 'Stop loss hit' : 'Take profit reached';
         toast.info(`🤖 MillieFX Bot stopped: ${reason}`);
         if (voiceEnabled) speak(`Bot stopped. ${reason}. Total profit ${pnl.toFixed(2)} dollars`);
         break;
       }
+      
+      // ========== PATTERN/DIGIT STRATEGY CONDITION ==========
+      if (strategyEnabled) {
+        let conditionMet = false;
+        let waitCount = 0;
+        
+        // Wait for strategy condition to be met
+        while (botRunningRef.current && !conditionMet && !botPausedRef.current) {
+          conditionMet = checkStrategyCondition();
+          if (!conditionMet) {
+            waitCount++;
+            // Show status every 10 seconds
+            if (waitCount % 20 === 0) {
+              const waitMsg = strategyMode === 'pattern' 
+                ? `Waiting for pattern: ${cleanPattern || 'enter pattern'}`
+                : `Waiting for digit condition: last ${digitWindow} ticks ${digitCondition} ${digitCompare}`;
+              console.log(waitMsg);
+            }
+            await new Promise(r => setTimeout(r, 500));
+          }
+        }
+        
+        if (!botRunningRef.current) break;
+        if (strategyMode === 'pattern') {
+          toast.info(`✅ Pattern matched: ${cleanPattern} - Placing trade!`);
+          if (voiceEnabled) speak(`Pattern matched. Placing trade.`);
+        } else {
+          toast.info(`✅ Digit condition met - Placing trade!`);
+          if (voiceEnabled) speak(`Digit condition met. Placing trade.`);
+        }
+      }
+      // =======================================================
       
       // Get signal from digit analysis
       const signal = getMillieFXSignal();
@@ -1411,47 +1468,24 @@ export default function TradingChart() {
         continue;
       }
       
-      // Update bot config with signal
-      const currentContractType = signal.type;
-      const prediction = signal.prediction;
-      
-      const params: any = {
-        contract_type: currentContractType,
-        symbol: botConfig.symbol,
-        duration: parseInt(botConfig.duration),
-        duration_unit: botConfig.durationUnit,
-        basis: 'stake',
-        amount: stake
-      };
-      
-      if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER', 'DIGITEVEN', 'DIGITODD'].includes(currentContractType)) {
-        params.barrier = prediction;
-      }
-      
+      // Execute trade
       try {
-        const { contractId } = await derivApi.buyContract(params);
-        const tr: TradeRecord = {
-          id: contractId,
-          time: Date.now(),
-          type: currentContractType,
-          stake,
-          profit: 0,
-          status: 'open',
-          symbol: botConfig.symbol
-        };
-        setTradeHistory(prev => [tr, ...prev].slice(0, 100));
-        
-        const result = await derivApi.waitForContractResult(contractId);
+        const result = await executeTrade(stake, signal.type, signal.prediction);
         trades++;
         pnl += result.profit;
-        const resultDigit = getLastDigit(result.price || 0);
         
-        setTradeHistory(prev => prev.map(t => t.id === contractId ? {
-          ...t,
+        // Update trade history
+        const tr: TradeRecord = {
+          id: Date.now().toString(),
+          time: Date.now(),
+          type: signal.type,
+          stake,
           profit: result.profit,
-          status: result.status,
-          resultDigit
-        } : t));
+          status: result.status as 'won' | 'lost',
+          symbol: botConfig.symbol,
+          resultDigit: result.resultDigit
+        };
+        setTradeHistory(prev => [tr, ...prev].slice(0, 100));
         
         if (result.status === 'won') {
           wins++;
@@ -1460,19 +1494,17 @@ export default function TradingChart() {
           if (voiceEnabled && trades % 5 === 0) {
             speak(`Trade ${trades} won. Total profit ${pnl.toFixed(2)} dollars`);
           }
-          toast.success(`✅ MillieFX WIN! +$${result.profit.toFixed(2)} | Digit: ${resultDigit}`);
+          toast.success(`✅ MillieFX WIN! +$${result.profit.toFixed(2)} | ${signal.type} | Digit: ${result.resultDigit}`);
         } else {
           losses++;
           consecutiveLosses++;
           if (martingale) {
             stake = Math.round(stake * multiplier * 100) / 100;
+            if (voiceEnabled) speak(`Loss ${consecutiveLosses}. Martingale stake ${stake.toFixed(2)}`);
           } else {
             stake = baseStake;
           }
-          if (voiceEnabled) {
-            speak(`Loss ${consecutiveLosses}. ${martingale ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
-          }
-          toast.error(`❌ MillieFX LOSS -$${Math.abs(result.profit).toFixed(2)} | Digit: ${resultDigit}`);
+          toast.error(`❌ MillieFX LOSS -$${Math.abs(result.profit).toFixed(2)} | ${signal.type} | Digit: ${result.resultDigit}`);
         }
         
         setBotStats({
@@ -1496,7 +1528,7 @@ export default function TradingChart() {
     setBotRunning(false);
     botRunningRef.current = false;
     setBotStats(prev => ({ ...prev, trades, wins, losses, pnl }));
-  }, [isAuthorized, botConfig, voiceEnabled, speak, getMillieFXSignal]);
+  }, [isAuthorized, botConfig, voiceEnabled, speak, getMillieFXSignal, executeTrade, strategyEnabled, checkStrategyCondition, strategyMode, cleanPattern, digitWindow, digitCondition, digitCompare]);
   
   const stopBot = useCallback(() => {
     botRunningRef.current = false;
@@ -1946,7 +1978,7 @@ export default function TradingChart() {
             </div>
           </div>
           
-          {/* MillieFX Speed Bot Panel */}
+          {/* MillieFX Speed Bot Panel with Pattern/Digit Strategy */}
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
@@ -1977,7 +2009,7 @@ export default function TradingChart() {
               <p className="text-[8px] text-muted-foreground mt-0.5">Chart auto-syncs with selected market</p>
             </div>
             
-            {/* Contract Type - Only Over/Under, Even/Odd, Matches/Differs */}
+            {/* Contract Type */}
             <div>
               <label className="text-[9px] text-muted-foreground">Contract Type</label>
               <Select value={botConfig.contractType} onValueChange={v => setBotConfig(p => ({ ...p, contractType: v }))} disabled={botRunning}>
@@ -2064,6 +2096,87 @@ export default function TradingChart() {
               </div>
             </div>
             
+            {/* ========== PATTERN/DIGIT STRATEGY SECTION ========== */}
+            <div className="border-t border-border pt-2 mt-1">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-[10px] font-semibold text-warning flex items-center gap-1">
+                  <Zap className="w-3 h-3" /> Pattern/Digit Strategy
+                </label>
+                <Switch checked={strategyEnabled} onCheckedChange={setStrategyEnabled} disabled={botRunning} />
+              </div>
+              
+              {strategyEnabled && (
+                <div className="space-y-2">
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant={strategyMode === 'pattern' ? 'default' : 'outline'}
+                      className="text-[9px] h-6 px-2 flex-1"
+                      onClick={() => setStrategyMode('pattern')}
+                      disabled={botRunning}
+                    >
+                      Pattern (E/O)
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={strategyMode === 'digit' ? 'default' : 'outline'}
+                      className="text-[9px] h-6 px-2 flex-1"
+                      onClick={() => setStrategyMode('digit')}
+                      disabled={botRunning}
+                    >
+                      Digit Condition
+                    </Button>
+                  </div>
+                  
+                  {strategyMode === 'pattern' ? (
+                    <div>
+                      <label className="text-[8px] text-muted-foreground">Pattern (E=Even, O=Odd)</label>
+                      <Textarea
+                        placeholder="e.g., EEEOE or OOEEO"
+                        value={patternInput}
+                        onChange={e => setPatternInput(e.target.value.toUpperCase().replace(/[^EO]/g, ''))}
+                        disabled={botRunning}
+                        className="h-12 text-[10px] font-mono min-h-0 mt-1"
+                      />
+                      <div className={`text-[9px] font-mono mt-1 ${patternValid ? 'text-profit' : 'text-loss'}`}>
+                        {cleanPattern.length === 0 ? 'Enter pattern (min 2 characters)' :
+                          patternValid ? `✓ Pattern: ${cleanPattern}` : `✗ Need at least 2 characters (E/O)`}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-1">
+                      <div>
+                        <label className="text-[8px] text-muted-foreground">If last</label>
+                        <Input type="number" min="1" max="50" value={digitWindow}
+                          onChange={e => setDigitWindow(e.target.value)} disabled={botRunning}
+                          className="h-7 text-[10px]" />
+                      </div>
+                      <div>
+                        <label className="text-[8px] text-muted-foreground">ticks are</label>
+                        <Select value={digitCondition} onValueChange={setDigitCondition} disabled={botRunning}>
+                          <SelectTrigger className="h-7 text-[10px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {['==', '!=', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="text-[8px] text-muted-foreground">Digit</label>
+                        <Input type="number" min="0" max="9" value={digitCompare}
+                          onChange={e => setDigitCompare(e.target.value)} disabled={botRunning}
+                          className="h-7 text-[10px]" />
+                      </div>
+                    </div>
+                  )}
+                  
+                  <div className="text-[8px] text-muted-foreground text-center py-1 bg-muted/20 rounded">
+                    Bot will wait for {strategyMode === 'pattern' ? 'pattern match' : 'digit condition'} before each trade
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* ================================================== */}
+            
             {/* Bot Live Stats */}
             {botRunning && (
               <div className="grid grid-cols-3 gap-1 text-center">
@@ -2105,6 +2218,18 @@ export default function TradingChart() {
                     </div>
                   );
                 })()}
+              </div>
+            )}
+            
+            {/* Strategy Status Display */}
+            {strategyEnabled && (
+              <div className="bg-warning/10 rounded-lg p-2 text-center border border-warning/30">
+                <div className="text-[8px] text-warning">Strategy Active</div>
+                <div className="text-[9px] font-mono">
+                  {strategyMode === 'pattern' 
+                    ? `Waiting for pattern: ${cleanPattern || 'enter pattern'}`
+                    : `Waiting for: last ${digitWindow} ticks ${digitCondition} ${digitCompare}`}
+                </div>
               </div>
             )}
             
