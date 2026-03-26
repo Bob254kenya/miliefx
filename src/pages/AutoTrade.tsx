@@ -14,11 +14,14 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   TrendingUp, TrendingDown, Activity, BarChart3, ArrowUp, ArrowDown,
   Target, ShieldAlert, Volume2, VolumeX, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, RefreshCw,
-  TrendingUp as TrendLineIcon, Move, Circle as CircleIcon, Square, Type, X, Trash2, Layers, LineChart, Settings,
-  Minus as LineIcon, Triangle, ArrowRight, MousePointer, Eraser, Sliders, Info
+  TrendingUp as TrendLineIcon, Circle as CircleIcon, Square, Triangle, ArrowRight, MousePointer, Trash2, LineChart, Settings, Sliders
 } from 'lucide-react';
 
-/* ── Markets ── */
+/* ============================================
+   CONSTANTS & CONFIGURATION
+   ============================================ */
+
+// Markets Data
 const ALL_MARKETS = [
   { symbol: '1HZ10V', name: 'Volatility 10 (1s)', group: 'vol1s' },
   { symbol: '1HZ15V', name: 'Volatility 15 (1s)', group: 'vol1s' },
@@ -57,27 +60,11 @@ const GROUPS = [
 
 const TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '12h', '1d'];
 
-// Target candles for all timeframes - 600 candles
+// Target candles - 600 for all timeframes
 const TARGET_CANDLES = 600;
 
-// Calculate ticks needed for target candles in each timeframe
-const getTickCountForTimeframe = (timeframe: string): number => {
-  const seconds: Record<string, number> = {
-    '1m': 60,
-    '3m': 180,
-    '5m': 300,
-    '15m': 900,
-    '30m': 1800,
-    '1h': 3600,
-    '4h': 14400,
-    '12h': 43200,
-    '1d': 86400,
-  };
-  
-  const interval = seconds[timeframe] || 60;
-  // Get enough ticks to ensure TARGET_CANDLES candles (add 30% buffer)
-  return Math.ceil(TARGET_CANDLES * interval * 1.3);
-};
+// Tick selector options
+const TICK_OPTIONS = [100, 200, 500, 1000, 2000, 3000, 5000, 10000, 20000, 50000];
 
 const CONTRACT_TYPES = [
   { value: 'CALL', label: 'Rise' },
@@ -89,6 +76,18 @@ const CONTRACT_TYPES = [
   { value: 'DIGITOVER', label: 'Digits Over' },
   { value: 'DIGITUNDER', label: 'Digits Under' },
 ];
+
+/* ============================================
+   TYPE DEFINITIONS
+   ============================================ */
+
+interface Candle {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  time: number;
+}
 
 interface DrawingTool {
   id: string;
@@ -108,18 +107,10 @@ interface IndicatorSettings {
   supportResistance: boolean;
 }
 
-interface SupportResistance {
+interface SupportResistanceLevel {
   level: number;
   strength: number;
   type: 'support' | 'resistance';
-}
-
-interface Candle {
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  time: number;
 }
 
 interface TradeRecord {
@@ -133,7 +124,21 @@ interface TradeRecord {
   resultDigit?: number;
 }
 
-// Helper Functions
+/* ============================================
+   HELPER FUNCTIONS
+   ============================================ */
+
+// Get required ticks for target candles in each timeframe
+const getRequiredTicksForTimeframe = (timeframe: string): number => {
+  const seconds: Record<string, number> = {
+    '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+    '1h': 3600, '4h': 14400, '12h': 43200, '1d': 86400,
+  };
+  const interval = seconds[timeframe] || 60;
+  return Math.ceil(TARGET_CANDLES * interval * 1.2);
+};
+
+// Build candles from tick data
 function buildCandles(prices: number[], times: number[], tf: string): Candle[] {
   if (prices.length === 0) return [];
   const seconds: Record<string, number> = {
@@ -162,6 +167,7 @@ function buildCandles(prices: number[], times: number[], tf: string): Candle[] {
   return candles;
 }
 
+// EMA Calculation
 function calcEMA(prices: number[], period: number): number {
   if (prices.length < period) return prices[prices.length - 1] || 0;
   const k = 2 / (period + 1);
@@ -185,11 +191,57 @@ function calcEMASeries(prices: number[], period: number): (number | null)[] {
   return result;
 }
 
+// Bollinger Bands
+function calcBBSeries(prices: number[], period: number = 20, mult: number = 2) {
+  const upper: (number | null)[] = new Array(prices.length).fill(null);
+  const middle: (number | null)[] = new Array(prices.length).fill(null);
+  const lower: (number | null)[] = new Array(prices.length).fill(null);
+  
+  for (let i = period - 1; i < prices.length; i++) {
+    const slice = prices.slice(i - period + 1, i + 1);
+    const ma = slice.reduce((a, b) => a + b, 0) / period;
+    const variance = slice.reduce((s, p) => s + Math.pow(p - ma, 2), 0) / period;
+    const std = Math.sqrt(variance);
+    upper[i] = ma + mult * std;
+    middle[i] = ma;
+    lower[i] = ma - mult * std;
+  }
+  return { upper, middle, lower };
+}
+
+// RSI Series
+function calcRSISeries(prices: number[], period: number = 14): (number | null)[] {
+  const result: (number | null)[] = new Array(prices.length).fill(null);
+  if (prices.length < period + 1) return result;
+  
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const d = prices[i] - prices[i - 1];
+    if (d > 0) gains += d;
+    else losses -= d;
+  }
+  
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  let rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  result[period] = rsi;
+  
+  for (let i = period + 1; i < prices.length; i++) {
+    const d = prices[i] - prices[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(0, d)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(0, -d)) / period;
+    rsi = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+    result[i] = rsi;
+  }
+  return result;
+}
+
+// Parabolic SAR
 function calcParabolicSAR(highs: number[], lows: number[], step: number = 0.02, maxStep: number = 0.2): (number | null)[] {
   const sar: (number | null)[] = new Array(highs.length).fill(null);
   if (highs.length < 2) return sar;
   
-  let trend = 1; // 1 for uptrend, -1 for downtrend
+  let trend = 1;
   let ep = trend === 1 ? highs[0] : lows[0];
   let af = step;
   let currentSar = trend === 1 ? lows[0] : highs[0];
@@ -230,11 +282,11 @@ function calcParabolicSAR(highs: number[], lows: number[], step: number = 0.02, 
   return sar;
 }
 
-function calcSupportResistance(prices: number[], candles: Candle[]): SupportResistance[] {
-  const levels: SupportResistance[] = [];
-  const windowSize = Math.min(20, Math.floor(candles.length / 10));
+// Support & Resistance Levels (3 each)
+function calcSupportResistanceLevels(prices: number[], candles: Candle[]): SupportResistanceLevel[] {
+  const levels: SupportResistanceLevel[] = [];
+  const windowSize = Math.min(15, Math.floor(candles.length / 15));
   
-  // Find pivot points
   for (let i = windowSize; i < candles.length - windowSize; i++) {
     const candle = candles[i];
     let isHighPivot = true;
@@ -255,7 +307,7 @@ function calcSupportResistance(prices: number[], candles: Candle[]): SupportResi
   }
   
   // Group nearby levels
-  const grouped: SupportResistance[] = [];
+  const grouped: SupportResistanceLevel[] = [];
   const tolerance = (Math.max(...prices) - Math.min(...prices)) * 0.01;
   
   for (const level of levels) {
@@ -272,13 +324,14 @@ function calcSupportResistance(prices: number[], candles: Candle[]): SupportResi
     }
   }
   
-  // Sort by strength and take top 3 of each type
+  // Get top 3 supports and resistances
   const supports = grouped.filter(l => l.type === 'support').sort((a, b) => b.strength - a.strength).slice(0, 3);
   const resistances = grouped.filter(l => l.type === 'resistance').sort((a, b) => b.strength - a.strength).slice(0, 3);
   
   return [...supports, ...resistances];
 }
 
+// Map candles to price indices
 function mapCandlesToPriceIndices(prices: number[], times: number[], tf: string): number[] {
   const seconds: Record<string, number> = {
     '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
@@ -300,6 +353,25 @@ function mapCandlesToPriceIndices(prices: number[], times: number[], tf: string)
   return indices;
 }
 
+// Calculate Support & Resistance
+function calcSR(prices: number[]) {
+  if (prices.length < 10) return { support: 0, resistance: 0 };
+  const sorted = [...prices].sort((a, b) => a - b);
+  const p5 = Math.floor(sorted.length * 0.05);
+  const p95 = Math.floor(sorted.length * 0.95);
+  return { support: sorted[p5], resistance: sorted[Math.min(p95, sorted.length - 1)] };
+}
+
+// Calculate MACD
+function calcMACDFull(prices: number[]) {
+  const ema12 = calcEMA(prices, 12);
+  const ema26 = calcEMA(prices, 26);
+  const macd = ema12 - ema26;
+  const signal = macd * 0.8;
+  return { macd, signal, histogram: macd - signal };
+}
+
+// Tick history storage
 const tickHistoryRef: { [symbol: string]: number[] } = {};
 
 function getTickHistory(symbol: string): number[] {
@@ -309,15 +381,24 @@ function getTickHistory(symbol: string): number[] {
 function addTick(symbol: string, digit: number) {
   if (!tickHistoryRef[symbol]) tickHistoryRef[symbol] = [];
   tickHistoryRef[symbol].push(digit);
-  if (tickHistoryRef[symbol].length > 10000) tickHistoryRef[symbol].shift();
+  if (tickHistoryRef[symbol].length > 5000) tickHistoryRef[symbol].shift();
 }
+
+/* ============================================
+   MAIN COMPONENT
+   ============================================ */
 
 export default function TradingChart() {
   const { isAuthorized } = useAuth();
+  
+  // UI State
   const [showChart, setShowChart] = useState(false);
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
   const [timeframe, setTimeframe] = useState('1m');
+  const [selectedTicks, setSelectedTicks] = useState(getRequiredTicksForTimeframe('1m'));
+  
+  // Data State
   const [prices, setPrices] = useState<number[]>([]);
   const [times, setTimes] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -325,19 +406,21 @@ export default function TradingChart() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const subscriptionRef = useRef<any>(null);
   const reconnectAttempts = useRef(0);
-
-  const [candleWidth, setCandleWidth] = useState(3);
+  
+  // Chart Interaction State
+  const [candleWidth, setCandleWidth] = useState(4);
   const [scrollOffset, setScrollOffset] = useState(0);
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
   const dragStartOffset = useRef(0);
   
+  // Drawing Tools State
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [drawings, setDrawings] = useState<DrawingTool[]>([]);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentDrawing, setCurrentDrawing] = useState<DrawingTool | null>(null);
   
-  // Indicators - all initially false (hidden)
+  // Indicators State - All initially OFF
   const [indicators, setIndicators] = useState<IndicatorSettings>({
     macd: false,
     bollinger: false,
@@ -348,7 +431,8 @@ export default function TradingChart() {
     parabolicSAR: false,
     supportResistance: false,
   });
-
+  
+  // Trade Panel State
   const [contractType, setContractType] = useState('CALL');
   const [prediction, setPrediction] = useState('5');
   const [duration, setDuration] = useState('1');
@@ -359,14 +443,16 @@ export default function TradingChart() {
   const [tradeHistory, setTradeHistory] = useState<TradeRecord[]>([]);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const lastSpokenSignal = useRef('');
-
+  
+  // Strategy State
   const [strategyEnabled, setStrategyEnabled] = useState(false);
   const [strategyMode, setStrategyMode] = useState<'pattern' | 'digit'>('pattern');
   const [patternInput, setPatternInput] = useState('');
   const [digitCondition, setDigitCondition] = useState('==');
   const [digitCompare, setDigitCompare] = useState('5');
   const [digitWindow, setDigitWindow] = useState('3');
-
+  
+  // Bot State
   const [botRunning, setBotRunning] = useState(false);
   const [botPaused, setBotPaused] = useState(false);
   const botRunningRef = useRef(false);
@@ -386,13 +472,11 @@ export default function TradingChart() {
   });
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
   const [turboMode, setTurboMode] = useState(false);
-
-  // Get required ticks for target candles
-  const getRequiredTicks = useCallback(() => {
-    return getTickCountForTimeframe(timeframe);
-  }, [timeframe]);
-
-  // Load data
+  
+  /* ============================================
+     DATA LOADING
+     ============================================ */
+  
   useEffect(() => {
     let active = true;
     let timeoutId: NodeJS.Timeout;
@@ -407,7 +491,7 @@ export default function TradingChart() {
         subscriptionRef.current = null;
       }
     };
-
+    
     const load = async () => {
       if (!derivApi.isConnected) {
         setIsLoading(false);
@@ -426,18 +510,17 @@ export default function TradingChart() {
         setPrices([]);
         setTimes([]);
         
-        const tickCount = getRequiredTicks();
-        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, tickCount);
+        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, selectedTicks);
         if (!active) return;
         
         const historicalDigits = (hist.history.prices || []).map((p: number) => getLastDigit(p));
-        tickHistoryRef[symbol] = historicalDigits.slice(-10000);
+        tickHistoryRef[symbol] = historicalDigits.slice(-5000);
         
         setPrices(hist.history.prices || []);
         setTimes(hist.history.times || []);
         setScrollOffset(0);
         setIsLoading(false);
-
+        
         if (!subscribedRef.current || !subscriptionRef.current) {
           subscriptionRef.current = await derivApi.subscribeTicks(symbol as MarketSymbol, (data: any) => {
             if (!active || !data.tick) return;
@@ -476,8 +559,8 @@ export default function TradingChart() {
       cleanup();
       subscribedRef.current = false;
     };
-  }, [symbol, timeframe, getRequiredTicks]);
-
+  }, [symbol, selectedTicks]);
+  
   const handleManualRefresh = useCallback(async () => {
     if (!derivApi.isConnected) {
       toast.error('Not connected to Deriv');
@@ -486,8 +569,7 @@ export default function TradingChart() {
     
     setIsLoading(true);
     try {
-      const tickCount = getRequiredTicks();
-      const hist = await derivApi.getTickHistory(symbol as MarketSymbol, tickCount);
+      const hist = await derivApi.getTickHistory(symbol as MarketSymbol, selectedTicks);
       setPrices(prev => {
         const newPrices = [...prev, ...hist.history.prices];
         return newPrices.slice(-20000);
@@ -502,79 +584,45 @@ export default function TradingChart() {
     } finally {
       setIsLoading(false);
     }
-  }, [symbol, timeframe, getRequiredTicks]);
-
-  // Derived data
-  const tfPrices = useMemo(() => prices.slice(-getRequiredTicks()), [prices, getRequiredTicks]);
-  const tfTimes = useMemo(() => times.slice(-getRequiredTicks()), [times, getRequiredTicks]);
+  }, [symbol, selectedTicks]);
+  
+  /* ============================================
+     DERIVED DATA & INDICATORS
+     ============================================ */
+  
+  const tfPrices = useMemo(() => prices.slice(-selectedTicks), [prices, selectedTicks]);
+  const tfTimes = useMemo(() => times.slice(-selectedTicks), [times, selectedTicks]);
   const candles = useMemo(() => buildCandles(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
   const currentPrice = prices[prices.length - 1] || 0;
   const lastDigit = getLastDigit(currentPrice);
   const digits = useMemo(() => tfPrices.map(getLastDigit), [tfPrices]);
   const last26 = useMemo(() => getTickHistory(symbol).slice(-26), [symbol, prices]);
   const { frequency, percentages, mostCommon, leastCommon } = useMemo(() => analyzeDigits(tfPrices), [tfPrices]);
-
+  
+  // Indicators
   const bb = useMemo(() => calculateBollingerBands(tfPrices, 20), [tfPrices]);
   const ema9 = useMemo(() => calcEMA(tfPrices, 9), [tfPrices]);
   const ema20 = useMemo(() => calcEMA(tfPrices, 20), [tfPrices]);
   const ema50 = useMemo(() => calcEMA(tfPrices, 50), [tfPrices]);
+  const { support, resistance } = useMemo(() => calcSR(tfPrices), [tfPrices]);
   const rsi = useMemo(() => calculateRSI(tfPrices, 14), [tfPrices]);
-  const macd = useMemo(() => {
-    const ema12 = calcEMA(tfPrices, 12);
-    const ema26 = calcEMA(tfPrices, 26);
-    const macdValue = ema12 - ema26;
-    const signal = macdValue * 0.8;
-    return { macd: macdValue, signal, histogram: macdValue - signal };
-  }, [tfPrices]);
-
+  const macd = useMemo(() => calcMACDFull(tfPrices), [tfPrices]);
+  
+  // Series for chart
   const candleEndIndices = useMemo(() => mapCandlesToPriceIndices(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
   const ema9Series = useMemo(() => calcEMASeries(tfPrices, 9), [tfPrices]);
   const ema20Series = useMemo(() => calcEMASeries(tfPrices, 20), [tfPrices]);
   const ema50Series = useMemo(() => calcEMASeries(tfPrices, 50), [tfPrices]);
-  const bbSeries = useMemo(() => {
-    const upper: (number | null)[] = new Array(tfPrices.length).fill(null);
-    const middle: (number | null)[] = new Array(tfPrices.length).fill(null);
-    const lower: (number | null)[] = new Array(tfPrices.length).fill(null);
-    for (let i = 19; i < tfPrices.length; i++) {
-      const slice = tfPrices.slice(i - 19, i + 1);
-      const ma = slice.reduce((a, b) => a + b, 0) / 20;
-      const variance = slice.reduce((s, p) => s + Math.pow(p - ma, 2), 0) / 20;
-      const std = Math.sqrt(variance);
-      upper[i] = ma + 2 * std;
-      middle[i] = ma;
-      lower[i] = ma - 2 * std;
-    }
-    return { upper, middle, lower };
-  }, [tfPrices]);
-  const rsiSeries = useMemo(() => {
-    const result: (number | null)[] = new Array(tfPrices.length).fill(null);
-    if (tfPrices.length < 15) return result;
-    let gains = 0, losses = 0;
-    for (let i = 1; i <= 14; i++) {
-      const d = tfPrices[i] - tfPrices[i - 1];
-      if (d > 0) gains += d;
-      else losses -= d;
-    }
-    let avgGain = gains / 14;
-    let avgLoss = losses / 14;
-    let rsiVal = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-    result[14] = rsiVal;
-    for (let i = 15; i < tfPrices.length; i++) {
-      const d = tfPrices[i] - tfPrices[i - 1];
-      avgGain = (avgGain * 13 + Math.max(0, d)) / 14;
-      avgLoss = (avgLoss * 13 + Math.max(0, -d)) / 14;
-      rsiVal = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-      result[i] = rsiVal;
-    }
-    return result;
-  }, [tfPrices]);
+  const bbSeries = useMemo(() => calcBBSeries(tfPrices, 20, 2), [tfPrices]);
+  const rsiSeries = useMemo(() => calcRSISeries(tfPrices, 14), [tfPrices]);
   const parabolicSAR = useMemo(() => {
     const highs = candles.map(c => c.high);
     const lows = candles.map(c => c.low);
     return calcParabolicSAR(highs, lows);
   }, [candles]);
-  const supportResistanceLevels = useMemo(() => calcSupportResistance(tfPrices, candles), [tfPrices, candles]);
-
+  const supportResistanceLevels = useMemo(() => calcSupportResistanceLevels(tfPrices, candles), [tfPrices, candles]);
+  
+  // Digit stats
   const evenCount = digits.filter(d => d % 2 === 0).length;
   const oddCount = digits.length - evenCount;
   const evenPct = digits.length > 0 ? (evenCount / digits.length * 100) : 50;
@@ -583,17 +631,28 @@ export default function TradingChart() {
   const underCount = digits.length - overCount;
   const overPct = digits.length > 0 ? (overCount / digits.length * 100) : 50;
   const underPct = 100 - overPct;
-
+  
   const bbRange = bb.upper - bb.lower || 1;
   const bbPosition = ((currentPrice - bb.lower) / bbRange * 100);
-
-  // Multi-indicator signal combination
+  
+  // Signals
+  const riseSignal = useMemo(() => {
+    const conf = rsi < 30 ? 85 : rsi > 70 ? 25 : 50 + (50 - rsi);
+    return { direction: rsi < 45 ? 'Rise' : 'Fall', confidence: Math.min(95, Math.max(10, Math.round(conf))) };
+  }, [rsi]);
+  
+  const matchSignal = useMemo(() => {
+    const bestPct = Math.max(...percentages);
+    return { digit: mostCommon, confidence: Math.min(90, Math.round(bestPct * 3)) };
+  }, [percentages, mostCommon]);
+  
+  // Combined Multi-Indicator Signal
   const combinedSignal = useMemo(() => {
     let overScore = 0;
     let underScore = 0;
     let signals: string[] = [];
-
-    // Parabolic SAR Signal
+    
+    // Parabolic SAR
     if (indicators.parabolicSAR && parabolicSAR.length > 0) {
       const lastSAR = parabolicSAR[parabolicSAR.length - 1];
       const lastCandle = candles[candles.length - 1];
@@ -607,8 +666,8 @@ export default function TradingChart() {
         }
       }
     }
-
-    // Bollinger Bands Signal
+    
+    // Bollinger Bands
     if (indicators.bollinger && bb.lower && bb.upper) {
       if (currentPrice >= bb.upper * 0.98) {
         underScore += 20;
@@ -618,8 +677,8 @@ export default function TradingChart() {
         signals.push('📊 BB: Lower band touch → Over');
       }
     }
-
-    // Moving Average Crossover Signal
+    
+    // Moving Average Crossover
     if (indicators.ma9 && indicators.ma20) {
       const lastEma9 = ema9Series[ema9Series.length - 1];
       const lastEma20 = ema20Series[ema20Series.length - 1];
@@ -636,8 +695,8 @@ export default function TradingChart() {
         }
       }
     }
-
-    // MACD Signal
+    
+    // MACD
     if (indicators.macd) {
       if (macd.histogram > 0 && macd.histogram > (macd.histogram - 0.1)) {
         overScore += 20;
@@ -647,8 +706,8 @@ export default function TradingChart() {
         signals.push('📊 MACD: Bearish momentum → Under');
       }
     }
-
-    // RSI Signal
+    
+    // RSI
     if (indicators.rsi) {
       if (rsi > 70) {
         underScore += 25;
@@ -658,33 +717,26 @@ export default function TradingChart() {
         signals.push('⚠️ RSI: Oversold → Over');
       }
     }
-
+    
     const totalScore = overScore + underScore;
     const confidence = totalScore > 0 ? Math.min(95, Math.max(50, Math.round((Math.max(overScore, underScore) / totalScore) * 100))) : 50;
     const direction = overScore > underScore ? 'Over' : underScore > overScore ? 'Under' : 'Neutral';
     const color = direction === 'Over' ? 'text-profit' : direction === 'Under' ? 'text-loss' : 'text-warning';
-
+    
     return { direction, confidence, signals, color, overScore, underScore };
   }, [indicators, parabolicSAR, candles, bb, currentPrice, ema9Series, ema20Series, macd, rsi]);
-
-  const riseSignal = useMemo(() => {
-    const conf = rsi < 30 ? 85 : rsi > 70 ? 25 : 50 + (50 - rsi);
-    return { direction: rsi < 45 ? 'Rise' : 'Fall', confidence: Math.min(95, Math.max(10, Math.round(conf))) };
-  }, [rsi]);
-
-  const matchSignal = useMemo(() => {
-    const bestPct = Math.max(...percentages);
-    return { digit: mostCommon, confidence: Math.min(90, Math.round(bestPct * 3)) };
-  }, [percentages, mostCommon]);
-
-  // Drawing functions
+  
+  /* ============================================
+     DRAWING TOOLS FUNCTIONS
+     ============================================ */
+  
   const getCanvasCoordinates = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }, []);
-
+  
   const startDrawing = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!activeTool) return;
     const coords = getCanvasCoordinates(e);
@@ -699,7 +751,7 @@ export default function TradingChart() {
     };
     setCurrentDrawing(newDrawing);
   }, [activeTool, getCanvasCoordinates]);
-
+  
   const draw = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!isDrawing || !currentDrawing) return;
     const coords = getCanvasCoordinates(e);
@@ -710,7 +762,7 @@ export default function TradingChart() {
       return { ...prev, points: [...prev.points, coords] };
     });
   }, [isDrawing, currentDrawing, getCanvasCoordinates]);
-
+  
   const endDrawing = useCallback(() => {
     if (currentDrawing && currentDrawing.points.length > 1) {
       setDrawings(prev => [...prev, currentDrawing]);
@@ -718,23 +770,26 @@ export default function TradingChart() {
     setIsDrawing(false);
     setCurrentDrawing(null);
   }, [currentDrawing]);
-
+  
   const deleteAllDrawings = useCallback(() => {
     setDrawings([]);
   }, []);
-
+  
   const toggleIndicator = useCallback((indicator: keyof IndicatorSettings) => {
     setIndicators(prev => ({ ...prev, [indicator]: !prev[indicator] }));
   }, []);
-
-  // Chart drawing
+  
+  /* ============================================
+     CANVAS DRAWING
+     ============================================ */
+  
   useEffect(() => {
     if (!showChart || !canvasRef.current || candles.length === 0) return;
     
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
+    
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
     canvas.width = rect.width * dpr;
@@ -747,11 +802,11 @@ export default function TradingChart() {
     const macdH = indicators.macd ? 100 : 0;
     const H = totalH - rsiH - macdH - 8;
     const priceAxisW = 70;
-    const chartW = W - priceAxisW - 40; // 40px right margin for visibility
+    const chartW = W - priceAxisW - 40; // 40px right margin
     
     ctx.fillStyle = '#0D1117';
     ctx.fillRect(0, 0, W, totalH);
-
+    
     const gap = 1;
     const totalCandleW = candleWidth + gap;
     const maxVisible = Math.floor(chartW / totalCandleW);
@@ -760,7 +815,7 @@ export default function TradingChart() {
     const visibleCandles = candles.slice(startIdx, endIdx);
     
     if (visibleCandles.length === 0) return;
-
+    
     const visibleEndIndices = candleEndIndices.slice(startIdx, endIdx);
     const allPrices = visibleCandles.flatMap(c => [c.high, c.low]);
     const rawMin = Math.min(...allPrices);
@@ -773,7 +828,9 @@ export default function TradingChart() {
     const chartPadTop = 20;
     const drawH = H - chartPadTop - 20;
     const toY = (p: number) => chartPadTop + ((maxP - p) / range) * drawH;
-
+    
+    const offsetX = 5;
+    
     // Draw grid
     ctx.strokeStyle = '#21262D';
     ctx.lineWidth = 0.5;
@@ -789,9 +846,7 @@ export default function TradingChart() {
       const pLabel = maxP - (i / 8) * range;
       ctx.fillText(pLabel.toFixed(2), chartW + 4, y + 3);
     }
-
-    const offsetX = 5;
-
+    
     // Draw Bollinger Bands
     if (indicators.bollinger && bbSeries.upper.length > 0) {
       ctx.fillStyle = 'rgba(188, 140, 255, 0.06)';
@@ -819,7 +874,7 @@ export default function TradingChart() {
         ctx.closePath();
         ctx.fill();
       }
-
+      
       const drawBBLine = (values: (number | null)[], color: string, dash: number[] = []) => {
         ctx.beginPath();
         ctx.setLineDash(dash);
@@ -848,7 +903,7 @@ export default function TradingChart() {
       drawBBLine(bbSeries.lower, '#BC8CFF', [5, 3]);
       ctx.setLineDash([]);
     }
-
+    
     // Draw Moving Averages
     const drawMALine = (values: (number | null)[], color: string, width: number) => {
       ctx.beginPath();
@@ -871,11 +926,11 @@ export default function TradingChart() {
       }
       ctx.stroke();
     };
-
+    
     if (indicators.ma9) drawMALine(ema9Series, '#2F81F7', 1.5);
     if (indicators.ma20) drawMALine(ema20Series, '#E6B422', 1.5);
     if (indicators.ma50) drawMALine(ema50Series, '#F97316', 1.5);
-
+    
     // Draw Parabolic SAR
     if (indicators.parabolicSAR && parabolicSAR.length > 0) {
       for (let i = 0; i < visibleCandles.length; i++) {
@@ -891,13 +946,12 @@ export default function TradingChart() {
         ctx.fill();
       }
     }
-
-    // Draw Support & Resistance Lines
+    
+    // Draw Support & Resistance Lines (3 each)
     if (indicators.supportResistance && supportResistanceLevels.length > 0) {
       const supports = supportResistanceLevels.filter(s => s.type === 'support');
       const resistances = supportResistanceLevels.filter(s => s.type === 'resistance');
       
-      // Draw resistance lines (red)
       resistances.forEach((res, idx) => {
         const y = toY(res.level);
         ctx.setLineDash([5, 5]);
@@ -910,10 +964,9 @@ export default function TradingChart() {
         
         ctx.fillStyle = '#F85149';
         ctx.font = '9px JetBrains Mono, monospace';
-        ctx.fillText(`R${idx + 1} ${res.level.toFixed(2)}`, chartW - 40, y - 5);
+        ctx.fillText(`R${idx + 1} ${res.level.toFixed(2)}`, chartW - 50, y - 5);
       });
       
-      // Draw support lines (blue)
       supports.forEach((sup, idx) => {
         const y = toY(sup.level);
         ctx.setLineDash([5, 5]);
@@ -926,32 +979,32 @@ export default function TradingChart() {
         
         ctx.fillStyle = '#3B82F6';
         ctx.font = '9px JetBrains Mono, monospace';
-        ctx.fillText(`S${idx + 1} ${sup.level.toFixed(2)}`, chartW - 40, y + 12);
+        ctx.fillText(`S${idx + 1} ${sup.level.toFixed(2)}`, chartW - 50, y + 12);
       });
       ctx.setLineDash([]);
     }
-
+    
     // Draw Candles - BLUE for bullish, RED for bearish
     for (let i = 0; i < visibleCandles.length; i++) {
       const c = visibleCandles[i];
       const x = offsetX + i * totalCandleW;
       const isBullish = c.close >= c.open;
       const color = isBullish ? '#3B82F6' : '#EF4444';
-
+      
       ctx.strokeStyle = color;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(x + candleWidth / 2, toY(c.high));
       ctx.lineTo(x + candleWidth / 2, toY(c.low));
       ctx.stroke();
-
+      
       const bodyTop = toY(Math.max(c.open, c.close));
       const bodyBot = toY(Math.min(c.open, c.close));
       const bodyH = Math.max(1, bodyBot - bodyTop);
       ctx.fillStyle = color;
       ctx.fillRect(x, bodyTop, candleWidth, bodyH);
     }
-
+    
     // Draw current price line
     const curY = toY(currentPrice);
     ctx.setLineDash([2, 2]);
@@ -967,7 +1020,7 @@ export default function TradingChart() {
     ctx.fillStyle = '#0D1117';
     ctx.font = 'bold 10px JetBrains Mono, monospace';
     ctx.fillText(currentPrice.toFixed(2), chartW + 2, curY + 4);
-
+    
     // Draw drawings
     drawings.forEach(drawing => {
       if (drawing.points.length < 2) return;
@@ -980,7 +1033,7 @@ export default function TradingChart() {
       ctx.lineWidth = 2;
       ctx.stroke();
     });
-
+    
     // Draw current drawing
     if (currentDrawing && currentDrawing.points.length > 1) {
       ctx.beginPath();
@@ -992,7 +1045,7 @@ export default function TradingChart() {
       ctx.lineWidth = 2;
       ctx.stroke();
     }
-
+    
     // Draw MACD
     if (indicators.macd && macdH > 0) {
       const macdTop = H + 8;
@@ -1030,7 +1083,7 @@ export default function TradingChart() {
       ctx.font = '9px JetBrains Mono, monospace';
       ctx.fillText('MACD (12,26,9)', 4, macdTop + 12);
     }
-
+    
     // Draw RSI
     if (indicators.rsi && rsiH > 0) {
       const rsiTop = H + (indicators.macd ? macdH + 8 : 8);
@@ -1085,7 +1138,7 @@ export default function TradingChart() {
       ctx.font = '9px JetBrains Mono, monospace';
       ctx.fillText('RSI(14)', 4, rsiTop + 12);
     }
-
+    
     // Legend
     ctx.font = '10px JetBrains Mono, monospace';
     let lx = 8;
@@ -1103,18 +1156,21 @@ export default function TradingChart() {
       ctx.fillText(l.label, lx + 14, 12);
       lx += ctx.measureText(l.label).width + 24;
     });
-
+    
     ctx.fillStyle = '#484F58';
     ctx.font = '9px JetBrains Mono, monospace';
-    ctx.fillText(`${visibleCandles.length}/${TARGET_CANDLES} candles | Drag to pan | Ctrl+wheel zoom`, 8, H - 6);
+    ctx.fillText(`${visibleCandles.length}/${TARGET_CANDLES} candles | ${selectedTicks} ticks | Drag to pan | Ctrl+wheel zoom`, 8, H - 6);
   }, [candles, candleEndIndices, candleWidth, scrollOffset, showChart, indicators, drawings, currentDrawing, 
-      bbSeries, ema9Series, ema20Series, ema50Series, currentPrice, macd, rsiSeries, tfPrices, parabolicSAR, supportResistanceLevels]);
-
-  // Mouse handlers
+      bbSeries, ema9Series, ema20Series, ema50Series, currentPrice, macd, rsiSeries, tfPrices, parabolicSAR, supportResistanceLevels, selectedTicks]);
+  
+  /* ============================================
+     MOUSE HANDLERS
+     ============================================ */
+  
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !showChart) return;
-
+    
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       if (e.ctrlKey || e.metaKey) {
@@ -1124,7 +1180,7 @@ export default function TradingChart() {
         setScrollOffset(prev => Math.max(0, Math.min(candles.length - 10, prev + delta)));
       }
     };
-
+    
     const onMouseDown = (e: MouseEvent) => {
       if (activeTool) {
         const rect = canvas.getBoundingClientRect();
@@ -1144,7 +1200,7 @@ export default function TradingChart() {
         canvas.style.cursor = 'grabbing';
       }
     };
-
+    
     const onMouseMove = (e: MouseEvent) => {
       if (isDrawing && currentDrawing && activeTool) {
         const rect = canvas.getBoundingClientRect();
@@ -1161,7 +1217,7 @@ export default function TradingChart() {
         setScrollOffset(prev => Math.max(0, Math.min(candles.length - 10, dragStartOffset.current + delta)));
       }
     };
-
+    
     const onMouseUp = () => {
       if (isDrawing && currentDrawing && currentDrawing.points.length > 1) {
         setDrawings(prev => [...prev, currentDrawing]);
@@ -1171,12 +1227,12 @@ export default function TradingChart() {
       isDragging.current = false;
       canvas.style.cursor = 'crosshair';
     };
-
+    
     canvas.addEventListener('wheel', onWheel, { passive: false });
     canvas.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-
+    
     return () => {
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('mousedown', onMouseDown);
@@ -1184,10 +1240,14 @@ export default function TradingChart() {
       window.removeEventListener('mouseup', onMouseUp);
     };
   }, [candles.length, scrollOffset, candleWidth, showChart, activeTool, isDrawing, currentDrawing]);
-
+  
+  /* ============================================
+     TRADING & BOT FUNCTIONS
+     ============================================ */
+  
   const filteredMarkets = groupFilter === 'all' ? ALL_MARKETS : ALL_MARKETS.filter(m => m.group === groupFilter);
   const marketName = ALL_MARKETS.find(m => m.symbol === symbol)?.name || symbol;
-
+  
   const speak = useCallback((text: string) => {
     if (!voiceEnabled || !window.speechSynthesis) return;
     if (lastSpokenSignal.current === text) return;
@@ -1197,7 +1257,7 @@ export default function TradingChart() {
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
   }, [voiceEnabled]);
-
+  
   const handleBuy = async (side: 'buy' | 'sell') => {
     if (!isAuthorized) { toast.error('Please login to your Deriv account first'); return; }
     if (isTrading) return;
@@ -1218,7 +1278,48 @@ export default function TradingChart() {
     } catch (err: any) { toast.error(`Trade failed: ${err.message}`); }
     finally { setIsTrading(false); }
   };
-
+  
+  const checkPatternMatch = useCallback((): boolean => {
+    const ticks = getTickHistory(botConfig.botSymbol);
+    const cleanPattern = patternInput.toUpperCase().replace(/[^EO]/g, '');
+    if (ticks.length < cleanPattern.length) return false;
+    const recent = ticks.slice(-cleanPattern.length);
+    for (let i = 0; i < cleanPattern.length; i++) {
+      const expected = cleanPattern[i];
+      const actual = recent[i] % 2 === 0 ? 'E' : 'O';
+      if (expected !== actual) return false;
+    }
+    return true;
+  }, [botConfig.botSymbol, patternInput]);
+  
+  const checkDigitCondition = useCallback((): boolean => {
+    const ticks = getTickHistory(botConfig.botSymbol);
+    const win = parseInt(digitWindow) || 3;
+    const comp = parseInt(digitCompare);
+    if (ticks.length < win) return false;
+    const recent = ticks.slice(-win);
+    return recent.every(d => {
+      switch (digitCondition) {
+        case '>': return d > comp;
+        case '<': return d < comp;
+        case '>=': return d >= comp;
+        case '<=': return d <= comp;
+        case '==': return d === comp;
+        case '!=': return d !== comp;
+        default: return false;
+      }
+    });
+  }, [botConfig.botSymbol, digitCondition, digitCompare, digitWindow]);
+  
+  const checkStrategyCondition = useCallback((): boolean => {
+    if (!strategyEnabled) return true;
+    if (strategyMode === 'pattern') {
+      return checkPatternMatch();
+    } else {
+      return checkDigitCondition();
+    }
+  }, [strategyEnabled, strategyMode, checkPatternMatch, checkDigitCondition]);
+  
   const startBot = useCallback(async () => {
     if (!isAuthorized) { toast.error('Login to Deriv first'); return; }
     setBotRunning(true); setBotPaused(false);
@@ -1231,9 +1332,9 @@ export default function TradingChart() {
     const mult = parseFloat(botConfig.multiplier) || 2;
     let stake = baseStake;
     let pnl = 0; let trades = 0; let wins = 0; let losses = 0; let consLosses = 0;
-
+    
     if (voiceEnabled) speak('Auto trading bot started');
-
+    
     while (botRunningRef.current) {
       if (botPausedRef.current) { await new Promise(r => setTimeout(r, 500)); continue; }
       if (trades >= maxT || pnl <= -sl || pnl >= tp) {
@@ -1242,59 +1343,43 @@ export default function TradingChart() {
         if (voiceEnabled) speak(`Bot stopped. ${reason}. Total profit ${pnl.toFixed(2)} dollars`);
         break;
       }
-
+      
       if (strategyEnabled) {
         let conditionMet = false;
         while (botRunningRef.current && !conditionMet) {
-          const ticks = getTickHistory(botConfig.botSymbol);
-          if (strategyMode === 'pattern') {
-            const cleanPattern = patternInput.toUpperCase().replace(/[^EO]/g, '');
-            if (ticks.length >= cleanPattern.length) {
-              const recent = ticks.slice(-cleanPattern.length);
-              conditionMet = recent.every((d, i) => (d % 2 === 0 ? 'E' : 'O') === cleanPattern[i]);
-            }
-          } else {
-            const win = parseInt(digitWindow) || 3;
-            const comp = parseInt(digitCompare);
-            if (ticks.length >= win) {
-              const recent = ticks.slice(-win);
-              conditionMet = recent.every(d => {
-                switch (digitCondition) {
-                  case '>': return d > comp;
-                  case '<': return d < comp;
-                  case '>=': return d >= comp;
-                  case '<=': return d <= comp;
-                  case '==': return d === comp;
-                  case '!=': return d !== comp;
-                  default: return false;
-                }
-              });
-            }
+          conditionMet = checkStrategyCondition();
+          if (!conditionMet) {
+            await new Promise(r => setTimeout(r, 500));
           }
-          if (!conditionMet) await new Promise(r => setTimeout(r, 500));
         }
         if (!botRunningRef.current) break;
       }
-
+      
       const ct = botConfig.contractType;
       const params: any = { contract_type: ct, symbol: botConfig.botSymbol, duration: parseInt(botConfig.duration), duration_unit: botConfig.durationUnit, basis: 'stake', amount: stake };
       if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct)) params.barrier = botConfig.prediction;
-
+      
       try {
         const { contractId } = await derivApi.buyContract(params);
         const tr: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake, profit: 0, status: 'open', symbol: botConfig.botSymbol };
         setTradeHistory(prev => [tr, ...prev].slice(0, 100));
         const result = await derivApi.waitForContractResult(contractId);
         trades++; pnl += result.profit;
-        setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status } : t));
-
+        const resultDigit = getLastDigit(result.price || 0);
+        setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status, resultDigit } : t));
+        
         if (result.status === 'won') {
           wins++; consLosses = 0;
           stake = baseStake;
+          if (voiceEnabled && trades % 5 === 0) speak(`Trade ${trades} won. Total profit ${pnl.toFixed(2)}`);
         } else {
           losses++; consLosses++;
-          if (mart) stake = Math.round(stake * mult * 100) / 100;
-          else stake = baseStake;
+          if (mart) {
+            stake = Math.round(stake * mult * 100) / 100;
+          } else {
+            stake = baseStake;
+          }
+          if (voiceEnabled) speak(`Loss ${consLosses}. ${mart ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
         }
         setBotStats({ trades, wins, losses, pnl, currentStake: stake, consecutiveLosses: consLosses });
       } catch (err: any) {
@@ -1303,22 +1388,27 @@ export default function TradingChart() {
       }
     }
     setBotRunning(false); botRunningRef.current = false;
-  }, [isAuthorized, botConfig, voiceEnabled, speak, strategyEnabled, strategyMode, patternInput, digitCondition, digitCompare, digitWindow]);
-
+    setBotStats(prev => ({ ...prev, trades, wins, losses, pnl }));
+  }, [isAuthorized, botConfig, voiceEnabled, speak, strategyEnabled, checkStrategyCondition]);
+  
   const stopBot = useCallback(() => { botRunningRef.current = false; setBotRunning(false); toast.info('🛑 Bot stopped'); }, []);
   const togglePauseBot = useCallback(() => { botPausedRef.current = !botPausedRef.current; setBotPaused(botPausedRef.current); }, []);
-
+  
   const handleBotSymbolChange = useCallback((newSymbol: string) => {
     setBotConfig(prev => ({ ...prev, botSymbol: newSymbol }));
     setSymbol(newSymbol);
   }, []);
-
+  
   const totalTrades = tradeHistory.filter(t => t.status !== 'open').length;
   const wins = tradeHistory.filter(t => t.status === 'won').length;
   const losses = tradeHistory.filter(t => t.status === 'lost').length;
   const totalProfit = tradeHistory.reduce((s, t) => s + t.profit, 0);
   const winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
-
+  
+  /* ============================================
+     RENDER
+     ============================================ */
+  
   return (
     <div className="space-y-4 max-w-[1920px] mx-auto p-4">
       {/* Header */}
@@ -1330,6 +1420,19 @@ export default function TradingChart() {
           <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {candles.length}/{TARGET_CANDLES} candles</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Tick Selector */}
+          <div className="flex items-center gap-2 bg-card border border-border rounded-lg px-2 py-1">
+            <Sliders className="w-4 h-4 text-muted-foreground" />
+            <select 
+              value={selectedTicks} 
+              onChange={(e) => setSelectedTicks(parseInt(e.target.value))}
+              className="bg-transparent text-xs h-7 px-1 rounded focus:outline-none"
+            >
+              {TICK_OPTIONS.map(ticks => (
+                <option key={ticks} value={ticks}>{ticks.toLocaleString()} ticks</option>
+              ))}
+            </select>
+          </div>
           <Button onClick={handleManualRefresh} variant="outline" size="sm" className="gap-1" disabled={isLoading}>
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh
@@ -1343,7 +1446,7 @@ export default function TradingChart() {
           </Badge>
         </div>
       </div>
-
+      
       {/* Market Selector */}
       <div className="bg-card border border-border rounded-xl p-3">
         <div className="flex flex-wrap gap-1 mb-2">
@@ -1365,7 +1468,7 @@ export default function TradingChart() {
           ))}
         </div>
       </div>
-
+      
       {/* Timeframe */}
       <div className="flex flex-wrap gap-1">
         {TIMEFRAMES.map(tf => (
@@ -1376,7 +1479,7 @@ export default function TradingChart() {
           </Button>
         ))}
       </div>
-
+      
       {/* Multi-Indicator Strategy Signal Container */}
       <div className="bg-gradient-to-r from-blue-950/30 to-purple-950/30 border border-primary/30 rounded-xl p-3">
         <div className="flex items-center gap-2 mb-2">
@@ -1437,7 +1540,7 @@ export default function TradingChart() {
           💡 Combine 2-3 indicators for best results | Parabolic SAR + Bollinger Bands + RSI recommended
         </div>
       </div>
-
+      
       {/* Drawing Tools Bar */}
       {showChart && (
         <div className="bg-card border border-border rounded-xl p-2 flex flex-wrap gap-1 items-center">
@@ -1474,7 +1577,7 @@ export default function TradingChart() {
           )}
         </div>
       )}
-
+      
       {/* Indicators Toggle Bar - All initially OFF */}
       {showChart && (
         <div className="bg-card border border-border rounded-xl p-2 flex flex-wrap gap-1 items-center">
@@ -1505,7 +1608,7 @@ export default function TradingChart() {
           </Button>
         </div>
       )}
-
+      
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
         {/* LEFT: Chart */}
         <div className="xl:col-span-8 space-y-3">
@@ -1531,7 +1634,7 @@ export default function TradingChart() {
               </motion.div>
             )}
           </AnimatePresence>
-
+          
           {/* Price Info Panel */}
           <div className="grid grid-cols-3 md:grid-cols-7 gap-2">
             {[
@@ -1549,7 +1652,7 @@ export default function TradingChart() {
               </div>
             ))}
           </div>
-
+          
           {/* Digit Analysis */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-3">
             <h3 className="text-xs font-semibold text-foreground">Digit Analysis</h3>
@@ -1575,7 +1678,7 @@ export default function TradingChart() {
                 <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#D29922] rounded-full" style={{ width: `${underPct}%` }} /></div>
               </div>
             </div>
-
+            
             <div className="grid grid-cols-5 md:grid-cols-10 gap-1.5">
               {Array.from({ length: 10 }, (_, d) => {
                 const pct = percentages[d] || 0;
@@ -1600,7 +1703,7 @@ export default function TradingChart() {
             </div>
           </div>
         </div>
-
+        
         {/* RIGHT: Trade Panel */}
         <div className="xl:col-span-4 space-y-3">
           {/* Voice AI Toggle */}
@@ -1615,7 +1718,7 @@ export default function TradingChart() {
               </Button>
             </div>
           </div>
-
+          
           {/* Trading Signals */}
           <div className="grid grid-cols-2 gap-2">
             <div className="bg-card border border-border rounded-xl p-3">
@@ -1631,7 +1734,7 @@ export default function TradingChart() {
                 <div className={`h-full rounded-full ${riseSignal.direction === 'Rise' ? 'bg-profit' : 'bg-loss'}`} style={{ width: `${riseSignal.confidence}%` }} />
               </div>
             </div>
-
+            
             <div className="bg-card border border-border rounded-xl p-3">
               <div className="flex items-center gap-1 mb-1">
                 <Target className="w-3.5 h-3.5 text-profit" />
@@ -1644,7 +1747,7 @@ export default function TradingChart() {
               </div>
             </div>
           </div>
-
+          
           {/* Last 26 Digits */}
           <div className="bg-card border border-border rounded-xl p-3">
             <h3 className="text-xs font-semibold text-foreground mb-2">Last 26 Digits</h3>
@@ -1668,7 +1771,7 @@ export default function TradingChart() {
               })}
             </div>
           </div>
-
+          
           {/* Quick Trade */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-2">
             <h3 className="text-xs font-semibold text-foreground">Quick Trade</h3>
@@ -1705,8 +1808,8 @@ export default function TradingChart() {
               </Button>
             </div>
           </div>
-
-          {/* Bot Panel */}
+          
+          {/* Auto Bot Panel */}
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
@@ -1718,17 +1821,17 @@ export default function TradingChart() {
                 </motion.div>
               )}
             </div>
-
+            
             <Select value={botConfig.botSymbol} onValueChange={handleBotSymbolChange} disabled={botRunning}>
               <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>{ALL_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name}</SelectItem>)}</SelectContent>
             </Select>
-
+            
             <Select value={botConfig.contractType} onValueChange={v => setBotConfig(p => ({ ...p, contractType: v }))} disabled={botRunning}>
               <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
             </Select>
-
+            
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-[9px] text-muted-foreground">Stake ($)</label>
@@ -1751,7 +1854,110 @@ export default function TradingChart() {
                 </div>
               </div>
             </div>
-
+            
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] text-foreground">Martingale</label>
+              <div className="flex items-center gap-2">
+                {botConfig.martingale && (
+                  <Input type="number" min="1.1" step="0.1" value={botConfig.multiplier}
+                    onChange={e => setBotConfig(p => ({ ...p, multiplier: e.target.value }))} disabled={botRunning}
+                    className="h-6 text-[10px] w-14" />
+                )}
+                <button onClick={() => setBotConfig(p => ({ ...p, martingale: !p.martingale }))} disabled={botRunning}
+                  className={`w-9 h-5 rounded-full transition-colors ${botConfig.martingale ? 'bg-primary' : 'bg-muted'} relative`}>
+                  <div className={`w-4 h-4 rounded-full bg-background shadow absolute top-0.5 transition-transform ${botConfig.martingale ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
+            </div>
+            
+            {/* Strategy Section */}
+            <div className="border-t border-border pt-2 mt-1">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-[10px] font-semibold text-warning flex items-center gap-1">
+                  <Zap className="w-3 h-3" /> Pattern/Digit Strategy
+                </label>
+                <Switch checked={strategyEnabled} onCheckedChange={setStrategyEnabled} disabled={botRunning} />
+              </div>
+              
+              {strategyEnabled && (
+                <div className="space-y-2">
+                  <div className="flex gap-1">
+                    <Button size="sm" variant={strategyMode === 'pattern' ? 'default' : 'outline'} className="text-[9px] h-6 px-2 flex-1" onClick={() => setStrategyMode('pattern')} disabled={botRunning}>
+                      Pattern (E/O)
+                    </Button>
+                    <Button size="sm" variant={strategyMode === 'digit' ? 'default' : 'outline'} className="text-[9px] h-6 px-2 flex-1" onClick={() => setStrategyMode('digit')} disabled={botRunning}>
+                      Digit Condition
+                    </Button>
+                  </div>
+                  
+                  {strategyMode === 'pattern' ? (
+                    <div>
+                      <label className="text-[8px] text-muted-foreground">Pattern (E=Even, O=Odd)</label>
+                      <Textarea placeholder="e.g., EEEOE or OOEEO" value={patternInput}
+                        onChange={e => setPatternInput(e.target.value.toUpperCase().replace(/[^EO]/g, ''))}
+                        disabled={botRunning} className="h-12 text-[10px] font-mono min-h-0 mt-1" />
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-1">
+                      <div>
+                        <label className="text-[8px] text-muted-foreground">If last</label>
+                        <Input type="number" min="1" max="50" value={digitWindow}
+                          onChange={e => setDigitWindow(e.target.value)} disabled={botRunning} className="h-7 text-[10px]" />
+                      </div>
+                      <div>
+                        <label className="text-[8px] text-muted-foreground">ticks are</label>
+                        <Select value={digitCondition} onValueChange={setDigitCondition} disabled={botRunning}>
+                          <SelectTrigger className="h-7 text-[10px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {['==', '!=', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="text-[8px] text-muted-foreground">Digit</label>
+                        <Input type="number" min="0" max="9" value={digitCompare}
+                          onChange={e => setDigitCompare(e.target.value)} disabled={botRunning} className="h-7 text-[10px]" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            <div className="grid grid-cols-3 gap-1.5">
+              <div>
+                <label className="text-[8px] text-muted-foreground">Stop Loss</label>
+                <Input type="number" value={botConfig.stopLoss} onChange={e => setBotConfig(p => ({ ...p, stopLoss: e.target.value }))} disabled={botRunning} className="h-7 text-xs" />
+              </div>
+              <div>
+                <label className="text-[8px] text-muted-foreground">Take Profit</label>
+                <Input type="number" value={botConfig.takeProfit} onChange={e => setBotConfig(p => ({ ...p, takeProfit: e.target.value }))} disabled={botRunning} className="h-7 text-xs" />
+              </div>
+              <div>
+                <label className="text-[8px] text-muted-foreground">Max Trades</label>
+                <Input type="number" value={botConfig.maxTrades} onChange={e => setBotConfig(p => ({ ...p, maxTrades: e.target.value }))} disabled={botRunning} className="h-7 text-xs" />
+              </div>
+            </div>
+            
+            {botRunning && (
+              <div className="grid grid-cols-3 gap-1 text-center">
+                <div className="bg-muted/30 rounded p-1">
+                  <div className="text-[7px] text-muted-foreground">Stake</div>
+                  <div className="font-mono text-[10px] font-bold">${botStats.currentStake.toFixed(2)}</div>
+                </div>
+                <div className="bg-muted/30 rounded p-1">
+                  <div className="text-[7px] text-muted-foreground">Streak</div>
+                  <div className="font-mono text-[10px] font-bold text-loss">{botStats.consecutiveLosses}L</div>
+                </div>
+                <div className={`${botStats.pnl >= 0 ? 'bg-profit/10' : 'bg-loss/10'} rounded p-1`}>
+                  <div className="text-[7px] text-muted-foreground">P/L</div>
+                  <div className={`font-mono text-[10px] font-bold ${botStats.pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
+                    {botStats.pnl >= 0 ? '+' : ''}{botStats.pnl.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+            )}
+            
             <div className="flex gap-2">
               {!botRunning ? (
                 <Button onClick={startBot} disabled={!isAuthorized} className="flex-1 h-10 text-xs font-bold bg-profit hover:bg-profit/90">
@@ -1769,7 +1975,7 @@ export default function TradingChart() {
               )}
             </div>
           </div>
-
+          
           {/* Trade Progress */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-2">
             <div className="flex items-center justify-between">
@@ -1813,7 +2019,7 @@ export default function TradingChart() {
                 </div>
               </div>
             )}
-
+            
             {tradeHistory.length > 0 && (
               <div className="max-h-40 overflow-auto space-y-1">
                 {tradeHistory.slice(0, 10).map(t => (
@@ -1836,7 +2042,7 @@ export default function TradingChart() {
               </div>
             )}
           </div>
-
+          
           {/* Technical Status */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-2">
             <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
