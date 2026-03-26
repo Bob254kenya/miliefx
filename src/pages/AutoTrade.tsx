@@ -57,7 +57,30 @@ const GROUPS = [
 
 const TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '12h', '1d'];
 
-const TICK_OPTIONS = [50, 100, 200, 300, 500, 1000, 2000, 3000, 5000];
+// Target candles for all timeframes
+const TARGET_CANDLES = 200;
+
+// Calculate ticks needed for target candles in each timeframe
+const getTickCountForTimeframe = (timeframe: string): number => {
+  const seconds: Record<string, number> = {
+    '1m': 60,
+    '3m': 180,
+    '5m': 300,
+    '15m': 900,
+    '30m': 1800,
+    '1h': 3600,
+    '4h': 14400,
+    '12h': 43200,
+    '1d': 86400,
+  };
+  
+  const interval = seconds[timeframe] || 60;
+  // Get enough ticks to ensure TARGET_CANDLES candles (add 30% buffer)
+  return Math.ceil(TARGET_CANDLES * interval * 1.3);
+};
+
+// Tick selector options
+const TICK_OPTIONS = [50, 100, 200, 300, 500, 1000, 2000, 3000, 5000, 10000];
 
 const CONTRACT_TYPES = [
   { value: 'CALL', label: 'Rise' },
@@ -271,7 +294,7 @@ function getTickHistory(symbol: string): number[] {
 function addTick(symbol: string, digit: number) {
   if (!tickHistoryRef[symbol]) tickHistoryRef[symbol] = [];
   tickHistoryRef[symbol].push(digit);
-  if (tickHistoryRef[symbol].length > 5000) tickHistoryRef[symbol].shift();
+  if (tickHistoryRef[symbol].length > 10000) tickHistoryRef[symbol].shift();
 }
 
 export default function TradingChart() {
@@ -280,7 +303,6 @@ export default function TradingChart() {
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
   const [timeframe, setTimeframe] = useState('1m');
-  const [selectedTicks, setSelectedTicks] = useState(1000);
   const [prices, setPrices] = useState<number[]>([]);
   const [times, setTimes] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -289,7 +311,7 @@ export default function TradingChart() {
   const subscriptionRef = useRef<any>(null);
   const reconnectAttempts = useRef(0);
 
-  const [candleWidth, setCandleWidth] = useState(3);
+  const [candleWidth, setCandleWidth] = useState(4);
   const [scrollOffset, setScrollOffset] = useState(0);
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
@@ -347,6 +369,11 @@ export default function TradingChart() {
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
   const [turboMode, setTurboMode] = useState(false);
 
+  // Get tick count based on timeframe for target candles
+  const getRequiredTicks = useCallback(() => {
+    return getTickCountForTimeframe(timeframe);
+  }, [timeframe]);
+
   // Load data
   useEffect(() => {
     let active = true;
@@ -381,11 +408,12 @@ export default function TradingChart() {
         setPrices([]);
         setTimes([]);
         
-        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, selectedTicks);
+        const tickCount = getRequiredTicks();
+        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, tickCount);
         if (!active) return;
         
         const historicalDigits = (hist.history.prices || []).map((p: number) => getLastDigit(p));
-        tickHistoryRef[symbol] = historicalDigits.slice(-5000);
+        tickHistoryRef[symbol] = historicalDigits.slice(-10000);
         
         setPrices(hist.history.prices || []);
         setTimes(hist.history.times || []);
@@ -404,12 +432,12 @@ export default function TradingChart() {
             
             setPrices(prev => {
               const newPrices = [...prev, quote];
-              return newPrices.slice(-10000);
+              return newPrices.slice(-20000);
             });
             
             setTimes(prev => {
               const newTimes = [...prev, epoch];
-              return newTimes.slice(-10000);
+              return newTimes.slice(-20000);
             });
           });
           subscribedRef.current = true;
@@ -430,7 +458,7 @@ export default function TradingChart() {
       cleanup();
       subscribedRef.current = false;
     };
-  }, [symbol, selectedTicks]);
+  }, [symbol, timeframe, getRequiredTicks]);
 
   const handleManualRefresh = useCallback(async () => {
     if (!derivApi.isConnected) {
@@ -440,14 +468,15 @@ export default function TradingChart() {
     
     setIsLoading(true);
     try {
-      const hist = await derivApi.getTickHistory(symbol as MarketSymbol, selectedTicks);
+      const tickCount = getRequiredTicks();
+      const hist = await derivApi.getTickHistory(symbol as MarketSymbol, tickCount);
       setPrices(prev => {
         const newPrices = [...prev, ...hist.history.prices];
-        return newPrices.slice(-10000);
+        return newPrices.slice(-20000);
       });
       setTimes(prev => {
         const newTimes = [...prev, ...hist.history.times];
-        return newTimes.slice(-10000);
+        return newTimes.slice(-20000);
       });
       toast.success('Market data refreshed');
     } catch (err) {
@@ -455,11 +484,11 @@ export default function TradingChart() {
     } finally {
       setIsLoading(false);
     }
-  }, [symbol, selectedTicks]);
+  }, [symbol, timeframe, getRequiredTicks]);
 
   // Derived data
-  const tfPrices = useMemo(() => prices.slice(-selectedTicks), [prices, selectedTicks]);
-  const tfTimes = useMemo(() => times.slice(-selectedTicks), [times, selectedTicks]);
+  const tfPrices = useMemo(() => prices.slice(-getRequiredTicks()), [prices, getRequiredTicks]);
+  const tfTimes = useMemo(() => times.slice(-getRequiredTicks()), [times, getRequiredTicks]);
   const candles = useMemo(() => buildCandles(tfPrices, tfTimes, timeframe), [tfPrices, tfTimes, timeframe]);
   const currentPrice = prices[prices.length - 1] || 0;
   const lastDigit = getLastDigit(currentPrice);
@@ -647,7 +676,6 @@ export default function TradingChart() {
         ctx.fill();
       }
 
-      // Draw BB lines
       const drawBBLine = (values: (number | null)[], color: string, dash: number[] = []) => {
         ctx.beginPath();
         ctx.setLineDash(dash);
@@ -722,7 +750,7 @@ export default function TradingChart() {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Draw Candles
+    // Draw Candles - BLUE for bullish, RED for bearish
     for (let i = 0; i < visibleCandles.length; i++) {
       const c = visibleCandles[i];
       const x = offsetX + i * totalCandleW;
@@ -923,9 +951,9 @@ export default function TradingChart() {
 
     ctx.fillStyle = '#484F58';
     ctx.font = '9px JetBrains Mono, monospace';
-    ctx.fillText(`${visibleCandles.length} candles | ${selectedTicks} ticks | Drag to pan | Ctrl+wheel zoom`, 8, H - 6);
+    ctx.fillText(`${visibleCandles.length}/${TARGET_CANDLES} candles | ${getRequiredTicks()} ticks | Drag to pan | Ctrl+wheel zoom`, 8, H - 6);
   }, [candles, candleEndIndices, candleWidth, scrollOffset, showChart, indicators, drawings, currentDrawing, 
-      bbSeries, ema9Series, ema20Series, ema50Series, support, resistance, currentPrice, macd, rsiSeries, selectedTicks]);
+      bbSeries, ema9Series, ema20Series, ema50Series, support, resistance, currentPrice, macd, rsiSeries, getRequiredTicks]);
 
   // Mouse handlers
   useEffect(() => {
@@ -1144,21 +1172,9 @@ export default function TradingChart() {
           <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
             <BarChart3 className="w-5 h-5 text-primary" /> Trading Chart
           </h1>
-          <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {selectedTicks} ticks • {candles.length} candles</p>
+          <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {candles.length}/{TARGET_CANDLES} candles</p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 bg-card border border-border rounded-lg px-2 py-1">
-            <Sliders className="w-4 h-4 text-muted-foreground" />
-            <select 
-              value={selectedTicks} 
-              onChange={(e) => setSelectedTicks(parseInt(e.target.value))}
-              className="bg-transparent text-xs h-7 px-1 rounded focus:outline-none"
-            >
-              {TICK_OPTIONS.map(ticks => (
-                <option key={ticks} value={ticks}>{ticks} ticks</option>
-              ))}
-            </select>
-          </div>
           <Button onClick={handleManualRefresh} variant="outline" size="sm" className="gap-1" disabled={isLoading}>
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh
