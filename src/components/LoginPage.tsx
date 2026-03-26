@@ -36,9 +36,9 @@ export default function LoginPage() {
             </div>
             <div className="text-left">
               <h1 className="text-3xl font-bold text-foreground leading-tight">
-                Ceoramz<span className="text-primary">Traders</span>
+                Millie<span className="text-primary">Fx</span>
               </h1>
-              <p className="text-xs text-muted-foreground -mt-0.5">ramztrader.site</p>
+              <p className="text-xs text-muted-foreground -mt-0.5">Milliefx.site</p>
             </div>
           </motion.div>
           <motion.p
