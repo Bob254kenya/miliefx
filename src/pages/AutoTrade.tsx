@@ -1542,47 +1542,7 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* Last 26 Digits - Real-Time Updates */}
-          <div className="bg-card border border-border rounded-xl p-3">
-            <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center justify-between">
-              <span>Last 26 Digits (Real-Time)</span>
-              <Badge variant="outline" className="text-[8px] animate-pulse">
-                Auto Updates
-              </Badge>
-            </h3>
-            <div className="flex gap-1 flex-wrap justify-center">
-              {last26Digits.length > 0 ? (
-                last26Digits.map((d, i) => {
-                  const isLast = i === last26Digits.length - 1;
-                  const isEven = d % 2 === 0;
-                  return (
-                    <motion.div
-                      key={i}
-                      initial={isLast ? { scale: 0.8 } : {}}
-                      animate={isLast ? { scale: [1, 1.2, 1] } : {}}
-                      transition={isLast ? { duration: 0.5 } : {}}
-                      className={`w-7 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-xs border-2 transition-all ${
-                        isLast ? 'w-9 h-11 text-sm ring-2 ring-primary bg-primary/20' : ''
-                      } ${isEven
-                        ? 'border-[#3FB950] text-[#3FB950] bg-[#3FB950]/10'
-                        : 'border-[#D29922] text-[#D29922] bg-[#D29922]/10'
-                      }`}
-                    >
-                      {d}
-                    </motion.div>
-                  );
-                })
-              ) : (
-                <div className="text-center text-xs text-muted-foreground py-4">
-                  Waiting for tick data...
-                </div>
-              )}
-            </div>
-            <div className="text-center text-[8px] text-muted-foreground mt-2">
-              Latest digit highlighted • Updates every tick
-            </div>
-          </div>
-
+         
           {/* Strategic Recommendations */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <div className="bg-card border border-profit/30 rounded-lg p-2">
@@ -1703,6 +1663,47 @@ export default function TradingChart() {
               </div>
             </div>
           </div>
+           {/* Last 26 Digits - Real-Time Updates */}
+          <div className="bg-card border border-border rounded-xl p-3">
+            <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center justify-between">
+              <span>Last 26 Digits (Real-Time)</span>
+              <Badge variant="outline" className="text-[8px] animate-pulse">
+                Auto Updates
+              </Badge>
+            </h3>
+            <div className="flex gap-1 flex-wrap justify-center">
+              {last26Digits.length > 0 ? (
+                last26Digits.map((d, i) => {
+                  const isLast = i === last26Digits.length - 1;
+                  const isEven = d % 2 === 0;
+                  return (
+                    <motion.div
+                      key={i}
+                      initial={isLast ? { scale: 0.8 } : {}}
+                      animate={isLast ? { scale: [1, 1.2, 1] } : {}}
+                      transition={isLast ? { duration: 0.5 } : {}}
+                      className={`w-7 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-xs border-2 transition-all ${
+                        isLast ? 'w-9 h-11 text-sm ring-2 ring-primary bg-primary/20' : ''
+                      } ${isEven
+                        ? 'border-[#3FB950] text-[#3FB950] bg-[#3FB950]/10'
+                        : 'border-[#D29922] text-[#D29922] bg-[#D29922]/10'
+                      }`}
+                    >
+                      {d}
+                    </motion.div>
+                  );
+                })
+              ) : (
+                <div className="text-center text-xs text-muted-foreground py-4">
+                  Waiting for tick data...
+                </div>
+              )}
+            </div>
+            <div className="text-center text-[8px] text-muted-foreground mt-2">
+              Latest digit highlighted • Updates every tick
+            </div>
+          </div>
+
 
           {/* AUTO BOT PANEL */}
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
