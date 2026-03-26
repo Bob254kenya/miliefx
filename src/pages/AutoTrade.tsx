@@ -493,7 +493,7 @@ export default function TradingChart() {
     }
   }, []);
 
-  // Update display symbols - THIS NEEDS TO RUN IMMEDIATELY when contract type or prediction changes
+  // Update display symbols
   const updateDisplaySymbols = useCallback(() => {
     const tickPricesData = digitStats.tickPrices;
     const symbols = digitStats.last26Digits.map((digit, index) => {
@@ -1626,7 +1626,7 @@ export default function TradingChart() {
           </div>
         </div>
 
-        {/* RIGHT: Signals + Contract Selector + Bot + Last 26 Digits */}
+        {/* RIGHT: Signals + Bot + Last 26 Digits */}
         <div className="xl:col-span-4 space-y-3">
           {/* Voice AI Toggle */}
           <div className="bg-card border border-primary/30 rounded-xl p-3">
@@ -1715,41 +1715,6 @@ export default function TradingChart() {
               <div className="h-1.5 bg-muted rounded-full">
                 <div className="h-full bg-profit rounded-full" style={{ width: `${matchSignal.confidence}%` }} />
               </div>
-            </div>
-          </div>
-
-          {/* Contract Type Selector for Display */}
-          <div className="bg-card border border-border rounded-xl p-3 space-y-2">
-            <h3 className="text-xs font-semibold text-foreground">Analysis Mode</h3>
-            <Select value={selectedContractType} onValueChange={(value) => {
-              setSelectedContractType(value);
-              // Force immediate update of display symbols
-              setTimeout(() => updateDisplaySymbols(), 0);
-            }}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
-            </Select>
-
-            {['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(selectedContractType) && (
-              <div>
-                <label className="text-[9px] text-muted-foreground">Prediction (0-9)</label>
-                <div className="grid grid-cols-5 gap-1">
-                  {Array.from({ length: 10 }, (_, i) => (
-                    <button key={i} onClick={() => {
-                      setSelectedPrediction(String(i));
-                      // Force immediate update
-                      setTimeout(() => updateDisplaySymbols(), 0);
-                    }}
-                      className={`h-8 rounded text-xs font-mono font-bold transition-all ${
-                        selectedPrediction === String(i) ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground hover:bg-secondary'
-                      }`}>{i}</button>
-                  ))}
-                </div>
-              </div>
-            )}
-            
-            <div className="text-[9px] text-muted-foreground text-center pt-1">
-              Select contract type to analyze last 26 digits
             </div>
           </div>
 
@@ -2045,6 +2010,48 @@ export default function TradingChart() {
                     {legend.symbol3}
                   </div>
                   <span className="text-muted-foreground">{legend.meaning3}</span>
+                </div>
+              )}
+            </div>
+            
+            {/* Analysis Mode Selector - Compact version */}
+            <div className="mb-3 pt-1 border-t border-border">
+              <div className="flex items-center gap-2">
+                <label className="text-[9px] text-muted-foreground whitespace-nowrap">Mode:</label>
+                <Select value={selectedContractType} onValueChange={(value) => {
+                  setSelectedContractType(value);
+                  setTimeout(() => updateDisplaySymbols(), 0);
+                }}>
+                  <SelectTrigger className="h-6 text-[10px] flex-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CONTRACT_TYPES.map(c => (
+                      <SelectItem key={c.value} value={c.value} className="text-[10px]">
+                        {c.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              {['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(selectedContractType) && (
+                <div className="flex items-center gap-2 mt-2">
+                  <label className="text-[9px] text-muted-foreground whitespace-nowrap">Digit:</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="9"
+                    value={selectedPrediction}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '' || (parseInt(val) >= 0 && parseInt(val) <= 9)) {
+                        setSelectedPrediction(val);
+                        setTimeout(() => updateDisplaySymbols(), 0);
+                      }
+                    }}
+                    className="h-6 text-[10px] w-12 text-center"
+                  />
                 </div>
               )}
             </div>
