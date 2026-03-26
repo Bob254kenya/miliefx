@@ -97,8 +97,21 @@ interface TradeRecord {
   resultDigit?: number;
 }
 
+interface DigitStats {
+  frequency: Record<number, number>;
+  percentages: Record<number, number>;
+  mostCommon: number;
+  leastCommon: number;
+  totalTicks: number;
+  evenPercentage: number;
+  oddPercentage: number;
+  overPercentage: number;
+  underPercentage: number;
+}
+
 // Independent tick storage for digit analysis
 const globalTickHistory: { [symbol: string]: number[] } = {};
+const tickCallbacks: { [symbol: string]: (() => void)[] } = {};
 
 function getTickHistory(symbol: string): number[] {
   return globalTickHistory[symbol] || [];
@@ -109,6 +122,19 @@ function addTick(symbol: string, digit: number) {
   globalTickHistory[symbol].push(digit);
   // Keep up to 2000 ticks for analysis
   if (globalTickHistory[symbol].length > 2000) globalTickHistory[symbol].shift();
+  
+  // Notify all callbacks for this symbol
+  if (tickCallbacks[symbol]) {
+    tickCallbacks[symbol].forEach(cb => cb());
+  }
+}
+
+function subscribeToTicks(symbol: string, callback: () => void) {
+  if (!tickCallbacks[symbol]) tickCallbacks[symbol] = [];
+  tickCallbacks[symbol].push(callback);
+  return () => {
+    tickCallbacks[symbol] = tickCallbacks[symbol].filter(cb => cb !== callback);
+  };
 }
 
 function buildCandles(prices: number[], times: number[], tf: string): Candle[] {
@@ -288,9 +314,59 @@ function calcMACDFull(prices: number[]) {
   return { macd, signal, histogram: macd - signal };
 }
 
+function calculateDigitStats(symbol: string, tickRange: number): DigitStats {
+  const ticks = getTickHistory(symbol);
+  const recentTicks = ticks.slice(-tickRange);
+  
+  const frequency: Record<number, number> = {};
+  for (let i = 0; i <= 9; i++) frequency[i] = 0;
+  
+  for (const digit of recentTicks) {
+    frequency[digit] = (frequency[digit] || 0) + 1;
+  }
+  
+  const percentages: Record<number, number> = {};
+  for (let i = 0; i <= 9; i++) {
+    percentages[i] = (frequency[i] / recentTicks.length) * 100;
+  }
+  
+  let mostCommon = 0;
+  let leastCommon = 0;
+  let maxFreq = 0;
+  let minFreq = Infinity;
+  
+  for (let i = 0; i <= 9; i++) {
+    if (frequency[i] > maxFreq) {
+      maxFreq = frequency[i];
+      mostCommon = i;
+    }
+    if (frequency[i] < minFreq) {
+      minFreq = frequency[i];
+      leastCommon = i;
+    }
+  }
+  
+  const evenCount = recentTicks.filter(d => d % 2 === 0).length;
+  const oddCount = recentTicks.length - evenCount;
+  const overCount = recentTicks.filter(d => d > 4).length;
+  const underCount = recentTicks.length - overCount;
+  
+  return {
+    frequency,
+    percentages,
+    mostCommon,
+    leastCommon,
+    totalTicks: recentTicks.length,
+    evenPercentage: recentTicks.length > 0 ? (evenCount / recentTicks.length * 100) : 50,
+    oddPercentage: recentTicks.length > 0 ? (oddCount / recentTicks.length * 100) : 50,
+    overPercentage: recentTicks.length > 0 ? (overCount / recentTicks.length * 100) : 50,
+    underPercentage: recentTicks.length > 0 ? (underCount / recentTicks.length * 100) : 50,
+  };
+}
+
 export default function TradingChart() {
   const { isAuthorized } = useAuth();
-  const [showChart, setShowChart] = useState(false); // Initially hidden
+  const [showChart, setShowChart] = useState(false);
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
   const [timeframe, setTimeframe] = useState('1m');
@@ -298,15 +374,28 @@ export default function TradingChart() {
   const [times, setTimes] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [candleCount, setCandleCount] = useState(CANDLE_CONFIG.defaultCandles);
-  const [tickRange, setTickRange] = useState(100); // Independent tick range for digit analysis
+  const [tickRange, setTickRange] = useState(100);
   const subscribedRef = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const subscriptionRef = useRef<any>(null);
   const reconnectAttempts = useRef(0);
 
-  // Indicators state - initially no indicators
+  // Indicators state
   const [indicators, setIndicators] = useState<Indicator[]>([]);
   const [showIndicatorPanel, setShowIndicatorPanel] = useState(false);
+
+  // Digit stats state - will update in real-time
+  const [digitStats, setDigitStats] = useState<DigitStats>({
+    frequency: {},
+    percentages: {},
+    mostCommon: 0,
+    leastCommon: 0,
+    totalTicks: 0,
+    evenPercentage: 50,
+    oddPercentage: 50,
+    overPercentage: 50,
+    underPercentage: 50,
+  });
 
   // Zoom & pan state
   const [candleWidth, setCandleWidth] = useState(7);
@@ -361,14 +450,24 @@ export default function TradingChart() {
   const [botStats, setBotStats] = useState({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 });
   const [turboMode, setTurboMode] = useState(false);
 
-  // Independent digit analysis state - NOT affected by candles
-  const [digitStats, setDigitStats] = useState({
-    frequency: {} as Record<number, number>,
-    percentages: {} as Record<number, number>,
-    mostCommon: 0,
-    leastCommon: 0,
-    totalTicks: 0,
-  });
+  // Function to update digit stats (called on tick range change and every new tick)
+  const updateDigitStats = useCallback(() => {
+    const stats = calculateDigitStats(symbol, tickRange);
+    setDigitStats(stats);
+  }, [symbol, tickRange]);
+
+  // Subscribe to real-time tick updates for digit analysis
+  useEffect(() => {
+    // Initial calculation
+    updateDigitStats();
+    
+    // Subscribe to tick updates
+    const unsubscribe = subscribeToTicks(symbol, () => {
+      updateDigitStats();
+    });
+    
+    return unsubscribe;
+  }, [symbol, tickRange, updateDigitStats]);
 
   const addIndicator = useCallback((type: IndicatorType) => {
     const newIndicator: Indicator = {
@@ -427,7 +526,6 @@ export default function TradingChart() {
         setPrices([]);
         setTimes([]);
         
-        // Fetch historical data with selected candle count
         const ticksToLoad = Math.min(candleCount, CANDLE_CONFIG.maxCandles);
         const hist = await derivApi.getTickHistory(symbol as MarketSymbol, ticksToLoad);
         if (!active) return;
@@ -440,6 +538,9 @@ export default function TradingChart() {
         setTimes(hist.history.times || []);
         setScrollOffset(0);
         setIsLoading(false);
+        
+        // Update digit stats after loading historical data
+        updateDigitStats();
 
         if (!subscribedRef.current || !subscriptionRef.current) {
           subscriptionRef.current = await derivApi.subscribeTicks(symbol as MarketSymbol, (data: any) => {
@@ -449,7 +550,7 @@ export default function TradingChart() {
             const digit = getLastDigit(quote);
             const epoch = data.tick.epoch;
             
-            // Update independent tick history for digit analysis
+            // Update independent tick history for digit analysis (triggers callback)
             addTick(symbol, digit);
             
             // Update prices and times for candles
@@ -492,55 +593,7 @@ export default function TradingChart() {
       cleanup();
       subscribedRef.current = false;
     };
-  }, [symbol, candleCount]);
-
-  // Independent digit analysis - updates based ONLY on tick range, NOT candles
-  useEffect(() => {
-    const updateDigitAnalysis = () => {
-      const ticks = getTickHistory(symbol);
-      const recentTicks = ticks.slice(-tickRange);
-      
-      if (recentTicks.length > 0) {
-        const frequency: Record<number, number> = {};
-        for (let i = 0; i <= 9; i++) frequency[i] = 0;
-        
-        for (const digit of recentTicks) {
-          frequency[digit] = (frequency[digit] || 0) + 1;
-        }
-        
-        const percentages: Record<number, number> = {};
-        for (let i = 0; i <= 9; i++) {
-          percentages[i] = (frequency[i] / recentTicks.length) * 100;
-        }
-        
-        let mostCommon = 0;
-        let leastCommon = 0;
-        let maxFreq = 0;
-        let minFreq = Infinity;
-        
-        for (let i = 0; i <= 9; i++) {
-          if (frequency[i] > maxFreq) {
-            maxFreq = frequency[i];
-            mostCommon = i;
-          }
-          if (frequency[i] < minFreq) {
-            minFreq = frequency[i];
-            leastCommon = i;
-          }
-        }
-        
-        setDigitStats({
-          frequency,
-          percentages,
-          mostCommon,
-          leastCommon,
-          totalTicks: recentTicks.length,
-        });
-      }
-    };
-    
-    updateDigitAnalysis();
-  }, [symbol, tickRange]);
+  }, [symbol, candleCount, updateDigitStats]);
 
   useEffect(() => {
     const checkConnection = setInterval(() => {
@@ -601,42 +654,8 @@ export default function TradingChart() {
   const rsiSeries = useMemo(() => calcRSISeries(prices, 14), [prices]);
   const macdSeries = useMemo(() => calcMACDSeries(prices), [prices]);
 
-  // Digit stats from independent analysis
-  const { frequency, percentages, mostCommon, leastCommon, totalTicks } = digitStats;
-  
-  const evenCount = useMemo(() => {
-    const ticks = getTickHistory(symbol).slice(-tickRange);
-    return ticks.filter(d => d % 2 === 0).length;
-  }, [symbol, tickRange]);
-  
-  const oddCount = useMemo(() => {
-    const ticks = getTickHistory(symbol).slice(-tickRange);
-    return ticks.length - evenCount;
-  }, [symbol, tickRange, evenCount]);
-  
-  const evenPct = useMemo(() => {
-    const ticks = getTickHistory(symbol).slice(-tickRange);
-    return ticks.length > 0 ? (evenCount / ticks.length * 100) : 50;
-  }, [symbol, tickRange, evenCount]);
-  
-  const oddPct = 100 - evenPct;
-  
-  const overCount = useMemo(() => {
-    const ticks = getTickHistory(symbol).slice(-tickRange);
-    return ticks.filter(d => d > 4).length;
-  }, [symbol, tickRange]);
-  
-  const underCount = useMemo(() => {
-    const ticks = getTickHistory(symbol).slice(-tickRange);
-    return ticks.length - overCount;
-  }, [symbol, tickRange, overCount]);
-  
-  const overPct = useMemo(() => {
-    const ticks = getTickHistory(symbol).slice(-tickRange);
-    return ticks.length > 0 ? (overCount / ticks.length * 100) : 50;
-  }, [symbol, tickRange, overCount]);
-  
-  const underPct = 100 - overPct;
+  // Use digit stats from real-time updates
+  const { frequency, percentages, mostCommon, leastCommon, totalTicks, evenPercentage, oddPercentage, overPercentage, underPercentage } = digitStats;
   
   const bbRange = bb.upper - bb.lower || 1;
   const bbPosition = ((currentPrice - bb.lower) / bbRange * 100);
@@ -647,14 +666,14 @@ export default function TradingChart() {
   }, [rsi]);
 
   const eoSignal = useMemo(() => {
-    const conf = Math.abs(evenPct - 50) * 2 + 50;
-    return { direction: evenPct > 50 ? 'Even' : 'Odd', confidence: Math.min(90, Math.round(conf)) };
-  }, [evenPct]);
+    const conf = Math.abs(evenPercentage - 50) * 2 + 50;
+    return { direction: evenPercentage > 50 ? 'Even' : 'Odd', confidence: Math.min(90, Math.round(conf)) };
+  }, [evenPercentage]);
 
   const ouSignal = useMemo(() => {
-    const conf = Math.abs(overPct - 50) * 2 + 50;
-    return { direction: overPct > 50 ? 'Over' : 'Under', confidence: Math.min(90, Math.round(conf)) };
-  }, [overPct]);
+    const conf = Math.abs(overPercentage - 50) * 2 + 50;
+    return { direction: overPercentage > 50 ? 'Over' : 'Under', confidence: Math.min(90, Math.round(conf)) };
+  }, [overPercentage]);
 
   const matchSignal = useMemo(() => {
     const bestPct = Math.max(...Object.values(percentages));
@@ -1440,10 +1459,10 @@ export default function TradingChart() {
             ))}
           </div>
 
-          {/* Digit Analysis - INDEPENDENT from candles */}
+          {/* Digit Analysis - REAL-TIME UPDATES */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold text-foreground">Digit Analysis (Independent from candles)</h3>
+              <h3 className="text-xs font-semibold text-foreground">Digit Analysis (Real-Time Updates)</h3>
               <div className="flex items-center gap-2">
                 <label className="text-[9px] text-muted-foreground">Tick Range:</label>
                 <Select value={String(tickRange)} onValueChange={v => setTickRange(parseInt(v))}>
@@ -1456,8 +1475,8 @@ export default function TradingChart() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Badge variant="outline" className="text-[9px]">
-                  Ticks: {totalTicks}
+                <Badge variant="outline" className="text-[9px] animate-pulse">
+                  Live: {totalTicks} ticks
                 </Badge>
               </div>
             </div>
@@ -1465,23 +1484,23 @@ export default function TradingChart() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
                 <div className="text-[9px] text-[#D29922]">Odd</div>
-                <div className="font-mono text-sm font-bold text-[#D29922]">{oddPct.toFixed(1)}%</div>
-                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#D29922] rounded-full" style={{ width: `${oddPct}%` }} /></div>
+                <div className="font-mono text-sm font-bold text-[#D29922]">{oddPercentage.toFixed(1)}%</div>
+                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#D29922] rounded-full" style={{ width: `${oddPercentage}%` }} /></div>
               </div>
               <div className="bg-[#3FB950]/10 border border-[#3FB950]/30 rounded-lg p-2">
                 <div className="text-[9px] text-[#3FB950]">Even</div>
-                <div className="font-mono text-sm font-bold text-[#3FB950]">{evenPct.toFixed(1)}%</div>
-                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#3FB950] rounded-full" style={{ width: `${evenPct}%` }} /></div>
+                <div className="font-mono text-sm font-bold text-[#3FB950]">{evenPercentage.toFixed(1)}%</div>
+                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#3FB950] rounded-full" style={{ width: `${evenPercentage}%` }} /></div>
               </div>
               <div className="bg-primary/10 border border-primary/30 rounded-lg p-2">
                 <div className="text-[9px] text-primary">Over 4 (5-9)</div>
-                <div className="font-mono text-sm font-bold text-primary">{overPct.toFixed(1)}%</div>
-                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-primary rounded-full" style={{ width: `${overPct}%` }} /></div>
+                <div className="font-mono text-sm font-bold text-primary">{overPercentage.toFixed(1)}%</div>
+                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-primary rounded-full" style={{ width: `${overPercentage}%` }} /></div>
               </div>
               <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
                 <div className="text-[9px] text-[#D29922]">Under 5 (0-4)</div>
-                <div className="font-mono text-sm font-bold text-[#D29922]">{underPct.toFixed(1)}%</div>
-                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#D29922] rounded-full" style={{ width: `${underPct}%` }} /></div>
+                <div className="font-mono text-sm font-bold text-[#D29922]">{underPercentage.toFixed(1)}%</div>
+                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#D29922] rounded-full" style={{ width: `${underPercentage}%` }} /></div>
               </div>
             </div>
 
@@ -1517,6 +1536,10 @@ export default function TradingChart() {
                 );
               })}
             </div>
+            
+            <div className="text-center text-[8px] text-muted-foreground animate-pulse">
+              🔄 Updating in real-time with each new tick
+            </div>
           </div>
 
           {/* Strategic Recommendations */}
@@ -1533,22 +1556,22 @@ export default function TradingChart() {
             </div>
             <div className="bg-card border border-[#D29922]/30 rounded-lg p-2">
               <div className="text-[9px] text-muted-foreground">Even/Odd</div>
-              <div className={`font-mono text-lg font-bold ${evenPct > 50 ? 'text-[#3FB950]' : 'text-[#D29922]'}`}>
-                {evenPct > 50 ? 'EVEN' : 'ODD'}
+              <div className={`font-mono text-lg font-bold ${evenPercentage > 50 ? 'text-[#3FB950]' : 'text-[#D29922]'}`}>
+                {evenPercentage > 50 ? 'EVEN' : 'ODD'}
               </div>
-              <div className="text-[8px] text-muted-foreground">{Math.max(evenPct, oddPct).toFixed(1)}%</div>
+              <div className="text-[8px] text-muted-foreground">{Math.max(evenPercentage, oddPercentage).toFixed(1)}%</div>
             </div>
             <div className="bg-card border border-primary/30 rounded-lg p-2">
               <div className="text-[9px] text-muted-foreground">Over/Under</div>
-              <div className={`font-mono text-lg font-bold ${overPct > 50 ? 'text-primary' : 'text-[#D29922]'}`}>
-                {overPct > 50 ? 'OVER' : 'UNDER'}
+              <div className={`font-mono text-lg font-bold ${overPercentage > 50 ? 'text-primary' : 'text-[#D29922]'}`}>
+                {overPercentage > 50 ? 'OVER' : 'UNDER'}
               </div>
-              <div className="text-[8px] text-muted-foreground">{Math.max(overPct, underPct).toFixed(1)}%</div>
+              <div className="text-[8px] text-muted-foreground">{Math.max(overPercentage, underPercentage).toFixed(1)}%</div>
             </div>
           </div>
         </div>
 
-        {/* RIGHT: Signals + Trade + Tech - Same as before */}
+        {/* RIGHT: Signals + Trade + Tech (same as before) */}
         <div className="xl:col-span-4 space-y-3">
           {/* Voice AI Toggle */}
           <div className="bg-card border border-primary/30 rounded-xl p-3">
@@ -1608,7 +1631,7 @@ export default function TradingChart() {
               <div className={`font-mono text-sm font-bold ${eoSignal.direction === 'Even' ? 'text-[#3FB950]' : 'text-[#D29922]'}`}>
                 {eoSignal.direction}
               </div>
-              <div className="text-[8px] text-muted-foreground mb-1">{evenPct.toFixed(1)}% even</div>
+              <div className="text-[8px] text-muted-foreground mb-1">{evenPercentage.toFixed(1)}% even</div>
               <div className="h-1.5 bg-muted rounded-full">
                 <div className={`h-full rounded-full ${eoSignal.direction === 'Even' ? 'bg-[#3FB950]' : 'bg-[#D29922]'}`}
                   style={{ width: `${eoSignal.confidence}%` }} />
@@ -1625,7 +1648,7 @@ export default function TradingChart() {
               <div className={`font-mono text-sm font-bold ${ouSignal.direction === 'Over' ? 'text-primary' : 'text-[#D29922]'}`}>
                 {ouSignal.direction}
               </div>
-              <div className="text-[8px] text-muted-foreground mb-1">{overPct.toFixed(1)}% over</div>
+              <div className="text-[8px] text-muted-foreground mb-1">{overPercentage.toFixed(1)}% over</div>
               <div className="h-1.5 bg-muted rounded-full">
                 <div className={`h-full rounded-full ${ouSignal.direction === 'Over' ? 'bg-primary' : 'bg-[#D29922]'}`}
                   style={{ width: `${ouSignal.confidence}%` }} />
@@ -1648,9 +1671,9 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* Last 26 Digits - from independent tick history */}
+          {/* Last 26 Digits - Real-time */}
           <div className="bg-card border border-border rounded-xl p-3">
-            <h3 className="text-xs font-semibold text-foreground mb-2">Last 26 Digits (from {tickRange} ticks)</h3>
+            <h3 className="text-xs font-semibold text-foreground mb-2">Last 26 Digits (Real-Time)</h3>
             <div className="flex gap-1 flex-wrap justify-center">
               {last26.map((d, i) => {
                 const isLast = i === last26.length - 1;
@@ -1675,8 +1698,9 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* AUTO BOT PANEL - same as before */}
+          {/* AUTO BOT PANEL - same as before (kept for brevity) */}
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
+            {/* Bot panel content - same as original */}
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
                 <Zap className="w-3.5 h-3.5 text-primary" /> Ramzfx Speed Bot 
@@ -1714,7 +1738,6 @@ export default function TradingChart() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-[8px] text-muted-foreground mt-0.5">Chart auto-syncs with selected market</p>
             </div>
 
             <Select value={botConfig.contractType} onValueChange={v => setBotConfig(p => ({ ...p, contractType: v }))} disabled={botRunning}>
