@@ -95,6 +95,7 @@ interface TradeRecord {
   status: 'won' | 'lost' | 'open';
   symbol: string;
   resultDigit?: number;
+  outcomeSymbol?: string;
 }
 
 interface DigitStats {
@@ -471,10 +472,16 @@ export default function TradingChart() {
         return 'C';
         
       case 'DIGITOVER':
-        return digit > barrierNum ? 'O' : 'U';
+        // For Over: if digit > barrier -> O (Over), if digit == barrier -> S (Same), if digit < barrier -> U (Under)
+        if (digit > barrierNum) return 'O';
+        if (digit === barrierNum) return 'S';
+        return 'U';
         
       case 'DIGITUNDER':
-        return digit < barrierNum ? 'U' : 'O';
+        // For Under: if digit < barrier -> U (Under), if digit == barrier -> S (Same), if digit > barrier -> O (Over)
+        if (digit < barrierNum) return 'U';
+        if (digit === barrierNum) return 'S';
+        return 'O';
         
       case 'DIGITEVEN':
         return digit % 2 === 0 ? 'E' : 'O';
@@ -778,6 +785,91 @@ export default function TradingChart() {
       return checkDigitCondition();
     }
   }, [strategyEnabled, strategyMode, checkPatternMatch, checkDigitCondition]);
+
+  // Helper function to get outcome symbol for trade
+  const getOutcomeSymbol = useCallback((trade: TradeRecord): string => {
+    if (trade.status === 'open') return '';
+    
+    const digit = trade.resultDigit;
+    if (digit === undefined) return '';
+    
+    const barrier = botConfig.prediction;
+    const barrierNum = parseInt(barrier);
+    
+    switch (trade.type) {
+      case 'CALL':
+        return trade.status === 'won' ? 'R' : 'F';
+      case 'PUT':
+        return trade.status === 'won' ? 'F' : 'R';
+      case 'DIGITOVER':
+        if (trade.status === 'won') {
+          if (digit > barrierNum) return 'O';
+          if (digit === barrierNum) return 'S';
+          return 'U';
+        } else {
+          if (digit <= barrierNum) return digit === barrierNum ? 'S' : 'U';
+          return 'O';
+        }
+      case 'DIGITUNDER':
+        if (trade.status === 'won') {
+          if (digit < barrierNum) return 'U';
+          if (digit === barrierNum) return 'S';
+          return 'O';
+        } else {
+          if (digit >= barrierNum) return digit === barrierNum ? 'S' : 'O';
+          return 'U';
+        }
+      case 'DIGITEVEN':
+        if (trade.status === 'won') {
+          return digit % 2 === 0 ? 'E' : 'O';
+        } else {
+          return digit % 2 !== 0 ? 'O' : 'E';
+        }
+      case 'DIGITODD':
+        if (trade.status === 'won') {
+          return digit % 2 !== 0 ? 'O' : 'E';
+        } else {
+          return digit % 2 === 0 ? 'E' : 'O';
+        }
+      case 'DIGITMATCH':
+        if (trade.status === 'won') {
+          return digit === barrierNum ? 'S' : 'D';
+        } else {
+          return digit !== barrierNum ? 'D' : 'S';
+        }
+      case 'DIGITDIFF':
+        if (trade.status === 'won') {
+          return digit !== barrierNum ? 'D' : 'S';
+        } else {
+          return digit === barrierNum ? 'S' : 'D';
+        }
+      default:
+        return '';
+    }
+  }, [botConfig.prediction]);
+
+  const getLegendText = () => {
+    switch (selectedContractType) {
+      case 'CALL':
+        return { symbol1: 'R', meaning1: 'Rise (price up)', symbol2: 'F', meaning2: 'Fall (price down)', symbol3: 'C', meaning3: 'Constant (price same)' };
+      case 'PUT':
+        return { symbol1: 'F', meaning1: 'Fall (price down)', symbol2: 'R', meaning2: 'Rise (price up)', symbol3: 'C', meaning3: 'Constant (price same)' };
+      case 'DIGITOVER':
+        return { symbol1: 'O', meaning1: `Over > ${selectedPrediction}`, symbol2: 'S', meaning2: `Same = ${selectedPrediction}`, symbol3: 'U', meaning3: `Under < ${selectedPrediction}` };
+      case 'DIGITUNDER':
+        return { symbol1: 'U', meaning1: `Under < ${selectedPrediction}`, symbol2: 'S', meaning2: `Same = ${selectedPrediction}`, symbol3: 'O', meaning3: `Over > ${selectedPrediction}` };
+      case 'DIGITEVEN':
+        return { symbol1: 'E', meaning1: 'Even', symbol2: 'O', meaning2: 'Odd', symbol3: '', meaning3: '' };
+      case 'DIGITODD':
+        return { symbol1: 'O', meaning1: 'Odd', symbol2: 'E', meaning2: 'Even', symbol3: '', meaning3: '' };
+      case 'DIGITMATCH':
+        return { symbol1: 'S', meaning1: `Same = ${selectedPrediction}`, symbol2: 'D', meaning2: `Different ≠ ${selectedPrediction}`, symbol3: '', meaning3: '' };
+      case 'DIGITDIFF':
+        return { symbol1: 'D', meaning1: `Different ≠ ${selectedPrediction}`, symbol2: 'S', meaning2: `Same = ${selectedPrediction}`, symbol3: '', meaning3: '' };
+      default:
+        return { symbol1: '', meaning1: '', symbol2: '', meaning2: '', symbol3: '', meaning3: '' };
+    }
+  };
 
   // Canvas handlers
   useEffect(() => {
@@ -1303,29 +1395,6 @@ export default function TradingChart() {
   const totalProfit = tradeHistory.reduce((s, t) => s + t.profit, 0);
   const winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
 
-  const getLegendText = () => {
-    switch (selectedContractType) {
-      case 'CALL':
-        return { symbol1: 'R', meaning1: 'Rise (price up)', symbol2: 'F', meaning2: 'Fall (price down)', symbol3: 'C', meaning3: 'Constant (price same)' };
-      case 'PUT':
-        return { symbol1: 'F', meaning1: 'Fall (price down)', symbol2: 'R', meaning2: 'Rise (price up)', symbol3: 'C', meaning3: 'Constant (price same)' };
-      case 'DIGITOVER':
-        return { symbol1: 'O', meaning1: `Over > ${selectedPrediction}`, symbol2: 'U', meaning2: `Under ≤ ${selectedPrediction}`, symbol3: '', meaning3: '' };
-      case 'DIGITUNDER':
-        return { symbol1: 'U', meaning1: `Under < ${selectedPrediction}`, symbol2: 'O', meaning2: `Over ≥ ${selectedPrediction}`, symbol3: '', meaning3: '' };
-      case 'DIGITEVEN':
-        return { symbol1: 'E', meaning1: 'Even', symbol2: 'O', meaning2: 'Odd', symbol3: '', meaning3: '' };
-      case 'DIGITODD':
-        return { symbol1: 'O', meaning1: 'Odd', symbol2: 'E', meaning2: 'Even', symbol3: '', meaning3: '' };
-      case 'DIGITMATCH':
-        return { symbol1: 'S', meaning1: `Same = ${selectedPrediction}`, symbol2: 'D', meaning2: `Different ≠ ${selectedPrediction}`, symbol3: '', meaning3: '' };
-      case 'DIGITDIFF':
-        return { symbol1: 'D', meaning1: `Different ≠ ${selectedPrediction}`, symbol2: 'S', meaning2: `Same = ${selectedPrediction}`, symbol3: '', meaning3: '' };
-      default:
-        return { symbol1: '', meaning1: '', symbol2: '', meaning2: '', symbol3: '', meaning3: '' };
-    }
-  };
-
   const legend = getLegendText();
 
   return (
@@ -1517,7 +1586,7 @@ export default function TradingChart() {
           {/* Digit Analysis - Real-Time Updates */}
           <div className="bg-card border border-border rounded-xl p-3 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold text-foreground">Digit Analysis (Real-Time)</h3>
+              <h3 className="text-xs font-semibold text-foreground">Ramzfx Digit Analysis (Real-Time)</h3>
               <div className="flex items-center gap-2">
                 <label className="text-[9px] text-muted-foreground">Tick Range:</label>
                 <Select value={String(tickRange)} onValueChange={v => setTickRange(parseInt(v))}>
@@ -1722,7 +1791,7 @@ export default function TradingChart() {
           <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                <Zap className="w-3.5 h-3.5 text-primary" /> Milliefx Speed Bot
+                <Zap className="w-3.5 h-3.5 text-primary" /> Ramzfx Speed Bot
               </h3>
               <div className="flex items-center gap-2">
                 <Button
@@ -1951,10 +2020,10 @@ export default function TradingChart() {
             </div>
           </div>
 
-          {/* Last 26 Digits - Below Milliefx Speed Bot */}
+          {/* Last 26 Digits - Filtration Chamber */}
           <div className="bg-card border border-border rounded-xl p-3">
             <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center justify-between">
-              <span>Last 26 Digits Analysis</span>
+              <span>Filtration Chamber 🚆</span>
               <div className="flex items-center gap-2">
                 <Badge variant="outline" className="text-[8px] animate-pulse">
                   🟢 LIVE
@@ -1979,8 +2048,9 @@ export default function TradingChart() {
                   <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
                     legend.symbol1 === 'R' ? 'bg-profit/20 text-profit' :
                     legend.symbol1 === 'F' ? 'bg-loss/20 text-loss' :
-                    legend.symbol1 === 'O' ? 'bg-primary/20 text-primary' :
-                    legend.symbol1 === 'U' ? 'bg-[#D29922]/20 text-[#D29922]' :
+                    legend.symbol1 === 'O' ? 'bg-loss/20 text-loss' :
+                    legend.symbol1 === 'U' ? 'bg-profit/20 text-profit' :
+                    legend.symbol1 === 'S' ? 'bg-primary/20 text-primary' :
                     legend.symbol1 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
                     'bg-muted/20 text-foreground'
                   }`}>
@@ -1994,8 +2064,9 @@ export default function TradingChart() {
                   <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
                     legend.symbol2 === 'R' ? 'bg-profit/20 text-profit' :
                     legend.symbol2 === 'F' ? 'bg-loss/20 text-loss' :
-                    legend.symbol2 === 'O' ? 'bg-primary/20 text-primary' :
-                    legend.symbol2 === 'U' ? 'bg-[#D29922]/20 text-[#D29922]' :
+                    legend.symbol2 === 'O' ? 'bg-loss/20 text-loss' :
+                    legend.symbol2 === 'U' ? 'bg-profit/20 text-profit' :
+                    legend.symbol2 === 'S' ? 'bg-primary/20 text-primary' :
                     legend.symbol2 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
                     'bg-muted/20 text-foreground'
                   }`}>
@@ -2006,7 +2077,15 @@ export default function TradingChart() {
               )}
               {legend.symbol3 && (
                 <div className="flex items-center gap-1">
-                  <div className="w-4 h-4 rounded bg-muted/20 flex items-center justify-center text-[9px] font-bold">
+                  <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
+                    legend.symbol3 === 'R' ? 'bg-profit/20 text-profit' :
+                    legend.symbol3 === 'F' ? 'bg-loss/20 text-loss' :
+                    legend.symbol3 === 'O' ? 'bg-loss/20 text-loss' :
+                    legend.symbol3 === 'U' ? 'bg-profit/20 text-profit' :
+                    legend.symbol3 === 'S' ? 'bg-primary/20 text-primary' :
+                    legend.symbol3 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
+                    'bg-muted/20 text-foreground'
+                  }`}>
                     {legend.symbol3}
                   </div>
                   <span className="text-muted-foreground">{legend.meaning3}</span>
@@ -2014,7 +2093,7 @@ export default function TradingChart() {
               )}
             </div>
             
-            {/* Analysis Mode Selector - Compact version */}
+            {/* Analysis Mode Selector */}
             <div className="mb-3 pt-1 border-t border-border">
               <div className="flex items-center gap-2">
                 <label className="text-[9px] text-muted-foreground whitespace-nowrap">Mode:</label>
@@ -2064,15 +2143,22 @@ export default function TradingChart() {
                   let bgColor = '';
                   let textColor = '';
                   
+                  // Color mapping based on symbol meaning
                   if (symbol === 'R' || symbol === 'U') {
                     bgColor = 'bg-profit/20';
                     textColor = 'text-profit';
-                  } else if (symbol === 'F' || symbol === 'O' || symbol === 'D') {
+                  } else if (symbol === 'F' || symbol === 'O') {
                     bgColor = 'bg-loss/20';
                     textColor = 'text-loss';
-                  } else if (symbol === 'E' || symbol === 'S') {
+                  } else if (symbol === 'E') {
                     bgColor = 'bg-[#3FB950]/20';
                     textColor = 'text-[#3FB950]';
+                  } else if (symbol === 'S') {
+                    bgColor = 'bg-primary/20';
+                    textColor = 'text-primary';
+                  } else if (symbol === 'D') {
+                    bgColor = 'bg-[#D29922]/20';
+                    textColor = 'text-[#D29922]';
                   } else {
                     bgColor = 'bg-muted/20';
                     textColor = 'text-foreground';
@@ -2089,8 +2175,10 @@ export default function TradingChart() {
                       } ${bgColor} ${textColor} ${
                         isLast ? 'border-primary' : 
                         symbol === 'R' || symbol === 'U' ? 'border-profit/30' :
-                        symbol === 'F' || symbol === 'O' || symbol === 'D' ? 'border-loss/30' :
-                        symbol === 'E' || symbol === 'S' ? 'border-[#3FB950]/30' :
+                        symbol === 'F' || symbol === 'O' ? 'border-loss/30' :
+                        symbol === 'E' ? 'border-[#3FB950]/30' :
+                        symbol === 'S' ? 'border-primary/30' :
+                        symbol === 'D' ? 'border-[#D29922]/30' :
                         'border-border'
                       }`}
                     >
@@ -2113,7 +2201,7 @@ export default function TradingChart() {
           <div className="bg-card border border-border rounded-xl p-3 space-y-2">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                <Trophy className="w-3.5 h-3.5 text-primary" /> Trade Progress
+                <Trophy className="w-3.5 h-3.5 text-primary" /> Trade Results 
               </h3>
               {tradeHistory.length > 0 && (
                 <Button variant="ghost" size="sm" className="h-6 text-[9px] text-muted-foreground hover:text-loss"
@@ -2156,29 +2244,47 @@ export default function TradingChart() {
 
             {tradeHistory.length > 0 && (
               <div className="max-h-40 overflow-auto space-y-1">
-                {tradeHistory.slice(0, 10).map(t => (
-                  <div key={t.id} className={`flex items-center justify-between text-[9px] p-1.5 rounded-lg border ${
-                    t.status === 'open' ? 'border-primary/30 bg-primary/5' :
-                    t.status === 'won' ? 'border-profit/30 bg-profit/5' :
-                    'border-loss/30 bg-loss/5'
-                  }`}>
-                    <div className="flex items-center gap-1.5">
-                      <span className={`font-bold ${t.status === 'won' ? 'text-profit' : t.status === 'lost' ? 'text-loss' : 'text-primary'}`}>
-                        {t.status === 'open' ? '⏳' : t.status === 'won' ? '✅' : '❌'}
+                {tradeHistory.slice(0, 10).map(t => {
+                  const outcomeSymbol = getOutcomeSymbol(t);
+                  const outcomeColor = t.status === 'won' ? 'text-profit' : 'text-loss';
+                  
+                  // Determine badge color based on outcome symbol
+                  let badgeColor = '';
+                  if (outcomeSymbol === 'R' || outcomeSymbol === 'U') badgeColor = 'border-profit text-profit';
+                  else if (outcomeSymbol === 'F' || outcomeSymbol === 'O') badgeColor = 'border-loss text-loss';
+                  else if (outcomeSymbol === 'S') badgeColor = 'border-primary text-primary';
+                  else if (outcomeSymbol === 'D') badgeColor = 'border-[#D29922] text-[#D29922]';
+                  else if (outcomeSymbol === 'E') badgeColor = 'border-[#3FB950] text-[#3FB950]';
+                  
+                  return (
+                    <div key={t.id} className={`flex items-center justify-between text-[9px] p-1.5 rounded-lg border ${
+                      t.status === 'open' ? 'border-primary/30 bg-primary/5' :
+                      t.status === 'won' ? 'border-profit/30 bg-profit/5' :
+                      'border-loss/30 bg-loss/5'
+                    }`}>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`font-bold ${t.status === 'won' ? 'text-profit' : t.status === 'lost' ? 'text-loss' : 'text-primary'}`}>
+                          {t.status === 'open' ? '⏳' : t.status === 'won' ? '✅' : '❌'}
+                        </span>
+                        <span className="font-mono text-muted-foreground">{t.type}</span>
+                        <span className="text-muted-foreground">${t.stake.toFixed(2)}</span>
+                        {t.resultDigit !== undefined && (
+                          <Badge variant="outline" className={`text-[8px] px-1 ${t.status === 'won' ? 'border-profit text-profit' : 'border-loss text-loss'}`}>
+                            {t.resultDigit}
+                          </Badge>
+                        )}
+                        {outcomeSymbol && t.status !== 'open' && (
+                          <Badge variant="outline" className={`text-[8px] px-1 font-mono ${badgeColor}`}>
+                            {outcomeSymbol}
+                          </Badge>
+                        )}
+                      </div>
+                      <span className={`font-mono font-bold ${t.profit >= 0 ? 'text-profit' : 'text-loss'}`}>
+                        {t.status === 'open' ? '...' : `${t.profit >= 0 ? '+' : ''}$${t.profit.toFixed(2)}`}
                       </span>
-                      <span className="font-mono text-muted-foreground">{t.type}</span>
-                      <span className="text-muted-foreground">${t.stake.toFixed(2)}</span>
-                      {t.resultDigit !== undefined && (
-                        <Badge variant="outline" className={`text-[8px] px-1 ${t.status === 'won' ? 'border-profit text-profit' : 'border-loss text-loss'}`}>
-                          {t.resultDigit}
-                        </Badge>
-                      )}
                     </div>
-                    <span className={`font-mono font-bold ${t.profit >= 0 ? 'text-profit' : 'text-loss'}`}>
-                      {t.status === 'open' ? '...' : `${t.profit >= 0 ? '+' : ''}$${t.profit.toFixed(2)}`}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
