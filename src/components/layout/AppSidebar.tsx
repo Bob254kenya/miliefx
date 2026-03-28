@@ -28,20 +28,20 @@ const navItems = [
   { title: 'Settings', url: '/settings', icon: Settings },
 ];
 
-// Helper component for currency icon
-const CurrencyIcon = ({ currency, isVirtual }: { currency: string; isVirtual: boolean }) => {
-  const [imageError, setImageError] = useState(false);
-  
-  if (isVirtual) {
-    return (
-      <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
-        <span className="text-xs font-bold text-white">🎮</span>
-      </div>
-    );
-  }
+// Demo Icon Component - Exact match from reference
+const DemoIcon = () => (
+  <div className="w-6 h-6 rounded-md bg-gradient-to-br from-[#8B2635] to-[#6B1E2A] flex items-center justify-center flex-shrink-0 shadow-sm">
+    <span className="text-[8px] font-semibold text-white leading-none">
+      deriv<span className="text-red-400">demo</span>
+    </span>
+  </div>
+);
 
+// Real Account Icon Component - USA Flag for USD
+const RealAccountIcon = ({ currency }: { currency: string }) => {
+  const [imageError, setImageError] = useState(false);
   const currencyLower = currency.toLowerCase();
-  
+
   // Crypto currencies
   if (currencyLower === 'usdt') {
     return (
@@ -78,9 +78,9 @@ const CurrencyIcon = ({ currency, isVirtual }: { currency: string; isVirtual: bo
 
   if (!imageError) {
     return (
-      <div className="w-6 h-6 rounded-full overflow-hidden shadow-sm flex-shrink-0">
+      <div className="w-6 h-6 rounded-md overflow-hidden shadow-sm flex-shrink-0">
         <img 
-          src={`https://flagcdn.com/${flagCode}.svg`}
+          src={`https://flagcdn.com/w80/${flagCode}.png`}
           className="w-full h-full object-cover"
           alt={currency}
           onError={() => setImageError(true)}
@@ -91,10 +91,18 @@ const CurrencyIcon = ({ currency, isVirtual }: { currency: string; isVirtual: bo
 
   // Fallback for flag errors
   return (
-    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center flex-shrink-0 shadow-sm">
+    <div className="w-6 h-6 rounded-md bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center flex-shrink-0 shadow-sm">
       <span className="text-xs font-bold text-white">{currency.charAt(0)}</span>
     </div>
   );
+};
+
+// Combined Account Icon Component
+const AccountIcon = ({ currency, isVirtual }: { currency: string; isVirtual: boolean }) => {
+  if (isVirtual) {
+    return <DemoIcon />;
+  }
+  return <RealAccountIcon currency={currency} />;
 };
 
 export function AppSidebar() {
@@ -119,10 +127,10 @@ export function AppSidebar() {
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="w-full justify-between h-auto p-2 text-left hover:bg-sidebar-accent transition-colors">
                 <div className="flex items-center gap-3 flex-1">
-                  <CurrencyIcon currency={activeAccount.currency} isVirtual={activeAccount.is_virtual} />
+                  <AccountIcon currency={activeAccount.currency} isVirtual={activeAccount.is_virtual} />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs text-muted-foreground">
-                      {activeAccount.is_virtual ? 'Demo Account' : 'Real Account'}
+                      {activeAccount.is_virtual ? 'Demo Wallet' : 'USD Wallet'}
                     </div>
                     <div className="font-mono text-sm font-semibold text-foreground truncate">
                       {balance?.toFixed(2)} {activeAccount.currency}
@@ -141,11 +149,18 @@ export function AppSidebar() {
                   className={`py-2.5 px-2 cursor-pointer ${acc.loginid === activeAccount.loginid ? 'bg-accent' : ''}`}
                 >
                   <div className="flex items-center gap-3 w-full">
-                    <CurrencyIcon currency={acc.currency} isVirtual={acc.is_virtual} />
+                    <AccountIcon currency={acc.currency} isVirtual={acc.is_virtual} />
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-sm truncate">{acc.loginid}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {acc.is_virtual ? 'Demo' : 'Real'} • {acc.currency}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          {acc.is_virtual ? 'Demo Wallet' : 'USD Wallet'}
+                        </span>
+                        {acc.is_virtual && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500 text-white font-medium">
+                            Demo
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
