@@ -1,206 +1,271 @@
-import { NavLink } from '@/components/NavLink';
-import { useAuth } from '@/contexts/AuthContext';
-import {
-  LayoutDashboard, BarChart3, Activity, Bot, History, Settings, LogOut, ChevronDown, Cpu, Zap, Scan, Gift,
-} from 'lucide-react';
-import {
-  Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
-  SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
-} from '@/components/ui/sidebar';
-import { Rocket } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { useState } from 'react';
+import { Plus, ChevronRight, TrendingUp, Shield, Star, Wallet, DollarSign } from 'lucide-react';
 
-const navItems = [
-  { title: 'Pro Scanner Bot', url: '/', icon: Scan },
-  { title: 'Free Bots', url: '/free-bots', icon: Gift },
-  { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
-  { title: 'Markets', url: '/markets', icon: BarChart3 },
-  { title: 'Analyzer', url: '/analyzer', icon: Activity },
-  { title: 'Auto Trade', url: '/auto-trade', icon: Bot },
-  { title: 'Smart Bots', url: '/bots', icon: Cpu },
-  { title: 'Free bots', url: '/smart-bot', icon: Zap },
-  { title: 'Ramz Bot', url: '/ramz-bot', icon: Rocket },
-  { title: 'Trade History', url: '/history', icon: History },
-  { title: 'Settings', url: '/settings', icon: Settings },
-];
+interface Account {
+  id: string;
+  type: 'real' | 'demo';
+  currency: string;
+  balance: number;
+  loginid: string;
+  isDefault?: boolean;
+}
 
-// Demo Icon Component - Exact match from reference
+interface OptionsAccountsProps {
+  accounts: Account[];
+  activeAccountId?: string;
+  onSelectAccount: (accountId: string) => void;
+  onManageFunds: () => void;
+}
+
+// Demo Icon Component - Maroon gradient with split text (64x40px)
 const DemoIcon = () => (
-  <div className="w-6 h-6 rounded-md bg-gradient-to-br from-[#8B2635] to-[#6B1E2A] flex items-center justify-center flex-shrink-0 shadow-sm">
-    <span className="text-[8px] font-semibold text-white leading-none">
-      deriv<span className="text-red-400">demo</span>
-    </span>
+  <div className="w-16 h-10 rounded-lg bg-gradient-to-br from-[#8B0000] to-[#4a0000] flex items-center justify-center shadow-md relative overflow-hidden">
+    <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent"></div>
+    <div className="relative z-10 flex items-center gap-0.5">
+      <span className="text-white font-bold text-xs tracking-wide">deriv</span>
+      <span className="text-amber-400 font-bold text-xs">demo</span>
+    </div>
   </div>
 );
 
-// Real Account Icon Component - USA Flag for USD
+// Real Account Icon Component - USA Flag (40x40px)
 const RealAccountIcon = ({ currency }: { currency: string }) => {
   const [imageError, setImageError] = useState(false);
   const currencyLower = currency.toLowerCase();
 
-  // Crypto currencies
-  if (currencyLower === 'usdt') {
+  if (currencyLower === 'usd') {
+    if (!imageError) {
+      return (
+        <div className="w-10 h-10 rounded-lg overflow-hidden shadow-md">
+          <img 
+            src="https://flagcdn.com/us.svg"
+            className="w-full h-full object-cover"
+            alt="USA Flag"
+            onError={() => setImageError(true)}
+          />
+        </div>
+      );
+    }
     return (
-      <div className="w-6 h-6 rounded-full bg-gradient-to-br from-green-400 to-emerald-600 flex items-center justify-center flex-shrink-0 shadow-sm">
-        <span className="text-xs font-bold text-white">₮</span>
+      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center">
+        <span className="text-lg font-bold text-white">$</span>
       </div>
     );
   }
 
-  if (currencyLower === 'btc') {
-    return (
-      <div className="w-6 h-6 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center flex-shrink-0 shadow-sm">
-        <span className="text-xs font-bold text-white">₿</span>
-      </div>
-    );
-  }
-
-  if (currencyLower === 'eth') {
-    return (
-      <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-400 to-purple-700 flex items-center justify-center flex-shrink-0 shadow-sm">
-        <span className="text-xs font-bold text-white">Ξ</span>
-      </div>
-    );
-  }
-
-  // Fiat currencies with flags
-  const flagCode = currencyLower === 'usd' ? 'us' : 
-                   currencyLower === 'eur' ? 'eu' :
-                   currencyLower === 'gbp' ? 'gb' :
-                   currencyLower === 'jpy' ? 'jp' :
-                   currencyLower === 'aud' ? 'au' :
-                   currencyLower === 'cad' ? 'ca' :
-                   currencyLower === 'chf' ? 'ch' : currencyLower;
-
-  if (!imageError) {
-    return (
-      <div className="w-6 h-6 rounded-md overflow-hidden shadow-sm flex-shrink-0">
-        <img 
-          src={`https://flagcdn.com/w80/${flagCode}.png`}
-          className="w-full h-full object-cover"
-          alt={currency}
-          onError={() => setImageError(true)}
-        />
-      </div>
-    );
-  }
-
-  // Fallback for flag errors
+  // Handle other currencies
   return (
-    <div className="w-6 h-6 rounded-md bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center flex-shrink-0 shadow-sm">
-      <span className="text-xs font-bold text-white">{currency.charAt(0)}</span>
+    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-gray-500 to-gray-700 flex items-center justify-center">
+      <span className="text-lg font-bold text-white">{currency.charAt(0)}</span>
     </div>
   );
 };
 
-// Combined Account Icon Component
-const AccountIcon = ({ currency, isVirtual }: { currency: string; isVirtual: boolean }) => {
-  if (isVirtual) {
-    return <DemoIcon />;
-  }
-  return <RealAccountIcon currency={currency} />;
-};
+const OptionsAccounts = ({ 
+  accounts, 
+  activeAccountId, 
+  onSelectAccount, 
+  onManageFunds 
+}: OptionsAccountsProps) => {
+  const [hoveredAccount, setHoveredAccount] = useState<string | null>(null);
 
-export function AppSidebar() {
-  const { activeAccount, accounts, balance, logout, switchAccount } = useAuth();
+  const realAccounts = accounts.filter(acc => acc.type === 'real');
+  const demoAccounts = accounts.filter(acc => acc.type === 'demo');
+
+  const formatBalance = (balance: number, currency: string) => {
+    return new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(balance) + ' ' + currency;
+  };
+
+  const AccountCard = ({ account }: { account: Account }) => {
+    const isActive = account.id === activeAccountId;
+    const isHovered = hoveredAccount === account.id;
+
+    return (
+      <div
+        onClick={() => onSelectAccount(account.id)}
+        onMouseEnter={() => setHoveredAccount(account.id)}
+        onMouseLeave={() => setHoveredAccount(null)}
+        className={`
+          relative flex items-center gap-4 p-4 rounded-xl cursor-pointer
+          transition-all duration-200 ease-in-out
+          ${isActive 
+            ? 'bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 border-2 border-blue-500 dark:border-blue-400 shadow-lg' 
+            : 'bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 border border-gray-200 dark:border-gray-700'
+          }
+          ${isHovered && !isActive ? 'transform scale-[1.02] shadow-md' : ''}
+        `}
+      >
+        {/* Account Icon */}
+        <div className="flex-shrink-0">
+          {account.type === 'real' ? (
+            <RealAccountIcon currency={account.currency} />
+          ) : (
+            <DemoIcon />
+          )}
+        </div>
+
+        {/* Account Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap mb-1">
+            <h3 className="font-semibold text-gray-900 dark:text-white text-base">
+              {account.type === 'real' ? `${account.currency} Wallet` : 'Demo Wallet'}
+            </h3>
+            {account.isDefault && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-xs rounded-full">
+                <Star className="w-3 h-3" />
+                Default
+              </span>
+            )}
+            {account.type === 'real' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs rounded-full">
+                <Shield className="w-3 h-3" />
+                Real
+              </span>
+            )}
+          </div>
+          
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <p className="text-xs text-gray-500 dark:text-gray-400 font-mono">
+              {account.loginid}
+            </p>
+            {account.type === 'demo' && (
+              <span className="text-xs text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20 px-2 py-0.5 rounded-full font-medium">
+                Demo Account
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Balance */}
+        <div className="text-right flex-shrink-0">
+          <div className="font-mono font-bold text-gray-900 dark:text-white text-sm">
+            {formatBalance(account.balance, account.currency)}
+          </div>
+          {account.type === 'real' && (
+            <div className="text-xs text-green-600 dark:text-green-400 mt-0.5 flex items-center gap-1 justify-end">
+              <TrendingUp className="w-3 h-3" />
+              <span>Active</span>
+            </div>
+          )}
+          {account.type === 'demo' && (
+            <div className="text-xs text-purple-600 dark:text-purple-400 mt-0.5 flex items-center gap-1 justify-end">
+              <Wallet className="w-3 h-3" />
+              <span>Practice</span>
+            </div>
+          )}
+        </div>
+
+        {/* Active Indicator */}
+        {isActive && (
+          <div className="absolute -right-0.5 top-1/2 transform -translate-y-1/2 w-1 h-10 bg-blue-500 rounded-l-full"></div>
+        )}
+      </div>
+    );
+  };
 
   return (
-    <Sidebar className="border-r border-sidebar-border">
-      <div className="p-4 border-b border-sidebar-border">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
-            <Cpu className="w-4 h-4 text-primary-foreground" />
-          </div>
-          <span className="font-bold text-foreground text-lg">
-            Ceoramz<span className="text-primary">Traders</span>
-          </span>
+    <div className="w-full max-w-2xl mx-auto p-4 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+            Options Accounts
+          </h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            Manage your trading accounts
+          </p>
         </div>
+        <button 
+          onClick={onManageFunds}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors shadow-sm"
+        >
+          <Plus className="w-4 h-4" />
+          <span className="font-medium">Manage Funds</span>
+        </button>
       </div>
 
-      {activeAccount && (
-        <div className="p-3 border-b border-sidebar-border">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="w-full justify-between h-auto p-2 text-left hover:bg-sidebar-accent transition-colors">
-                <div className="flex items-center gap-3 flex-1">
-                  <AccountIcon currency={activeAccount.currency} isVirtual={activeAccount.is_virtual} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-muted-foreground">
-                      {activeAccount.is_virtual ? 'Demo Wallet' : 'USD Wallet'}
-                    </div>
-                    <div className="font-mono text-sm font-semibold text-foreground truncate">
-                      {balance?.toFixed(2)} {activeAccount.currency}
-                    </div>
-                    <div className="text-xs text-muted-foreground truncate">{activeAccount.loginid}</div>
-                  </div>
-                </div>
-                <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-64" sideOffset={5}>
-              {accounts?.map(acc => (
-                <DropdownMenuItem
-                  key={acc.loginid}
-                  onClick={() => switchAccount(acc.loginid)}
-                  className={`py-2.5 px-2 cursor-pointer ${acc.loginid === activeAccount.loginid ? 'bg-accent' : ''}`}
-                >
-                  <div className="flex items-center gap-3 w-full">
-                    <AccountIcon currency={acc.currency} isVirtual={acc.is_virtual} />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">{acc.loginid}</div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">
-                          {acc.is_virtual ? 'Demo Wallet' : 'USD Wallet'}
-                        </span>
-                        {acc.is_virtual && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500 text-white font-medium">
-                            Demo
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+      {/* Real Accounts Section */}
+      {realAccounts.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider flex items-center gap-2">
+              <DollarSign className="w-4 h-4" />
+              Real Accounts
+            </h3>
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              {realAccounts.length} account{realAccounts.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <div className="space-y-3">
+            {realAccounts.map(account => (
+              <AccountCard key={account.id} account={account} />
+            ))}
+          </div>
         </div>
       )}
 
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {navItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild>
-                    <NavLink
-                      to={item.url}
-                      end={item.url === '/'}
-                      className="hover:bg-sidebar-accent"
-                      activeClassName="bg-sidebar-accent text-primary font-medium"
-                    >
-                      <item.icon className="mr-2 h-4 w-4" />
-                      <span>{item.title}</span>
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
+      {/* Demo Accounts Section */}
+      {demoAccounts.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider flex items-center gap-2">
+              <Wallet className="w-4 h-4" />
+              Demo Accounts
+            </h3>
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              {demoAccounts.length} account{demoAccounts.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <div className="space-y-3">
+            {demoAccounts.map(account => (
+              <AccountCard key={account.id} account={account} />
+            ))}
+          </div>
+        </div>
+      )}
 
-      <div className="mt-auto p-3 border-t border-sidebar-border">
-        <Button variant="ghost" onClick={logout} className="w-full justify-start text-muted-foreground hover:text-loss">
-          <LogOut className="mr-2 h-4 w-4" /> Logout
-        </Button>
-      </div>
-    </Sidebar>
+      {/* Empty State */}
+      {accounts.length === 0 && (
+        <div className="text-center py-12">
+          <div className="w-20 h-20 mx-auto mb-4 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center">
+            <Wallet className="w-10 h-10 text-gray-400" />
+          </div>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+            No accounts found
+          </h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+            Get started by adding your first trading account
+          </p>
+          <button
+            onClick={onManageFunds}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Add Account
+          </button>
+        </div>
+      )}
+
+      {/* Manage Funds CTA Button */}
+      {accounts.length > 0 && (
+        <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+          <button
+            onClick={onManageFunds}
+            className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white rounded-xl transition-all shadow-md hover:shadow-lg"
+          >
+            <div className="flex items-center gap-2">
+              <Wallet className="w-5 h-5" />
+              <span className="font-semibold">Manage Funds</span>
+            </div>
+            <ChevronRight className="w-5 h-5" />
+          </button>
+        </div>
+      )}
+    </div>
   );
-}
+};
+
+export default OptionsAccounts;
