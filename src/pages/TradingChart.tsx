@@ -1,743 +1,736 @@
-// pages/DigitBot.tsx
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
+import { copyTradingService } from '@/services/copy-trading-service';
 import { getLastDigit } from '@/services/analysis';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLossRequirement } from '@/hooks/useLossRequirement';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
-import { Play, StopCircle, Trash2, TrendingUp, TrendingDown } from 'lucide-react';
+import {
+  Play, StopCircle, Trash2, Scan,
+  Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload,
+} from 'lucide-react';
+import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
-// Types
-type InitialTradeType = 'over1_under8' | 'over2_under7' | 'over3_under6';
-type RecoveryType = 'even_odd_7' | 'even_odd_6' | 'over4_under5_7' | 'over4_under5_6';
+const SCANNER_MARKETS: { symbol: string; name: string }[] = [
+  { symbol: 'R_10', name: 'Vol 10' },
+  { symbol: 'R_25', name: 'Vol 25' },
+  { symbol: 'R_50', name: 'Vol 50' },
+  { symbol: 'R_75', name: 'Vol 75' },
+  { symbol: 'R_100', name: 'Vol 100' },
+  { symbol: '1HZ10V', name: 'V10 1s' },
+  { symbol: '1HZ15V', name: 'V15 1s' },
+  { symbol: '1HZ25V', name: 'V25 1s' },
+  { symbol: '1HZ30V', name: 'V30 1s' },
+  { symbol: '1HZ50V', name: 'V50 1s' },
+  { symbol: '1HZ75V', name: 'V75 1s' },
+  { symbol: '1HZ90V', name: 'V90 1s' },
+  { symbol: '1HZ100V', name: 'V100 1s' },
+  { symbol: 'JD10', name: 'Jump 10' },
+  { symbol: 'JD25', name: 'Jump 25' },
+  { symbol: 'RDBEAR', name: 'Bear' },
+  { symbol: 'RDBULL', name: 'Bull' },
+];
 
-interface Trade {
-  id: string;
+const CONTRACT_TYPES = [
+  'DIGITEVEN', 'DIGITODD', 'DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER',
+] as const;
+
+const needsBarrier = (ct: string) => ['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct);
+
+type BotStatus = 'idle' | 'trading_m1' | 'recovery' | 'waiting_pattern' | 'pattern_matched' | 'virtual_hook';
+
+interface LogEntry {
+  id: number;
   time: string;
-  type: string;
+  market: 'M1' | 'M2' | 'VH';
+  symbol: string;
+  contract: string;
   stake: number;
-  entryPrice: number;
-  exitPrice?: number;
-  entryTick?: number;
-  exitTick?: number;
-  profit: number;
-  status: 'pending' | 'won' | 'lost';
-  isRecovery: boolean;
-  step: number;
+  martingaleStep: number;
+  exitDigit: string;
+  result: 'Win' | 'Loss' | 'Pending' | 'V-Win' | 'V-Loss';
+  pnl: number;
+  balance: number;
+  switchInfo: string;
 }
 
-interface TickData {
-  digit: number;
-  price: number;
-  time: number;
-}
-
-// Tick Buffer
-class TickBuffer {
-  private ticks: TickData[] = [];
-  private maxSize: number;
-
-  constructor(maxSize: number = 50) {
-    this.maxSize = maxSize;
+class CircularTickBuffer {
+  private buffer: { digit: number; ts: number }[];
+  private head = 0;
+  private count = 0;
+  constructor(private capacity = 1000) {
+    this.buffer = new Array(capacity);
   }
-
-  push(digit: number, price: number, time: number): void {
-    this.ticks.push({ digit, price, time });
-    if (this.ticks.length > this.maxSize) {
-      this.ticks.shift();
-    }
+  push(digit: number) {
+    this.buffer[this.head] = { digit, ts: performance.now() };
+    this.head = (this.head + 1) % this.capacity;
+    if (this.count < this.capacity) this.count++;
   }
-
-  getDigits(): number[] {
-    return this.ticks.map(t => t.digit);
-  }
-
   last(n: number): number[] {
-    return this.ticks.slice(-n).map(t => t.digit);
+    const result: number[] = [];
+    const start = (this.head - Math.min(n, this.count) + this.capacity) % this.capacity;
+    for (let i = 0; i < Math.min(n, this.count); i++) {
+      result.push(this.buffer[(start + i) % this.capacity].digit);
+    }
+    return result;
   }
-
-  lastTicks(n: number): TickData[] {
-    return this.ticks.slice(-n);
-  }
-
-  length(): number {
-    return this.ticks.length;
-  }
-
-  clear(): void {
-    this.ticks = [];
-  }
+  get size() { return this.count; }
 }
 
-export default function DigitBot() {
-  const { isAuthorized, balance } = useAuth();
+function waitForNextTick(symbol: string): Promise<{ quote: number }> {
+  return new Promise((resolve) => {
+    const unsub = derivApi.onMessage((data: any) => {
+      if (data.tick && data.tick.symbol === symbol) { unsub(); resolve({ quote: data.tick.quote }); }
+    });
+  });
+}
 
-  // Bot Configuration
-  const [initialTradeType, setInitialTradeType] = useState<InitialTradeType>('over1_under8');
-  const [recoveryType, setRecoveryType] = useState<RecoveryType>('even_odd_7');
-  const [stake, setStake] = useState('0.5');
-  const [takeProfit, setTakeProfit] = useState('5');
-  const [stopLoss, setStopLoss] = useState('30');
-  const [martingaleEnabled, setMartingaleEnabled] = useState(false);
-  const [martingaleMultiplier, setMartingaleMultiplier] = useState('2');
-  const [symbol, setSymbol] = useState<MarketSymbol>('R_100');
+function simulateVirtualContract(
+  contractType: string, barrier: string, symbol: string
+): Promise<{ won: boolean; digit: number }> {
+  return new Promise((resolve) => {
+    const unsub = derivApi.onMessage((data: any) => {
+      if (data.tick && data.tick.symbol === symbol) {
+        unsub();
+        const digit = getLastDigit(data.tick.quote);
+        const b = parseInt(barrier) || 0;
+        let won = false;
+        switch (contractType) {
+          case 'DIGITEVEN': won = digit % 2 === 0; break;
+          case 'DIGITODD': won = digit % 2 !== 0; break;
+          case 'DIGITMATCH': won = digit === b; break;
+          case 'DIGITDIFF': won = digit !== b; break;
+          case 'DIGITOVER': won = digit > b; break;
+          case 'DIGITUNDER': won = digit < b; break;
+        }
+        resolve({ won, digit });
+      }
+    });
+  });
+}
 
-  // Bot State
+// Initial trade condition checkers
+const checkOver1Under8 = (digits: number[]): { shouldTrade: boolean; type: 'OVER' | 'UNDER'; barrier: string } => {
+  const lastTwo = digits.slice(-2);
+  if (lastTwo.length < 2) return { shouldTrade: false, type: 'OVER', barrier: '1' };
+  
+  const allLessThan1 = lastTwo.every(d => d < 1);
+  const allGreaterThan8 = lastTwo.every(d => d > 8);
+  
+  if (allLessThan1) return { shouldTrade: true, type: 'OVER', barrier: '1' };
+  if (allGreaterThan8) return { shouldTrade: true, type: 'UNDER', barrier: '8' };
+  return { shouldTrade: false, type: 'OVER', barrier: '1' };
+};
+
+const checkOver2Under7 = (digits: number[]): { shouldTrade: boolean; type: 'OVER' | 'UNDER'; barrier: string } => {
+  const lastThree = digits.slice(-3);
+  if (lastThree.length < 3) return { shouldTrade: false, type: 'OVER', barrier: '2' };
+  
+  const allLessThan2 = lastThree.every(d => d < 2);
+  const allGreaterThan7 = lastThree.every(d => d > 7);
+  
+  if (allLessThan2) return { shouldTrade: true, type: 'OVER', barrier: '2' };
+  if (allGreaterThan7) return { shouldTrade: true, type: 'UNDER', barrier: '7' };
+  return { shouldTrade: false, type: 'OVER', barrier: '2' };
+};
+
+const checkOver3Under6 = (digits: number[]): { shouldTrade: boolean; type: 'OVER' | 'UNDER'; barrier: string } => {
+  const lastFour = digits.slice(-4);
+  if (lastFour.length < 4) return { shouldTrade: false, type: 'OVER', barrier: '3' };
+  
+  const allLessThan3 = lastFour.every(d => d < 3);
+  const allGreaterThan6 = lastFour.every(d => d > 6);
+  
+  if (allLessThan3) return { shouldTrade: true, type: 'OVER', barrier: '3' };
+  if (allGreaterThan6) return { shouldTrade: true, type: 'UNDER', barrier: '6' };
+  return { shouldTrade: false, type: 'OVER', barrier: '3' };
+};
+
+// Recovery condition checkers
+const checkEvenOdd7 = (digits: number[]): { shouldTrade: boolean; contractType: string } => {
+  const lastSeven = digits.slice(-7);
+  if (lastSeven.length < 7) return { shouldTrade: false, contractType: 'DIGITEVEN' };
+  
+  const allOdd = lastSeven.every(d => d % 2 !== 0);
+  const allEven = lastSeven.every(d => d % 2 === 0);
+  
+  if (allOdd) return { shouldTrade: true, contractType: 'DIGITEVEN' };
+  if (allEven) return { shouldTrade: true, contractType: 'DIGITODD' };
+  return { shouldTrade: false, contractType: 'DIGITEVEN' };
+};
+
+const checkEvenOdd6 = (digits: number[]): { shouldTrade: boolean; contractType: string } => {
+  const lastSix = digits.slice(-6);
+  if (lastSix.length < 6) return { shouldTrade: false, contractType: 'DIGITEVEN' };
+  
+  const allOdd = lastSix.every(d => d % 2 !== 0);
+  const allEven = lastSix.every(d => d % 2 === 0);
+  
+  if (allOdd) return { shouldTrade: true, contractType: 'DIGITEVEN' };
+  if (allEven) return { shouldTrade: true, contractType: 'DIGITODD' };
+  return { shouldTrade: false, contractType: 'DIGITEVEN' };
+};
+
+const checkOver4Under5_7 = (digits: number[]): { shouldTrade: boolean; contractType: string; barrier: string } => {
+  const lastSeven = digits.slice(-7);
+  if (lastSeven.length < 7) return { shouldTrade: false, contractType: 'DIGITOVER', barrier: '4' };
+  
+  const allLessThan4 = lastSeven.every(d => d < 4);
+  const allGreaterThan5 = lastSeven.every(d => d > 5);
+  
+  if (allLessThan4) return { shouldTrade: true, contractType: 'DIGITOVER', barrier: '4' };
+  if (allGreaterThan5) return { shouldTrade: true, contractType: 'DIGITUNDER', barrier: '5' };
+  return { shouldTrade: false, contractType: 'DIGITOVER', barrier: '4' };
+};
+
+const checkOver4Under5_6 = (digits: number[]): { shouldTrade: boolean; contractType: string; barrier: string } => {
+  const lastSix = digits.slice(-6);
+  if (lastSix.length < 6) return { shouldTrade: false, contractType: 'DIGITOVER', barrier: '4' };
+  
+  const allLessThan4 = lastSix.every(d => d < 4);
+  const allGreaterThan5 = lastSix.every(d => d > 5);
+  
+  if (allLessThan4) return { shouldTrade: true, contractType: 'DIGITOVER', barrier: '4' };
+  if (allGreaterThan5) return { shouldTrade: true, contractType: 'DIGITUNDER', barrier: '5' };
+  return { shouldTrade: false, contractType: 'DIGITOVER', barrier: '4' };
+};
+
+export default function ProScannerBot() {
+  const { isAuthorized, balance, activeAccount } = useAuth();
+  const { recordLoss } = useLossRequirement();
+  const location = useLocation();
+
+  // Initial trade type selection
+  const [initialTradeType, setInitialTradeType] = useState<'over1_under8' | 'over2_under7' | 'over3_under6'>('over1_under8');
+  
+  // Recovery type selection
+  const [recoveryType, setRecoveryType] = useState<'even_odd_7' | 'even_odd_6' | 'over4_under5_7' | 'over4_under5_6'>('even_odd_7');
+
+  const [m1Enabled, setM1Enabled] = useState(true);
+  const [m1Symbol, setM1Symbol] = useState('R_100');
+
+  const [m2Enabled, setM2Enabled] = useState(true);
+  const [m2Symbol, setM2Symbol] = useState('R_50');
+
+  const [stake, setStake] = useState('0.35');
+  const [martingaleOn, setMartingaleOn] = useState(false);
+  const [martingaleMultiplier, setMartingaleMultiplier] = useState('2.0');
+  const [martingaleMaxSteps, setMartingaleMaxSteps] = useState('5');
+  const [takeProfit, setTakeProfit] = useState('10');
+  const [stopLoss, setStopLoss] = useState('5');
+
+  const [scannerActive, setScannerActive] = useState(false);
+  const [turboMode, setTurboMode] = useState(false);
+  const [botName, setBotName] = useState('');
+
+  const [botStatus, setBotStatus] = useState<BotStatus>('idle');
   const [isRunning, setIsRunning] = useState(false);
-  const [isRecoveryMode, setIsRecoveryMode] = useState(false);
+  const runningRef = useRef(false);
+  const [currentMarket, setCurrentMarket] = useState<1 | 2>(1);
   const [wins, setWins] = useState(0);
   const [losses, setLosses] = useState(0);
-  const [totalProfit, setTotalProfit] = useState(0);
-  const [currentStake, setCurrentStake] = useState(0.5);
-  const [martingaleStep, setMartingaleStep] = useState(0);
-  const [trades, setTrades] = useState<Trade[]>([]);
-  const [lastDigits, setLastDigits] = useState<number[]>([]);
-  const [currentPrice, setCurrentPrice] = useState<number>(0);
+  const [totalStaked, setTotalStaked] = useState(0);
+  const [netProfit, setNetProfit] = useState(0);
+  const [currentStake, setCurrentStakeState] = useState(0);
+  const [martingaleStep, setMartingaleStepState] = useState(0);
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const logIdRef = useRef(0);
 
-  const runningRef = useRef(false);
-  const tickBufferRef = useRef<TickBuffer>(new TickBuffer(50));
-  const tradeIdRef = useRef(0);
+  const tickMapRef = useRef<Map<string, number[]>>(new Map());
 
-  // Check initial trade condition based on selected type
-  const checkInitialTradeCondition = useCallback((): { shouldTrade: boolean; type: 'OVER' | 'UNDER'; barrier: string } => {
-    const digits = tickBufferRef.current.getDigits();
+  useEffect(() => {
+    if (!derivApi.isConnected) return;
+    let active = true;
+    const handler = (data: any) => {
+      if (!data.tick || !active) return;
+      const sym = data.tick.symbol as string;
+      const digit = getLastDigit(data.tick.quote);
+      const map = tickMapRef.current;
+      const arr = map.get(sym) || [];
+      arr.push(digit);
+      if (arr.length > 200) arr.shift();
+      map.set(sym, arr);
+    };
+    const unsub = derivApi.onMessage(handler);
+    SCANNER_MARKETS.forEach(m => { derivApi.subscribeTicks(m.symbol as MarketSymbol, () => {}).catch(() => {}); });
+    return () => { active = false; unsub(); };
+  }, []);
+
+  const addLog = useCallback((id: number, entry: Omit<LogEntry, 'id'>) => {
+    setLogEntries(prev => [{ ...entry, id }, ...prev].slice(0, 100));
+  }, []);
+
+  const updateLog = useCallback((id: number, updates: Partial<LogEntry>) => {
+    setLogEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
+  }, []);
+
+  const clearLog = useCallback(() => {
+    setLogEntries([]);
+    setWins(0); setLosses(0); setTotalStaked(0); setNetProfit(0);
+    setMartingaleStepState(0);
+  }, []);
+
+  const checkInitialCondition = useCallback((symbol: string): { shouldTrade: boolean; type: 'OVER' | 'UNDER'; barrier: string } => {
+    const digits = tickMapRef.current.get(symbol) || [];
     
     switch (initialTradeType) {
-      case 'over1_under8': {
-        const lastTwo = tickBufferRef.current.last(2);
-        if (lastTwo.length < 2) return { shouldTrade: false, type: 'OVER', barrier: '1' };
-        
-        const allLessThan1 = lastTwo.every(d => d < 1);
-        const allGreaterThan8 = lastTwo.every(d => d > 8);
-        
-        if (allLessThan1) {
-          return { shouldTrade: true, type: 'OVER', barrier: '1' };
-        }
-        if (allGreaterThan8) {
-          return { shouldTrade: true, type: 'UNDER', barrier: '8' };
-        }
-        break;
-      }
-      
-      case 'over2_under7': {
-        const lastThree = tickBufferRef.current.last(3);
-        if (lastThree.length < 3) return { shouldTrade: false, type: 'OVER', barrier: '2' };
-        
-        const allLessThan2 = lastThree.every(d => d < 2);
-        const allGreaterThan7 = lastThree.every(d => d > 7);
-        
-        if (allLessThan2) {
-          return { shouldTrade: true, type: 'OVER', barrier: '2' };
-        }
-        if (allGreaterThan7) {
-          return { shouldTrade: true, type: 'UNDER', barrier: '7' };
-        }
-        break;
-      }
-      
-      case 'over3_under6': {
-        const lastFour = tickBufferRef.current.last(4);
-        if (lastFour.length < 4) return { shouldTrade: false, type: 'OVER', barrier: '3' };
-        
-        const allLessThan3 = lastFour.every(d => d < 3);
-        const allGreaterThan6 = lastFour.every(d => d > 6);
-        
-        if (allLessThan3) {
-          return { shouldTrade: true, type: 'OVER', barrier: '3' };
-        }
-        if (allGreaterThan6) {
-          return { shouldTrade: true, type: 'UNDER', barrier: '6' };
-        }
-        break;
-      }
+      case 'over1_under8':
+        return checkOver1Under8(digits);
+      case 'over2_under7':
+        return checkOver2Under7(digits);
+      case 'over3_under6':
+        return checkOver3Under6(digits);
+      default:
+        return { shouldTrade: false, type: 'OVER', barrier: '1' };
     }
-    
-    return { shouldTrade: false, type: 'OVER', barrier: '1' };
   }, [initialTradeType]);
 
-  // Check recovery condition based on selected type
-  const checkRecoveryCondition = useCallback((): { shouldTrade: boolean; contractType: string; barrier?: string } => {
-    const digits = tickBufferRef.current.getDigits();
+  const checkRecoveryCondition = useCallback((symbol: string): { shouldTrade: boolean; contractType: string; barrier?: string } => {
+    const digits = tickMapRef.current.get(symbol) || [];
     
     switch (recoveryType) {
-      case 'even_odd_7': {
-        const lastSeven = tickBufferRef.current.last(7);
-        if (lastSeven.length < 7) return { shouldTrade: false, contractType: 'DIGITEVEN' };
-        
-        const allOdd = lastSeven.every(d => d % 2 !== 0);
-        const allEven = lastSeven.every(d => d % 2 === 0);
-        
-        if (allOdd) {
-          return { shouldTrade: true, contractType: 'DIGITEVEN' };
-        }
-        if (allEven) {
-          return { shouldTrade: true, contractType: 'DIGITODD' };
-        }
-        break;
-      }
-      
-      case 'even_odd_6': {
-        const lastSix = tickBufferRef.current.last(6);
-        if (lastSix.length < 6) return { shouldTrade: false, contractType: 'DIGITEVEN' };
-        
-        const allOdd = lastSix.every(d => d % 2 !== 0);
-        const allEven = lastSix.every(d => d % 2 === 0);
-        
-        if (allOdd) {
-          return { shouldTrade: true, contractType: 'DIGITEVEN' };
-        }
-        if (allEven) {
-          return { shouldTrade: true, contractType: 'DIGITODD' };
-        }
-        break;
-      }
-      
-      case 'over4_under5_7': {
-        const lastSeven = tickBufferRef.current.last(7);
-        if (lastSeven.length < 7) return { shouldTrade: false, contractType: 'DIGITOVER', barrier: '4' };
-        
-        const allLessThan4 = lastSeven.every(d => d < 4);
-        const allGreaterThan5 = lastSeven.every(d => d > 5);
-        
-        if (allLessThan4) {
-          return { shouldTrade: true, contractType: 'DIGITOVER', barrier: '4' };
-        }
-        if (allGreaterThan5) {
-          return { shouldTrade: true, contractType: 'DIGITUNDER', barrier: '5' };
-        }
-        break;
-      }
-      
-      case 'over4_under5_6': {
-        const lastSix = tickBufferRef.current.last(6);
-        if (lastSix.length < 6) return { shouldTrade: false, contractType: 'DIGITOVER', barrier: '4' };
-        
-        const allLessThan4 = lastSix.every(d => d < 4);
-        const allGreaterThan5 = lastSix.every(d => d > 5);
-        
-        if (allLessThan4) {
-          return { shouldTrade: true, contractType: 'DIGITOVER', barrier: '4' };
-        }
-        if (allGreaterThan5) {
-          return { shouldTrade: true, contractType: 'DIGITUNDER', barrier: '5' };
-        }
-        break;
-      }
+      case 'even_odd_7':
+        return checkEvenOdd7(digits);
+      case 'even_odd_6':
+        return checkEvenOdd6(digits);
+      case 'over4_under5_7':
+        return checkOver4Under5_7(digits);
+      case 'over4_under5_6':
+        return checkOver4Under5_6(digits);
+      default:
+        return { shouldTrade: false, contractType: 'DIGITEVEN' };
     }
-    
-    return { shouldTrade: false, contractType: 'DIGITEVEN' };
   }, [recoveryType]);
 
-  // Execute a trade
-  const executeTrade = useCallback(async (isRecovery: boolean, step: number) => {
-    const tradeStake = isRecovery ? currentStake : parseFloat(stake);
-    
-    if (tradeStake > balance) {
-      toast.error('Insufficient balance');
-      runningRef.current = false;
-      setIsRunning(false);
-      return null;
-    }
-
-    const tradeId = (++tradeIdRef.current).toString();
+  const executeRealTrade = useCallback(async (
+    symbol: string,
+    cStake: number,
+    mStep: number,
+    isRecovery: boolean,
+    localBalance: number,
+    localPnl: number,
+    baseStake: number,
+  ) => {
+    const logId = ++logIdRef.current;
     const now = new Date().toLocaleTimeString();
-    
+    setTotalStaked(prev => prev + cStake);
+    setCurrentStakeState(cStake);
+
     let contractType = 'DIGITOVER';
     let barrier = '1';
     
     if (!isRecovery) {
-      const condition = checkInitialTradeCondition();
+      const condition = checkInitialCondition(symbol);
       if (!condition.shouldTrade) return null;
       contractType = condition.type === 'OVER' ? 'DIGITOVER' : 'DIGITUNDER';
       barrier = condition.barrier;
     } else {
-      const condition = checkRecoveryCondition();
+      const condition = checkRecoveryCondition(symbol);
       if (!condition.shouldTrade) return null;
       contractType = condition.contractType;
       barrier = condition.barrier || '4';
     }
 
-    // Add pending trade to log
-    const newTrade: Trade = {
-      id: tradeId,
-      time: now,
-      type: isRecovery ? `Recovery (${contractType})` : `Initial (${contractType} ${barrier})`,
-      stake: tradeStake,
-      entryPrice: currentPrice,
-      profit: 0,
-      status: 'pending',
-      isRecovery,
-      step,
-    };
-    setTrades(prev => [newTrade, ...prev].slice(0, 50));
+    addLog(logId, {
+      time: now, market: isRecovery ? 'M2' : 'M1', symbol,
+      contract: contractType, stake: cStake, martingaleStep: mStep,
+      exitDigit: '...', result: 'Pending', pnl: 0, balance: localBalance,
+      switchInfo: isRecovery ? 'Recovery trade' : 'Initial trade',
+    });
 
     try {
-      // Wait for next tick before buying
-      await new Promise<void>((resolve) => {
-        const unsub = derivApi.onMessage((data: any) => {
-          if (data.tick && data.tick.symbol === symbol) {
-            unsub();
-            resolve();
-          }
-        });
-      });
-
-      // Buy contract
-      const buyParams: any = {
-        contract_type: contractType,
-        symbol: symbol,
-        duration: 1,
-        duration_unit: 't',
-        basis: 'stake',
-        amount: tradeStake,
-      };
-      if (contractType === 'DIGITOVER' || contractType === 'DIGITUNDER') {
-        buyParams.barrier = barrier;
+      if (!turboMode) {
+        await waitForNextTick(symbol as MarketSymbol);
       }
 
-      const { contractId, entry_tick, entry_tick_time } = await derivApi.buyContract(buyParams);
-      
-      // Wait for contract result with subscription
-      const result = await new Promise<any>((resolve) => {
-        const unsub = derivApi.onMessage((data: any) => {
-          if (data.contract && data.contract.id === contractId && data.contract.status === 'settled') {
-            unsub();
-            resolve(data.contract);
-          }
-        });
-        
-        // Also listen for proposal_open_contract updates
-        derivApi.subscribeToContract(contractId);
-      });
+      const buyParams: any = {
+        contract_type: contractType, symbol,
+        duration: 1, duration_unit: 't', basis: 'stake', amount: cStake,
+      };
+      if (needsBarrier(contractType)) buyParams.barrier = barrier;
 
-      const won = result.profit > 0;
-      const pnl = result.profit;
+      const { contractId } = await derivApi.buyContract(buyParams);
       
-      // Update trade record
-      setTrades(prev => prev.map(t => 
-        t.id === tradeId ? {
-          ...t,
-          exitPrice: result.exit_tick || result.sell_price,
-          exitTick: result.exit_tick,
-          profit: pnl,
-          status: won ? 'won' : 'lost',
-        } : t
-      ));
+      if (copyTradingService.enabled) {
+        copyTradingService.copyTrade({
+          ...buyParams,
+          masterTradeId: contractId,
+        }).catch(err => console.error('Copy trading error:', err));
+      }
+      
+      const result = await derivApi.waitForContractResult(contractId);
+      const won = result.status === 'won';
+      const pnl = result.profit;
+      const newLocalPnl = localPnl + pnl;
+      const newLocalBalance = localBalance + pnl;
+      const exitDigit = String(getLastDigit(result.sellPrice || 0));
+
+      let newInRecovery = isRecovery;
+      let newCStake = cStake;
+      let newMStep = mStep;
 
       if (won) {
         setWins(prev => prev + 1);
-        setTotalProfit(prev => prev + pnl);
-        
         if (isRecovery) {
-          setIsRecoveryMode(false);
-          setCurrentStake(parseFloat(stake));
-          setMartingaleStep(0);
-          toast.success(`✅ Recovery Win! +$${pnl.toFixed(2)}`);
+          newInRecovery = false;
+          newCStake = baseStake;
+          newMStep = 0;
+          updateLog(logId, { exitDigit, result: 'Win', pnl, balance: newLocalBalance, switchInfo: '✓ Recovery WIN → Back to M1' });
         } else {
-          toast.success(`✅ Win! +$${pnl.toFixed(2)}`);
+          updateLog(logId, { exitDigit, result: 'Win', pnl, balance: newLocalBalance, switchInfo: '→ Continue M1' });
         }
       } else {
         setLosses(prev => prev + 1);
-        setTotalProfit(prev => prev + pnl);
-        toast.error(`❌ Loss! $${pnl.toFixed(2)}`);
+        if (activeAccount?.is_virtual) {
+          recordLoss(cStake, symbol, 6000);
+        }
+        if (!isRecovery && m2Enabled) {
+          newInRecovery = true;
+          updateLog(logId, { exitDigit, result: 'Loss', pnl, balance: newLocalBalance, switchInfo: '✗ Loss → Switch to Recovery' });
+        } else {
+          updateLog(logId, { exitDigit, result: 'Loss', pnl, balance: newLocalBalance, switchInfo: isRecovery ? '→ Stay in Recovery' : '→ Continue M1' });
+        }
         
-        if (!isRecovery) {
-          // Switch to recovery mode
-          setIsRecoveryMode(true);
-          
-          // Apply martingale if enabled
-          if (martingaleEnabled && martingaleStep < 5) {
-            const newStake = currentStake * parseFloat(martingaleMultiplier);
-            setCurrentStake(newStake);
-            setMartingaleStep(prev => prev + 1);
+        if (martingaleOn) {
+          const maxS = parseInt(martingaleMaxSteps) || 5;
+          if (mStep < maxS) {
+            newCStake = parseFloat((cStake * (parseFloat(martingaleMultiplier) || 2)).toFixed(2));
+            newMStep = mStep + 1;
+          } else {
+            newCStake = baseStake;
+            newMStep = 0;
           }
         } else {
-          // Stay in recovery, maybe increase martingale
-          if (martingaleEnabled && martingaleStep < 5) {
-            const newStake = currentStake * parseFloat(martingaleMultiplier);
-            setCurrentStake(newStake);
-            setMartingaleStep(prev => prev + 1);
-          }
+          newCStake = baseStake;
+          newMStep = 0;
         }
       }
-      
-      // Check take profit / stop loss
-      if (totalProfit + pnl >= parseFloat(takeProfit)) {
-        toast.success(`🎯 Take Profit reached! Stopping bot.`);
-        runningRef.current = false;
-        setIsRunning(false);
-      }
-      
-      if (totalProfit + pnl <= -parseFloat(stopLoss)) {
-        toast.error(`🛑 Stop Loss reached! Stopping bot.`);
-        runningRef.current = false;
-        setIsRunning(false);
-      }
-      
-      return { won, pnl };
-      
-    } catch (error: any) {
-      console.error('Trade error:', error);
-      setTrades(prev => prev.map(t => 
-        t.id === tradeId ? { ...t, status: 'lost', profit: -tradeStake } : t
-      ));
-      toast.error(`Trade failed: ${error.message}`);
-      return null;
-    }
-  }, [balance, stake, currentStake, martingaleEnabled, martingaleMultiplier, martingaleStep, symbol, currentPrice, totalProfit, takeProfit, stopLoss, checkInitialTradeCondition, checkRecoveryCondition]);
 
-  // Main bot loop
+      setNetProfit(prev => prev + pnl);
+      setMartingaleStepState(newMStep);
+      setCurrentStakeState(newCStake);
+
+      let shouldBreak = false;
+      if (newLocalPnl >= parseFloat(takeProfit)) {
+        toast.success(`🎯 Take Profit! +$${newLocalPnl.toFixed(2)}`);
+        shouldBreak = true;
+      }
+      if (newLocalPnl <= -parseFloat(stopLoss)) {
+        toast.error(`🛑 Stop Loss! $${newLocalPnl.toFixed(2)}`);
+        shouldBreak = true;
+      }
+      if (newLocalBalance < newCStake) {
+        toast.error('Insufficient balance');
+        shouldBreak = true;
+      }
+
+      return { localPnl: newLocalPnl, localBalance: newLocalBalance, cStake: newCStake, mStep: newMStep, inRecovery: newInRecovery, shouldBreak };
+    } catch (err: any) {
+      updateLog(logId, { result: 'Loss', pnl: 0, exitDigit: '-', switchInfo: `Error: ${err.message}` });
+      if (!turboMode) await new Promise(r => setTimeout(r, 2000));
+      return { localPnl, localBalance, cStake, mStep, inRecovery: isRecovery, shouldBreak: false };
+    }
+  }, [checkInitialCondition, checkRecoveryCondition, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, turboMode, m2Enabled, recordLoss, activeAccount]);
+
   const startBot = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
-    
     const baseStake = parseFloat(stake);
-    if (baseStake < 0.35) {
-      toast.error('Minimum stake is $0.35');
-      return;
-    }
-    
+    if (baseStake < 0.35) { toast.error('Min stake $0.35'); return; }
+    if (!m1Enabled && !m2Enabled) { toast.error('Enable at least one market'); return; }
+
     setIsRunning(true);
     runningRef.current = true;
-    setIsRecoveryMode(false);
-    setCurrentStake(baseStake);
-    setMartingaleStep(0);
-    setWins(0);
-    setLosses(0);
-    setTotalProfit(0);
-    setTrades([]);
-    
+    setCurrentMarket(1);
+    setBotStatus('trading_m1');
+    setCurrentStakeState(baseStake);
+    setMartingaleStepState(0);
+
+    let cStake = baseStake;
+    let mStep = 0;
+    let inRecovery = false;
+    let localPnl = 0;
+    let localBalance = balance;
+
     while (runningRef.current) {
-      // Check if we should trade
+      const mkt: 1 | 2 = inRecovery ? 2 : 1;
+      setCurrentMarket(mkt);
+
+      if (mkt === 1 && !m1Enabled) { 
+        if (m2Enabled) { inRecovery = true; continue; } 
+        else break; 
+      }
+      if (mkt === 2 && !m2Enabled) { 
+        inRecovery = false; 
+        continue; 
+      }
+
+      const symbol = mkt === 1 ? m1Symbol : m2Symbol;
+      setBotStatus(mkt === 1 ? 'trading_m1' : 'recovery');
+
+      // Check condition before trading
       let shouldTrade = false;
-      let isRecovery = isRecoveryMode;
-      
-      if (!isRecoveryMode) {
-        const condition = checkInitialTradeCondition();
+      if (!inRecovery) {
+        const condition = checkInitialCondition(symbol);
         shouldTrade = condition.shouldTrade;
       } else {
-        const condition = checkRecoveryCondition();
+        const condition = checkRecoveryCondition(symbol);
         shouldTrade = condition.shouldTrade;
       }
-      
+
       if (shouldTrade) {
-        await executeTrade(isRecoveryMode, martingaleStep);
+        const result = await executeRealTrade(
+          symbol, cStake, mStep, inRecovery, localBalance, localPnl, baseStake
+        );
+        if (!result || !runningRef.current) break;
+        localPnl = result.localPnl;
+        localBalance = result.localBalance;
+        cStake = result.cStake;
+        mStep = result.mStep;
+        inRecovery = result.inRecovery;
+
+        if (result.shouldBreak) break;
         
-        // Small delay between trades
-        await new Promise(r => setTimeout(r, 500));
+        if (!turboMode) await new Promise(r => setTimeout(r, 400));
       } else {
-        // Wait for more ticks
+        // Wait for more ticks before checking again
         await new Promise(r => setTimeout(r, 200));
       }
     }
-    
+
     setIsRunning(false);
-  }, [isAuthorized, isRunning, stake, isRecoveryMode, martingaleStep, checkInitialTradeCondition, checkRecoveryCondition, executeTrade]);
+    runningRef.current = false;
+    setBotStatus('idle');
+  }, [isAuthorized, isRunning, balance, stake, m1Enabled, m2Enabled, m1Symbol, m2Symbol, checkInitialCondition, checkRecoveryCondition, executeRealTrade, turboMode]);
 
   const stopBot = useCallback(() => {
     runningRef.current = false;
     setIsRunning(false);
+    setBotStatus('idle');
   }, []);
 
-  const clearLogs = useCallback(() => {
-    setTrades([]);
-    setWins(0);
-    setLosses(0);
-    setTotalProfit(0);
-  }, []);
+  const statusConfig: Record<BotStatus, { icon: string; label: string; color: string }> = {
+    idle: { icon: '⚪', label: 'IDLE', color: 'text-muted-foreground' },
+    trading_m1: { icon: '🟢', label: 'TRADING M1', color: 'text-profit' },
+    recovery: { icon: '🟣', label: 'RECOVERY MODE', color: 'text-purple-400' },
+    waiting_pattern: { icon: '🟡', label: 'WAITING PATTERN', color: 'text-warning' },
+    pattern_matched: { icon: '✅', label: 'PATTERN MATCHED', color: 'text-profit' },
+    virtual_hook: { icon: '🎣', label: 'VIRTUAL HOOK', color: 'text-primary' },
+  };
 
-  // Subscribe to ticks
-  useEffect(() => {
-    if (!derivApi.isConnected) return;
-    
-    const handler = (data: any) => {
-      if (data.tick && data.tick.symbol === symbol) {
-        const price = data.tick.quote;
-        const digit = getLastDigit(price);
-        const now = Date.now();
-        
-        tickBufferRef.current.push(digit, price, now);
-        setCurrentPrice(price);
-        setLastDigits(tickBufferRef.current.last(8));
-      }
-    };
-    
-    const unsub = derivApi.onMessage(handler);
-    derivApi.subscribeTicks(symbol, () => {}).catch(console.error);
-    
-    return () => {
-      unsub();
-      derivApi.unsubscribeTicks(symbol);
-    };
-  }, [symbol]);
-
-  const winRate = wins + losses > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '0';
-  const activeDigits = lastDigits;
+  const status = statusConfig[botStatus];
+  const winRate = wins + losses > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '0.0';
 
   return (
-    <div className="max-w-6xl mx-auto p-4 space-y-4">
-      {/* Header Card */}
-      <div className="bg-gradient-to-r from-gray-900 to-gray-950 rounded-2xl p-6 border border-gray-800">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-            Deriv Digit Bot
-          </h1>
-          <Badge className={`px-3 py-1 text-sm ${isRunning ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>
-            {isRunning ? (isRecoveryMode ? '🔁 RECOVERY MODE' : '🟢 ACTIVE') : '⚪ IDLE'}
-          </Badge>
-        </div>
-        
-        <div className="grid grid-cols-4 gap-4">
-          <div className="text-center">
-            <div className="text-xs text-gray-400">Wins</div>
-            <div className="text-xl font-bold text-green-400">{wins}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-xs text-gray-400">Losses</div>
-            <div className="text-xl font-bold text-red-400">{losses}</div>
-          </div>
-          <div className="text-center">
-            <div className="text-xs text-gray-400">Win Rate</div>
-            <div className="text-xl font-bold text-blue-400">{winRate}%</div>
-          </div>
-          <div className="text-center">
-            <div className="text-xs text-gray-400">P/L</div>
-            <div className={`text-xl font-bold ${totalProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              ${totalProfit.toFixed(2)}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Configuration Card */}
-      <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800">
-        <h2 className="text-lg font-semibold mb-4">Configuration</h2>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Initial Trade Settings */}
-          <div className="space-y-3">
-            <label className="text-sm text-gray-400 font-medium">INITIAL TRADE TYPE</label>
-            <Select value={initialTradeType} onValueChange={(v) => setInitialTradeType(v as InitialTradeType)} disabled={isRunning}>
-              <SelectTrigger className="bg-gray-800 border-gray-700">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="over1_under8">Over 1 / Under 8 (last 2 digits)</SelectItem>
-                <SelectItem value="over2_under7">Over 2 / Under 7 (last 3 digits)</SelectItem>
-                <SelectItem value="over3_under6">Over 3 / Under 6 (last 4 digits)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          
-          {/* Recovery Settings */}
-          <div className="space-y-3">
-            <label className="text-sm text-gray-400 font-medium">RECOVERY TYPE</label>
-            <Select value={recoveryType} onValueChange={(v) => setRecoveryType(v as RecoveryType)} disabled={isRunning}>
-              <SelectTrigger className="bg-gray-800 border-gray-700">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="even_odd_7">Even/Odd pattern (last 7)</SelectItem>
-                <SelectItem value="even_odd_6">Even/Odd pattern (last 6)</SelectItem>
-                <SelectItem value="over4_under5_7">Over 4 / Under 5 (last 7)</SelectItem>
-                <SelectItem value="over4_under5_6">Over 4 / Under 5 (last 6)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          
-          {/* Risk Settings */}
-          <div className="space-y-3">
-            <label className="text-sm text-gray-400 font-medium">STAKE</label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0.35"
-              value={stake}
-              onChange={(e) => setStake(e.target.value)}
-              disabled={isRunning}
-              className="bg-gray-800 border-gray-700"
-            />
-          </div>
-          
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-3">
-              <label className="text-sm text-gray-400 font-medium">TP</label>
-              <Input
-                type="number"
-                value={takeProfit}
-                onChange={(e) => setTakeProfit(e.target.value)}
-                disabled={isRunning}
-                className="bg-gray-800 border-gray-700"
-              />
-            </div>
-            <div className="space-y-3">
-              <label className="text-sm text-gray-400 font-medium">SL</label>
-              <Input
-                type="number"
-                value={stopLoss}
-                onChange={(e) => setStopLoss(e.target.value)}
-                disabled={isRunning}
-                className="bg-gray-800 border-gray-700"
-              />
-            </div>
-          </div>
-        </div>
-        
-        {/* Martingale */}
-        <div className="mt-6 pt-4 border-t border-gray-800 flex items-center justify-between">
-          <label className="text-sm text-gray-400 font-medium">Enable Martingale</label>
-          <Switch
-            checked={martingaleEnabled}
-            onCheckedChange={setMartingaleEnabled}
-            disabled={isRunning}
-          />
-        </div>
-        
-        {martingaleEnabled && (
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <label className="text-xs text-gray-500">Multiplier</label>
-              <Input
-                type="number"
-                step="0.1"
-                min="1.1"
-                value={martingaleMultiplier}
-                onChange={(e) => setMartingaleMultiplier(e.target.value)}
-                disabled={isRunning}
-                className="bg-gray-800 border-gray-700"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs text-gray-500">Current Stake</label>
-              <div className="bg-gray-800 rounded-lg p-2 text-center font-mono text-yellow-400">
-                ${currentStake.toFixed(2)}
-                {martingaleStep > 0 && <span className="text-xs ml-1">(Step {martingaleStep})</span>}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Live Digits Card */}
-      <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">Live Digits</h2>
-          <span className="text-xs text-gray-500">Symbol: {symbol}</span>
-        </div>
-        
-        <div className="flex gap-2 justify-center flex-wrap">
-          {activeDigits.length === 0 ? (
-            <div className="text-gray-500">Waiting for ticks...</div>
-          ) : (
-            activeDigits.map((digit, i) => {
-              const isEven = digit % 2 === 0;
-              const isOver = digit >= 5;
-              const isLast = i === activeDigits.length - 1;
-              return (
-                <div
-                  key={i}
-                  className={`w-12 h-14 rounded-xl flex flex-col items-center justify-center font-mono font-bold border-2 transition-all
-                    ${isLast ? 'border-blue-500 shadow-lg shadow-blue-500/20' : 'border-gray-700'}
-                    ${isOver ? 'bg-red-500/10 text-red-400' : 'bg-green-500/10 text-green-400'}`}
-                >
-                  <span className="text-xl">{digit}</span>
-                  <span className="text-[10px] opacity-60">{isEven ? 'EVEN' : 'ODD'} • {isOver ? 'OVER' : 'UNDER'}</span>
-                </div>
-              );
-            })
+    <div className="space-y-2 max-w-7xl mx-auto">
+      <div className="flex items-center justify-between gap-2 bg-card border border-border rounded-xl px-3 py-2">
+        <h1 className="text-base font-bold text-foreground flex items-center gap-2">
+          <Scan className="w-4 h-4 text-primary" /> Pro Scanner Bot
+        </h1>
+        <div className="flex items-center gap-2">
+          <Badge className={`${status.color} text-[10px]`}>{status.icon} {status.label}</Badge>
+          {isRunning && (
+            <Badge variant="outline" className="text-[10px] text-warning animate-pulse font-mono">
+              P/L: ${netProfit.toFixed(2)}
+            </Badge>
           )}
         </div>
       </div>
 
-      {/* Control Buttons */}
-      <div className="grid grid-cols-2 gap-4">
-        <Button
-          onClick={startBot}
-          disabled={isRunning || !isAuthorized}
-          className="h-14 text-lg font-bold bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700"
-        >
-          <Play className="w-5 h-5 mr-2" /> START BOT
-        </Button>
-        <Button
-          onClick={stopBot}
-          disabled={!isRunning}
-          variant="destructive"
-          className="h-14 text-lg font-bold"
-        >
-          <StopCircle className="w-5 h-5 mr-2" /> STOP
-        </Button>
-      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-2">
+        <div className="lg:col-span-4 space-y-2">
+          <div className="bg-card border border-border rounded-xl p-3 space-y-3">
+            <div>
+              <label className="text-xs font-semibold text-foreground">INITIAL TRADE TYPE</label>
+              <Select value={initialTradeType} onValueChange={(v: any) => setInitialTradeType(v)} disabled={isRunning}>
+                <SelectTrigger className="h-8 text-xs mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="over1_under8">Over 1 / Under 8 (last 2 digits)</SelectItem>
+                  <SelectItem value="over2_under7">Over 2 / Under 7 (last 3 digits)</SelectItem>
+                  <SelectItem value="over3_under6">Over 3 / Under 6 (last 4 digits)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-      {/* Trade History Card */}
-      <div className="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Trade History</h2>
-          <Button variant="ghost" size="sm" onClick={clearLogs} className="text-gray-400 hover:text-red-400">
-            <Trash2 className="w-4 h-4" />
-          </Button>
+            <div>
+              <label className="text-xs font-semibold text-foreground">RECOVERY TYPE</label>
+              <Select value={recoveryType} onValueChange={(v: any) => setRecoveryType(v)} disabled={isRunning}>
+                <SelectTrigger className="h-8 text-xs mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="even_odd_7">Even/Odd pattern (last 7)</SelectItem>
+                  <SelectItem value="even_odd_6">Even/Odd pattern (last 6)</SelectItem>
+                  <SelectItem value="over4_under5_7">Over 4 / Under 5 (last 7)</SelectItem>
+                  <SelectItem value="over4_under5_6">Over 4 / Under 5 (last 6)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="text-[10px] text-muted-foreground">STAKE</label>
+                <Input type="number" min="0.35" step="0.01" value={stake} onChange={e => setStake(e.target.value)} disabled={isRunning} className="h-8 text-xs" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">TP</label>
+                <Input type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunning} className="h-8 text-xs" />
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">SL</label>
+                <Input type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunning} className="h-8 text-xs" />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] text-foreground">Enable Martingale</label>
+              <Switch checked={martingaleOn} onCheckedChange={setMartingaleOn} disabled={isRunning} />
+            </div>
+
+            {martingaleOn && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[8px] text-muted-foreground">Multiplier</label>
+                  <Input type="number" min="1.1" step="0.1" value={martingaleMultiplier} onChange={e => setMartingaleMultiplier(e.target.value)} disabled={isRunning} className="h-7 text-[10px]" />
+                </div>
+                <div>
+                  <label className="text-[8px] text-muted-foreground">Max Steps</label>
+                  <Input type="number" min="1" max="10" value={martingaleMaxSteps} onChange={e => setMartingaleMaxSteps(e.target.value)} disabled={isRunning} className="h-7 text-[10px]" />
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between pt-2 border-t border-border">
+              <label className="text-[10px] text-foreground">Scanner Active</label>
+              <Switch checked={scannerActive} onCheckedChange={setScannerActive} disabled={isRunning} />
+            </div>
+
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] text-foreground">Turbo Mode</label>
+              <Switch checked={turboMode} onCheckedChange={setTurboMode} disabled={isRunning} />
+            </div>
+          </div>
+
+          <div className="bg-card border border-border rounded-xl p-3">
+            <h3 className="text-xs font-semibold text-foreground mb-2">Market 1 (Home)</h3>
+            <Select value={m1Symbol} onValueChange={setM1Symbol} disabled={isRunning}>
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="bg-card border border-border rounded-xl p-3">
+            <h3 className="text-xs font-semibold text-foreground mb-2">Market 2 (Recovery)</h3>
+            <Select value={m2Symbol} onValueChange={setM2Symbol} disabled={isRunning}>
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
-        
-        <div className="overflow-x-auto max-h-96 overflow-y-auto">
-          <table className="w-full">
-            <thead className="bg-gray-800/50 sticky top-0">
-              <tr className="text-xs text-gray-400">
-                <th className="p-3 text-left">Time</th>
-                <th className="p-3 text-left">Type</th>
-                <th className="p-3 text-right">Stake</th>
-                <th className="p-3 text-right">Entry</th>
-                <th className="p-3 text-right">Exit</th>
-                <th className="p-3 text-right">P/L</th>
-                <th className="p-3 text-center">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trades.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-8 text-center text-gray-500">
-                    No trades yet — configure and start the bot
-                  </td>
-                </tr>
-              ) : (
-                trades.map((trade) => (
-                  <tr key={trade.id} className="border-t border-gray-800 text-sm">
-                    <td className="p-3 text-gray-400">{trade.time}</td>
-                    <td className="p-3 font-mono text-xs">{trade.type}</td>
-                    <td className="p-3 text-right font-mono">${trade.stake.toFixed(2)}</td>
-                    <td className="p-3 text-right font-mono text-gray-400">
-                      {trade.entryPrice ? trade.entryPrice.toFixed(2) : '-'}
-                    </td>
-                    <td className="p-3 text-right font-mono text-gray-400">
-                      {trade.exitPrice ? trade.exitPrice.toFixed(2) : '-'}
-                    </td>
-                    <td className={`p-3 text-right font-mono font-bold ${trade.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {trade.status === 'pending' ? '...' : `${trade.profit >= 0 ? '+' : ''}${trade.profit.toFixed(2)}`}
-                    </td>
-                    <td className="p-3 text-center">
-                      <Badge className={`text-xs ${
-                        trade.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400' :
-                        trade.status === 'won' ? 'bg-green-500/20 text-green-400' :
-                        'bg-red-500/20 text-red-400'
-                      }`}>
-                        {trade.status === 'pending' ? '⏳' : trade.status === 'won' ? '✓' : '✗'}
-                      </Badge>
-                    </td>
+
+        <div className="lg:col-span-8 space-y-2">
+          <div className="grid grid-cols-5 gap-1.5">
+            <div className="bg-card border border-border rounded-lg p-2 text-center">
+              <div className="text-[8px] text-muted-foreground">Trades</div>
+              <div className="font-mono text-xs font-bold text-foreground">{wins + losses}</div>
+            </div>
+            <div className="bg-card border border-border rounded-lg p-2 text-center">
+              <div className="text-[8px] text-muted-foreground">Wins</div>
+              <div className="font-mono text-xs font-bold text-profit">{wins}</div>
+            </div>
+            <div className="bg-card border border-border rounded-lg p-2 text-center">
+              <div className="text-[8px] text-muted-foreground">Losses</div>
+              <div className="font-mono text-xs font-bold text-loss">{losses}</div>
+            </div>
+            <div className="bg-card border border-border rounded-lg p-2 text-center">
+              <div className="text-[8px] text-muted-foreground">Win Rate</div>
+              <div className="font-mono text-xs font-bold text-primary">{winRate}%</div>
+            </div>
+            <div className="bg-card border border-border rounded-lg p-2 text-center">
+              <div className="text-[8px] text-muted-foreground">P/L</div>
+              <div className={`font-mono text-xs font-bold ${netProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
+                ${netProfit.toFixed(2)}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <Button onClick={startBot} disabled={isRunning || !isAuthorized || balance < parseFloat(stake)} className="h-12 text-base font-bold bg-green-600 hover:bg-green-700">
+              <Play className="w-4 h-4 mr-2" /> START BOT
+            </Button>
+            <Button onClick={stopBot} disabled={!isRunning} variant="destructive" className="h-12 text-base font-bold">
+              <StopCircle className="w-4 h-4 mr-2" /> STOP
+            </Button>
+          </div>
+
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-foreground">Activity Log</h3>
+              <Button variant="ghost" size="sm" onClick={clearLog} className="h-6 w-6 p-0">
+                <Trash2 className="w-3 h-3" />
+              </Button>
+            </div>
+            <div className="max-h-[400px] overflow-auto">
+              <table className="w-full text-[10px]">
+                <thead className="text-[9px] text-muted-foreground bg-muted/30 sticky top-0">
+                  <tr>
+                    <th className="text-left p-2">Time</th>
+                    <th className="text-left p-2">Market</th>
+                    <th className="text-left p-2">Type</th>
+                    <th className="text-right p-2">Stake</th>
+                    <th className="text-center p-2">Digit</th>
+                    <th className="text-center p-2">Result</th>
+                    <th className="text-right p-2">P/L</th>
+                    <th className="text-left p-2">Info</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      
-      {/* Stats Footer */}
-      <div className="bg-gray-900/50 rounded-xl p-3 text-center text-xs text-gray-500">
-        <div className="flex justify-center gap-6">
-          <span>📊 Win Rate: {winRate}%</span>
-          <span>💰 Total P/L: ${totalProfit.toFixed(2)}</span>
-          <span>🎲 Last Digit Pattern: {isRecoveryMode ? 'RECOVERY ACTIVE' : 'NORMAL MODE'}</span>
+                </thead>
+                <tbody>
+                  {logEntries.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="text-center text-muted-foreground py-8">No trades yet — configure and start the bot</td>
+                    </tr>
+                  ) : (
+                    logEntries.map(e => (
+                      <tr key={e.id} className="border-t border-border/30">
+                        <td className="p-2 font-mono">{e.time}</td>
+                        <td className="p-2 font-bold">{e.market}</td>
+                        <td className="p-2 text-[9px]">{e.contract.replace('DIGIT', '')}</td>
+                        <td className="p-2 text-right font-mono">${e.stake.toFixed(2)}</td>
+                        <td className="p-2 text-center font-mono">{e.exitDigit}</td>
+                        <td className="p-2 text-center">
+                          <span className={`px-1.5 py-0.5 rounded-full text-[8px] font-bold ${
+                            e.result === 'Win' ? 'bg-green-500/20 text-green-400' :
+                            e.result === 'Loss' ? 'bg-red-500/20 text-red-400' :
+                            'bg-yellow-500/20 text-yellow-400'
+                          }`}>{e.result}</span>
+                        </td>
+                        <td className={`p-2 text-right font-mono ${e.pnl > 0 ? 'text-green-400' : e.pnl < 0 ? 'text-red-400' : ''}`}>
+                          {e.pnl !== 0 ? `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}` : '-'}
+                        </td>
+                        <td className="p-2 text-[9px] text-muted-foreground truncate max-w-[150px]">{e.switchInfo}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
     </div>
