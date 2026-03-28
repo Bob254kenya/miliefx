@@ -816,43 +816,7 @@ export default function ProScannerBot() {
             </div>
           </div>
         </div>
-
-        {/* Performance Stats Row */}
-        <div className="bg-gradient-to-br from-slate-900/80 to-slate-800/80 backdrop-blur-sm border border-slate-700/50 rounded-xl p-4 shadow-xl">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-cyan-400" />
-              Trade Report 
-            </span>
-            <span className="font-mono text-xl font-bold text-cyan-400">${balance.toFixed(2)}</span>
-          </div>
-          <div className="grid grid-cols-5 gap-3">
-            <div className="text-center bg-slate-800/30 rounded-lg p-2">
-              <div className="text-[9px] text-slate-400 mb-1">Total Trades</div>
-              <div className="font-mono text-lg font-bold text-slate-200">{wins + losses}</div>
-            </div>
-            <div className="text-center bg-slate-800/30 rounded-lg p-2">
-              <div className="text-[9px] text-slate-400 mb-1">Win Rate</div>
-              <div className="font-mono text-lg font-bold text-emerald-400">{winRate}%</div>
-            </div>
-            <div className="text-center bg-slate-800/30 rounded-lg p-2">
-              <div className="text-[9px] text-slate-400 mb-1">Wins</div>
-              <div className="font-mono text-lg font-bold text-emerald-400">{wins}</div>
-            </div>
-            <div className="text-center bg-slate-800/30 rounded-lg p-2">
-              <div className="text-[9px] text-slate-400 mb-1">Losses</div>
-              <div className="font-mono text-lg font-bold text-rose-400">{losses}</div>
-            </div>
-            <div className="text-center bg-slate-800/30 rounded-lg p-2">
-              <div className="text-[9px] text-slate-400 mb-1">Net Profit</div>
-              <div className={`font-mono text-lg font-bold ${netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {netProfit >= 0 ? '+' : ''}{netProfit.toFixed(2)}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Markets Row - Horizontal */}
+     {/* Markets Row - Horizontal */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {/* Market 1 */}
           <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-emerald-500/30 rounded-xl p-4 shadow-xl">
@@ -1154,6 +1118,40 @@ export default function ProScannerBot() {
                   {SCANNER_MARKETS.length} markets
                 </span>
                 <span className="font-mono text-[7px]">M1: {m1StrategyType !== 'disabled' ? m1StrategyType.substring(0, 8) : 'OFF'} | M2: {m2RecoveryType !== 'disabled' ? m2RecoveryType.substring(0, 8) : 'OFF'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+         {/* Performance Stats Row */}
+        <div className="bg-gradient-to-br from-slate-900/80 to-slate-800/80 backdrop-blur-sm border border-slate-700/50 rounded-xl p-4 shadow-xl">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-cyan-400" />
+              Trade Report 
+            </span>
+            <span className="font-mono text-xl font-bold text-cyan-400">${balance.toFixed(2)}</span>
+          </div>
+          <div className="grid grid-cols-5 gap-3">
+            <div className="text-center bg-slate-800/30 rounded-lg p-2">
+              <div className="text-[9px] text-slate-400 mb-1">Total Trades</div>
+              <div className="font-mono text-lg font-bold text-slate-200">{wins + losses}</div>
+            </div>
+            <div className="text-center bg-slate-800/30 rounded-lg p-2">
+              <div className="text-[9px] text-slate-400 mb-1">Win Rate</div>
+              <div className="font-mono text-lg font-bold text-emerald-400">{winRate}%</div>
+            </div>
+            <div className="text-center bg-slate-800/30 rounded-lg p-2">
+              <div className="text-[9px] text-slate-400 mb-1">Wins</div>
+              <div className="font-mono text-lg font-bold text-emerald-400">{wins}</div>
+            </div>
+            <div className="text-center bg-slate-800/30 rounded-lg p-2">
+              <div className="text-[9px] text-slate-400 mb-1">Losses</div>
+              <div className="font-mono text-lg font-bold text-rose-400">{losses}</div>
+            </div>
+            <div className="text-center bg-slate-800/30 rounded-lg p-2">
+              <div className="text-[9px] text-slate-400 mb-1">Net Profit</div>
+              <div className={`font-mono text-lg font-bold ${netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {netProfit >= 0 ? '+' : ''}{netProfit.toFixed(2)}
               </div>
             </div>
           </div>
