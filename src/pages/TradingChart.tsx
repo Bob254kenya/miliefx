@@ -537,42 +537,58 @@ export default function ProScannerBot() {
       const exitDigit = String(getLastDigit(result.sellPrice || 0));
 
       let switchInfo = `Pattern: ${patternDigits} | Exit: ${exitDigit}`;
+      let shouldResetMartingale = false;
+      
       if (won) {
         setWins(prev => prev + 1);
         if (inRecovery) {
           switchInfo += ' ✓ Recovery WIN → Back to M1';
           inRecovery = false;
+          shouldResetMartingale = true;
         } else {
           switchInfo += ' ✓ WIN → Continue scanning';
+          // Reset martingale on win in M1
+          shouldResetMartingale = true;
         }
-        mStep = 0;
-        cStake = baseStake;
       } else {
         setLosses(prev => prev + 1);
         if (activeAccount?.is_virtual) {
           recordLoss(cStake, tradeSymbol, 6000);
         }
-        if (!inRecovery && m2Enabled) {
-          inRecovery = true;
-          switchInfo += ' ✗ Loss → Switch to M2 Recovery (waiting for fresh pattern)';
-        } else {
-          switchInfo += inRecovery ? ' ✗ Loss → Stay M2 (waiting for fresh pattern)' : ' ✗ Loss → Continue scanning';
-        }
         
-        // Reset martingale on loss to start fresh with next pattern
-        if (!martingaleOn || mStep >= parseInt(martingaleMaxSteps)) {
-          mStep = 0;
-          cStake = baseStake;
-        } else if (martingaleOn && !won) {
-          // Only apply martingale if we're staying in recovery and will try again
-          if (inRecovery && m2Enabled) {
-            cStake = parseFloat((cStake * (parseFloat(martingaleMultiplier) || 2)).toFixed(2));
-            mStep++;
-          } else {
-            mStep = 0;
-            cStake = baseStake;
+        // Apply martingale on loss for BOTH M1 and M2 (if enabled)
+        if (martingaleOn && mStep < parseInt(martingaleMaxSteps)) {
+          // Increase stake for next trade
+          cStake = parseFloat((cStake * (parseFloat(martingaleMultiplier) || 2)).toFixed(2));
+          mStep++;
+          
+          if (!inRecovery && m2Enabled) {
+            // If we're in M1 and have a loss, we still apply martingale BUT also switch to M2 for next pattern
+            inRecovery = true;
+            switchInfo += ` ✗ Loss → Apply martingale (Step ${mStep}) & Switch to M2 Recovery (waiting for fresh pattern)`;
+          } else if (!inRecovery && !m2Enabled) {
+            // If M2 is disabled, stay in M1 but apply martingale
+            switchInfo += ` ✗ Loss → Apply martingale (Step ${mStep}) & Continue scanning M1 for fresh patterns`;
+          } else if (inRecovery) {
+            // Already in M2, just apply martingale
+            switchInfo += ` ✗ Loss → Apply martingale (Step ${mStep}) & Stay M2 (waiting for fresh pattern)`;
+          }
+        } else {
+          // Max martingale steps reached or martingale disabled - reset
+          switchInfo += martingaleOn ? ` ✗ Loss → Max martingale steps (${mStep}/${martingaleMaxSteps}) reached. Reset to base stake.` : ' ✗ Loss → Martingale disabled. Reset to base stake.';
+          shouldResetMartingale = true;
+          
+          if (!inRecovery && m2Enabled) {
+            inRecovery = true;
+            switchInfo += ' Switching to M2 Recovery for next pattern';
           }
         }
+      }
+      
+      // Reset martingale if we won or reached max steps
+      if (shouldResetMartingale) {
+        mStep = 0;
+        cStake = baseStake;
       }
 
       setNetProfit(prev => prev + pnl);
@@ -632,7 +648,7 @@ export default function ProScannerBot() {
     let inRecovery = false;
     let localPnl = 0;
     let localBalance = balance;
-    let lastTradeWasLoss = false;
+    let waitingForPatternAfterLoss = false;
 
     while (runningRef.current) {
       const mkt: 1 | 2 = inRecovery ? 2 : 1;
@@ -646,11 +662,11 @@ export default function ProScannerBot() {
       let barrier: string | undefined;
       let patternDigits: string;
 
-      // If we just had a loss, force waiting for a completely new pattern
-      if (lastTradeWasLoss && inRecovery) {
-        console.log('⏳ Last trade was a loss - waiting for fresh pattern before next trade');
-        await new Promise(r => setTimeout(r, 1000));
-        lastTradeWasLoss = false;
+      // If we're waiting for a fresh pattern after a loss (for M1 with martingale)
+      if (waitingForPatternAfterLoss) {
+        console.log('⏳ Waiting for fresh pattern after loss before next trade');
+        await new Promise(r => setTimeout(r, 500));
+        waitingForPatternAfterLoss = false;
         continue;
       }
 
@@ -717,9 +733,12 @@ export default function ProScannerBot() {
       );
       if (!result || !runningRef.current) break;
       
-      // Track if this trade was a loss
-      const wasLoss = result.cStake === cStake && result.mStep === mStep && result.inRecovery === inRecovery ? false : true;
-      lastTradeWasLoss = !result.shouldBreak && result.localPnl < localPnl;
+      // Check if this trade was a loss to set waiting flag
+      const wasLoss = result.cStake !== cStake || result.mStep !== mStep || result.inRecovery !== inRecovery;
+      if (wasLoss && !result.shouldBreak && martingaleOn && result.mStep > 0 && !result.inRecovery) {
+        // If we're in M1 and had a loss with martingale applied, wait for fresh pattern
+        waitingForPatternAfterLoss = true;
+      }
       
       localPnl = result.localPnl;
       localBalance = result.localBalance;
