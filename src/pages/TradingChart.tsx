@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'; 
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import {
   Play, StopCircle, Trash2, Scan,
@@ -789,9 +789,9 @@ export default function ProScannerBot() {
               </div>
               <div>
                 <h1 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
-                 Milliefx Ultimate 2026 Bot
+                 Ramzfx Ultimate 2026 Bot
                 </h1>
-                <p className="text-xs text-slate-400">Milliefx Advanced Market Scanning & Recovery System</p>
+                <p className="text-xs text-slate-400">Ramzfx Advanced Market Scanning & Recovery System</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -853,7 +853,7 @@ export default function ProScannerBot() {
           <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-emerald-500/30 rounded-xl p-4 shadow-xl">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-base font-bold text-emerald-400 flex items-center gap-2">
-                <Home className="w-4 h-4" /> Market 1 — Primary
+                <Home className="w-4 h-4" /> Market 1 Bot
               </h3>
               <div className="flex items-center gap-2">
                 {currentMarket === 1 && isRunning && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
@@ -899,7 +899,7 @@ export default function ProScannerBot() {
           <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-fuchsia-500/30 rounded-xl p-4 shadow-xl">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-base font-bold text-fuchsia-400 flex items-center gap-2">
-                <RefreshCw className="w-4 h-4" /> Market 2 — Recovery
+                <RefreshCw className="w-4 h-4" /> Market 2 — Recovery Bot
               </h3>
               <div className="flex items-center gap-2">
                 {currentMarket === 2 && isRunning && <span className="w-2 h-2 rounded-full bg-fuchsia-400 animate-pulse" />}
@@ -985,23 +985,63 @@ export default function ProScannerBot() {
           )}
         </div>
 
-        {/* Start/Stop Buttons */}
-        <div className="grid grid-cols-2 gap-3">
-          <Button
-            onClick={startBot}
-            disabled={isRunning || !isAuthorized || balance < parseFloat(stake)}
-            className="h-12 text-base font-bold bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-lg rounded-xl transition-all duration-200"
+        {/* Single Start/Stop Button with Animation - Reduced Width */}
+        <div className="flex justify-center">
+          <button
+            onClick={isRunning ? stopBot : startBot}
+            disabled={!isRunning && (!isAuthorized || balance < parseFloat(stake))}
+            className={`
+              relative w-[200px] h-14 text-base font-bold rounded-xl transition-all duration-300 ease-out
+              overflow-hidden group
+              ${isRunning 
+                ? 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white shadow-lg shadow-red-500/30' 
+                : 'bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white shadow-lg shadow-blue-500/30'
+              }
+              disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100
+              active:scale-95 transform
+            `}
           >
-            <Play className="w-4 h-4 mr-2" /> Run BOT 🎬
-          </Button>
-          <Button
-            onClick={stopBot}
-            disabled={!isRunning}
-            variant="destructive"
-            className="h-12 text-base font-bold bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 shadow-lg rounded-xl transition-all duration-200"
-          >
-            <StopCircle className="w-4 h-4 mr-2" /> STOP 🛑 
-          </Button>
+            {/* Animated background pulse effect when running */}
+            {isRunning && (
+              <>
+                <span className="absolute inset-0 bg-white/20 animate-pulse rounded-xl" />
+                <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent animate-shimmer" />
+              </>
+            )}
+            
+            {/* Button content with animated icons */}
+            <div className="relative flex items-center justify-center gap-3">
+              {isRunning ? (
+                <>
+                  <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span className="flex items-center gap-1">
+                    STOP BOT
+                    <span className="flex gap-0.5 ml-1">
+                      <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </span>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                  <span className="flex items-center gap-1">
+                    RUN BOT
+                    <span className="relative flex h-2 w-2 ml-1">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                    </span>
+                  </span>
+                </>
+              )}
+            </div>
+          </button>
         </div>
 
         {/* Activity Log - Full Width */}
@@ -1077,6 +1117,21 @@ export default function ProScannerBot() {
           </div>
         </div>
       </div>
+
+      {/* Add these styles to your global CSS or use Tailwind config */}
+      <style>{`
+        @keyframes shimmer {
+          0% {
+            transform: translateX(-100%);
+          }
+          100% {
+            transform: translateX(100%);
+          }
+        }
+        .animate-shimmer {
+          animation: shimmer 2s infinite;
+        }
+      `}</style>
     </div>
   );
 }
