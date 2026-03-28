@@ -123,7 +123,7 @@ export default function ProScannerBot() {
 
   /* ── Market 2 config ── */
   const [m2Enabled, setM2Enabled] = useState(true);
-  const [m2RecoveryType, setM2RecoveryType] = useState<M2RecoveryType>('all_odd_even_7');
+  const [m2RecoveryType, setM2RecoveryType] = useState<M2RecoveryType>('over4_under5_7');
 
   /* ── Virtual Hook M1 ── */
   const [m1HookEnabled, setM1HookEnabled] = useState(false);
@@ -253,6 +253,7 @@ export default function ProScannerBot() {
     }
   }, [m1StrategyType]);
 
+  // CORRECTED M2 Pattern Check for ALL markets
   const checkM2Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string } => {
     const digits = tickMapRef.current.get(symbol) || [];
     
@@ -290,13 +291,17 @@ export default function ProScannerBot() {
       case 'over4_under5_7': {
         if (digits.length < 7) return { matched: false };
         const last7 = digits.slice(-7);
-        const allLessThan4 = last7.every(d => d < 4);
-        const allGreaterThan5 = last7.every(d => d > 5);
+        // CORRECTED: All digits >= 5 for OVER 4 pattern
+        const allOver4 = last7.every(d => d >= 5);
+        // CORRECTED: All digits <= 4 for UNDER 5 pattern
+        const allUnder5 = last7.every(d => d <= 4);
         
-        if (allLessThan4) {
+        if (allOver4) {
+          console.log(`🎯 OVER 4 pattern detected on ${symbol}:`, last7);
           return { matched: true, contractType: 'DIGITOVER', barrier: '4' };
         }
-        if (allGreaterThan5) {
+        if (allUnder5) {
+          console.log(`🎯 UNDER 5 pattern detected on ${symbol}:`, last7);
           return { matched: true, contractType: 'DIGITUNDER', barrier: '5' };
         }
         return { matched: false };
@@ -305,13 +310,17 @@ export default function ProScannerBot() {
       case 'over4_under5_6': {
         if (digits.length < 6) return { matched: false };
         const last6 = digits.slice(-6);
-        const allLessThan4 = last6.every(d => d < 4);
-        const allGreaterThan5 = last6.every(d => d > 5);
+        // CORRECTED: All digits >= 5 for OVER 4 pattern
+        const allOver4 = last6.every(d => d >= 5);
+        // CORRECTED: All digits <= 4 for UNDER 5 pattern
+        const allUnder5 = last6.every(d => d <= 4);
         
-        if (allLessThan4) {
+        if (allOver4) {
+          console.log(`🎯 OVER 4 pattern detected on ${symbol}:`, last6);
           return { matched: true, contractType: 'DIGITOVER', barrier: '4' };
         }
-        if (allGreaterThan5) {
+        if (allUnder5) {
+          console.log(`🎯 UNDER 5 pattern detected on ${symbol}:`, last6);
           return { matched: true, contractType: 'DIGITUNDER', barrier: '5' };
         }
         return { matched: false };
@@ -689,9 +698,9 @@ export default function ProScannerBot() {
               </div>
               <div>
                 <h1 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
-                 Millie Ultimate 2026 Bot
+                 Ramzfx Ultimate 2026 Bot
                 </h1>
-                <p className="text-xs text-slate-400">Advanced Market Scanning & Recovery System</p>
+                <p className="text-xs text-slate-400"> Ramzfx Advanced Market Scanning & Recovery System</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -775,7 +784,6 @@ export default function ProScannerBot() {
                     <SelectValue placeholder="Select strategy" />
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
-                    <SelectItem value="disabled">Disabled (Manual)</SelectItem>
                     <SelectItem value="over1_under8">🎯 Over 1 / Under 8 (2 ticks)</SelectItem>
                     <SelectItem value="over2_under7">🎯 Over 2 / Under 7 (3 ticks)</SelectItem>
                     <SelectItem value="over3_under6">🎯 Over 3 / Under 6 (4 ticks)</SelectItem>
@@ -820,9 +828,8 @@ export default function ProScannerBot() {
                     <SelectValue placeholder="Select strategy" />
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
-                    <SelectItem value="disabled">Disabled (Manual)</SelectItem>
-                    <SelectItem value="all_odd_even_7">🔄 Odd → Even (7 ticks)</SelectItem>
-                    <SelectItem value="all_odd_even_6">🔄 Odd /Even (6 ticks)</SelectItem>
+                    <SelectItem value="all_odd_even_7">🔄 Odd / Even (7 ticks)</SelectItem>
+                    <SelectItem value="all_odd_even_6">🔄 Odd / Even (6 ticks)</SelectItem>
                     <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
                     <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
                   </SelectContent>
@@ -871,11 +878,58 @@ export default function ProScannerBot() {
                 <Input type="number" min="1.1" step="0.1" value={martingaleMultiplier} onChange={e => setMartingaleMultiplier(e.target.value)} disabled={isRunning} className="h-8 text-xs bg-slate-800/50 border-slate-700 text-slate-200" />
               </div>
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Reset Martingale After </label>
+                <label className="text-[10px] text-slate-400 block mb-1">Max Steps</label>
                 <Input type="number" min="1" max="10" value={martingaleMaxSteps} onChange={e => setMartingaleMaxSteps(e.target.value)} disabled={isRunning} className="h-8 text-xs bg-slate-800/50 border-slate-700 text-slate-200" />
               </div>
             </div>
           )}
+        </div>
+
+        {/* Virtual Hook Settings */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* M1 Virtual Hook */}
+          <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-emerald-500/20 rounded-xl p-3 shadow-xl">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-bold text-emerald-400 flex items-center gap-1">
+                <Anchor className="w-3.5 h-3.5" /> M1 Virtual Hook
+              </h3>
+              <Switch checked={m1HookEnabled} onCheckedChange={setM1HookEnabled} disabled={isRunning} />
+            </div>
+            {m1HookEnabled && (
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <div>
+                  <label className="text-[9px] text-slate-400 block mb-1">Virtual Losses</label>
+                  <Input type="number" min="1" max="10" value={m1VirtualLossCount} onChange={e => setM1VirtualLossCount(e.target.value)} disabled={isRunning} className="h-7 text-xs bg-slate-800/50 border-slate-700" />
+                </div>
+                <div>
+                  <label className="text-[9px] text-slate-400 block mb-1">Real Trades</label>
+                  <Input type="number" min="1" max="5" value={m1RealCount} onChange={e => setM1RealCount(e.target.value)} disabled={isRunning} className="h-7 text-xs bg-slate-800/50 border-slate-700" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* M2 Virtual Hook */}
+          <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-fuchsia-500/20 rounded-xl p-3 shadow-xl">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-bold text-fuchsia-400 flex items-center gap-1">
+                <Anchor className="w-3.5 h-3.5" /> M2 Virtual Hook
+              </h3>
+              <Switch checked={m2HookEnabled} onCheckedChange={setM2HookEnabled} disabled={isRunning} />
+            </div>
+            {m2HookEnabled && (
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <div>
+                  <label className="text-[9px] text-slate-400 block mb-1">Virtual Losses</label>
+                  <Input type="number" min="1" max="10" value={m2VirtualLossCount} onChange={e => setM2VirtualLossCount(e.target.value)} disabled={isRunning} className="h-7 text-xs bg-slate-800/50 border-slate-700" />
+                </div>
+                <div>
+                  <label className="text-[9px] text-slate-400 block mb-1">Real Trades</label>
+                  <Input type="number" min="1" max="5" value={m2RealCount} onChange={e => setM2RealCount(e.target.value)} disabled={isRunning} className="h-7 text-xs bg-slate-800/50 border-slate-700" />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Hook Status */}
@@ -928,6 +982,18 @@ export default function ProScannerBot() {
           >
             <StopCircle className="w-4 h-4 mr-2" /> STOP 🛑 
           </Button>
+        </div>
+
+        {/* Turbo Mode Toggle */}
+        <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl p-3 shadow-xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-amber-400" />
+              <span className="text-sm font-semibold text-slate-200">Turbo Mode</span>
+              <span className="text-[10px] text-slate-400">(Faster scanning, uses more CPU)</span>
+            </div>
+            <Switch checked={turboMode} onCheckedChange={setTurboMode} disabled={isRunning} />
+          </div>
         </div>
 
         {/* Activity Log - Full Width */}
