@@ -14,19 +14,16 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import {
   Play, StopCircle, Trash2, Scan,
-  Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload,
+  Home, RefreshCw, Shield, Zap, Eye, Anchor, TrendingUp, TrendingDown, Target
 } from 'lucide-react';
 import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
 const SCANNER_MARKETS: { symbol: string; name: string }[] = [
-  // Volatility indices
   { symbol: 'R_10', name: 'Vol 10' },
   { symbol: 'R_25', name: 'Vol 25' },
   { symbol: 'R_50', name: 'Vol 50' },
   { symbol: 'R_75', name: 'Vol 75' },
   { symbol: 'R_100', name: 'Vol 100' },
-  
-  // 1-second volatility indices
   { symbol: '1HZ10V', name: 'V10 1s' },
   { symbol: '1HZ15V', name: 'V15 1s' },
   { symbol: '1HZ25V', name: 'V25 1s' },
@@ -35,12 +32,8 @@ const SCANNER_MARKETS: { symbol: string; name: string }[] = [
   { symbol: '1HZ75V', name: 'V75 1s' },
   { symbol: '1HZ90V', name: 'V90 1s' },
   { symbol: '1HZ100V', name: 'V100 1s' },
-  
-  // Jump indices
   { symbol: 'JD10', name: 'Jump 10' },
   { symbol: 'JD25', name: 'Jump 25' },
-  
-  // Directional indices
   { symbol: 'RDBEAR', name: 'Bear' },
   { symbol: 'RDBULL', name: 'Bull' },
 ];
@@ -70,7 +63,6 @@ interface LogEntry {
   switchInfo: string;
 }
 
-/* ── Circular Tick Buffer ── */
 class CircularTickBuffer {
   private buffer: { digit: number; ts: number }[];
   private head = 0;
@@ -103,7 +95,6 @@ function waitForNextTick(symbol: string): Promise<{ quote: number }> {
   });
 }
 
-/* ── Simulate a virtual contract result based on actual next tick ── */
 function simulateVirtualContract(
   contractType: string, barrier: string, symbol: string
 ): Promise<{ won: boolean; digit: number }> {
@@ -136,12 +127,12 @@ export default function ProScannerBot() {
   /* ── Market 1 config ── */
   const [m1Enabled, setM1Enabled] = useState(true);
   const [m1Symbol, setM1Symbol] = useState('R_100');
-  const [m1StrategyType, setM1StrategyType] = useState<M1StrategyType>('disabled');
+  const [m1StrategyType, setM1StrategyType] = useState<M1StrategyType>('over1_under8');
 
   /* ── Market 2 config ── */
   const [m2Enabled, setM2Enabled] = useState(true);
   const [m2Symbol, setM2Symbol] = useState('R_50');
-  const [m2RecoveryType, setM2RecoveryType] = useState<M2RecoveryType>('disabled');
+  const [m2RecoveryType, setM2RecoveryType] = useState<M2RecoveryType>('all_odd_even_7');
 
   /* ── Virtual Hook M1 ── */
   const [m1HookEnabled, setM1HookEnabled] = useState(false);
@@ -161,27 +152,23 @@ export default function ProScannerBot() {
 
   /* ── Risk ── */
   const [stake, setStake] = useState('0.35');
-  const [martingaleOn, setMartingaleOn] = useState(false);
+  const [martingaleOn, setMartingaleOn] = useState(true);
   const [martingaleMultiplier, setMartingaleMultiplier] = useState('2.0');
   const [martingaleMaxSteps, setMartingaleMaxSteps] = useState('5');
   const [takeProfit, setTakeProfit] = useState('10');
   const [stopLoss, setStopLoss] = useState('5');
 
   /* ── Strategy Enabled Flags ── */
-  const [strategyM1Enabled, setStrategyM1Enabled] = useState(false);
-  const [strategyM2Enabled, setStrategyM2Enabled] = useState(false);
+  const [strategyM1Enabled, setStrategyM1Enabled] = useState(true);
+  const [strategyM2Enabled, setStrategyM2Enabled] = useState(true);
 
   /* ── Scanner ── */
-  const [scannerActive, setScannerActive] = useState(false);
+  const [scannerActive, setScannerActive] = useState(true);
 
   /* ── Turbo ── */
   const [turboMode, setTurboMode] = useState(false);
   const [botName, setBotName] = useState('');
-  const [turboLatency, setTurboLatency] = useState(0);
-  const [ticksCaptured, setTicksCaptured] = useState(0);
-  const [ticksMissed, setTicksMissed] = useState(0);
   const turboBuffersRef = useRef<Map<string, CircularTickBuffer>>(new Map());
-  const lastTickTsRef = useRef(0);
 
   /* ── Bot state ── */
   const [botStatus, setBotStatus] = useState<BotStatus>('idle');
@@ -201,7 +188,6 @@ export default function ProScannerBot() {
   const tickMapRef = useRef<Map<string, number[]>>(new Map());
   const [tickCounts, setTickCounts] = useState<Record<string, number>>({});
 
-  /* Subscribe to all scanner markets */
   useEffect(() => {
     if (!derivApi.isConnected) return;
     let active = true;
@@ -209,7 +195,6 @@ export default function ProScannerBot() {
       if (!data.tick || !active) return;
       const sym = data.tick.symbol as string;
       const digit = getLastDigit(data.tick.quote);
-      const now = performance.now();
 
       const map = tickMapRef.current;
       const arr = map.get(sym) || [];
@@ -223,21 +208,12 @@ export default function ProScannerBot() {
       }
       const buf = turboBuffersRef.current.get(sym)!;
       buf.push(digit);
-
-      if (lastTickTsRef.current > 0) {
-        const lat = now - lastTickTsRef.current;
-        setTurboLatency(Math.round(lat));
-        if (lat > 50) setTicksMissed(prev => prev + 1);
-      }
-      lastTickTsRef.current = now;
-      setTicksCaptured(prev => prev + 1);
     };
     const unsub = derivApi.onMessage(handler);
     SCANNER_MARKETS.forEach(m => { derivApi.subscribeTicks(m.symbol as MarketSymbol, () => {}).catch(() => {}); });
     return () => { active = false; unsub(); };
   }, []);
 
-  /* ── M1 Scanner Logic ── */
   const checkM1Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string } => {
     const digits = tickMapRef.current.get(symbol) || [];
     
@@ -289,7 +265,6 @@ export default function ProScannerBot() {
     }
   }, [m1StrategyType]);
 
-  /* ── M2 Recovery Logic ── */
   const checkM2Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string } => {
     const digits = tickMapRef.current.get(symbol) || [];
     
@@ -359,7 +334,6 @@ export default function ProScannerBot() {
     }
   }, [m2RecoveryType]);
 
-  /* ── Find scanner match for M1 across all markets ── */
   const findM1Match = useCallback((): { symbol: string; contractType: string; barrier?: string } | null => {
     for (const market of SCANNER_MARKETS) {
       const result = checkM1Pattern(market.symbol);
@@ -370,7 +344,6 @@ export default function ProScannerBot() {
     return null;
   }, [checkM1Pattern]);
 
-  /* ── Find scanner match for M2 across all markets ── */
   const findM2Match = useCallback((): { symbol: string; contractType: string; barrier?: string } | null => {
     for (const market of SCANNER_MARKETS) {
       const result = checkM2Pattern(market.symbol);
@@ -381,26 +354,21 @@ export default function ProScannerBot() {
     return null;
   }, [checkM2Pattern]);
 
-  /* ── Add log entry ── */
   const addLog = useCallback((id: number, entry: Omit<LogEntry, 'id'>) => {
     setLogEntries(prev => [{ ...entry, id }, ...prev].slice(0, 100));
   }, []);
 
-  /* ── Update pending log ── */
   const updateLog = useCallback((id: number, updates: Partial<LogEntry>) => {
     setLogEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
   }, []);
 
-  /* ── Clear log ── */
   const clearLog = useCallback(() => {
     setLogEntries([]);
     setWins(0); setLosses(0); setTotalStaked(0); setNetProfit(0);
     setMartingaleStepState(0);
     setVhFakeWins(0); setVhFakeLosses(0); setVhConsecLosses(0); setVhStatus('idle');
-    setTicksCaptured(0); setTicksMissed(0);
   }, []);
 
-  /* ── Execute a single real trade ── */
   const executeRealTrade = useCallback(async (
     contractType: string,
     barrier: string | undefined,
@@ -516,14 +484,12 @@ export default function ProScannerBot() {
     }
   }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, turboMode, activeAccount, recordLoss]);
 
-  /* ═══════════════ MAIN BOT LOOP ═══════════════ */
   const startBot = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
     const baseStake = parseFloat(stake);
     if (baseStake < 0.35) { toast.error('Min stake $0.35'); return; }
     if (!m1Enabled && !m2Enabled) { toast.error('Enable at least one market'); return; }
     
-    // Auto-enable scanner if strategy is enabled
     if (strategyM1Enabled && m1StrategyType !== 'disabled') {
       setScannerActive(true);
     }
@@ -559,7 +525,6 @@ export default function ProScannerBot() {
       const requiredLosses = parseInt(mkt === 1 ? m1VirtualLossCount : m2VirtualLossCount) || 3;
       const realCount = parseInt(mkt === 1 ? m1RealCount : m2RealCount) || 2;
 
-      /* ── M1 Strategy with Scanner ── */
       if (!inRecovery && strategyM1Enabled && m1StrategyType !== 'disabled') {
         setBotStatus('waiting_pattern');
 
@@ -587,7 +552,6 @@ export default function ProScannerBot() {
         barrier = matchData!.barrier;
         if (!turboMode) await new Promise(r => setTimeout(r, 300));
       }
-      /* ── M2 Recovery Strategy with Scanner ── */
       else if (inRecovery && strategyM2Enabled && m2RecoveryType !== 'disabled') {
         setBotStatus('waiting_pattern');
 
@@ -615,7 +579,6 @@ export default function ProScannerBot() {
         barrier = matchData!.barrier;
         if (!turboMode) await new Promise(r => setTimeout(r, 300));
       }
-      /* ── Default Trading (No Strategy) ── */
       else {
         setBotStatus(mkt === 1 ? 'trading_m1' : 'recovery');
         tradeSymbol = mkt === 1 ? m1Symbol : m2Symbol;
@@ -623,7 +586,6 @@ export default function ProScannerBot() {
         barrier = undefined;
       }
 
-      /* ═══ VIRTUAL HOOK SEQUENCE ═══ */
       if (hookEnabled) {
         setBotStatus('virtual_hook');
         setVhStatus('waiting');
@@ -685,7 +647,6 @@ export default function ProScannerBot() {
         continue;
       }
 
-      /* ═══ NORMAL REAL TRADE ═══ */
       const result = await executeRealTrade(
         contractType, barrier, tradeSymbol, cStake, mStep, mkt, localBalance, localPnl, baseStake
       );
@@ -716,20 +677,18 @@ export default function ProScannerBot() {
     setBotStatus('idle');
   }, []);
 
-  /* ── Status helpers ── */
   const statusConfig: Record<BotStatus, { icon: string; label: string; color: string }> = {
-    idle: { icon: '⚪', label: 'IDLE', color: 'text-muted-foreground' },
-    trading_m1: { icon: '🟢', label: 'TRADING M1', color: 'text-profit' },
-    recovery: { icon: '🟣', label: 'RECOVERY MODE', color: 'text-purple-400' },
-    waiting_pattern: { icon: '🟡', label: 'WAITING PATTERN', color: 'text-warning' },
-    pattern_matched: { icon: '✅', label: 'PATTERN MATCHED', color: 'text-profit' },
-    virtual_hook: { icon: '🎣', label: 'VIRTUAL HOOK', color: 'text-primary' },
+    idle: { icon: '⚪', label: 'IDLE', color: 'text-slate-400' },
+    trading_m1: { icon: '🟢', label: 'TRADING M1', color: 'text-emerald-400' },
+    recovery: { icon: '🟣', label: 'RECOVERY MODE', color: 'text-fuchsia-400' },
+    waiting_pattern: { icon: '🟡', label: 'WAITING PATTERN', color: 'text-amber-400' },
+    pattern_matched: { icon: '✅', label: 'PATTERN MATCHED', color: 'text-emerald-400' },
+    virtual_hook: { icon: '🎣', label: 'VIRTUAL HOOK', color: 'text-cyan-400' },
   };
 
   const status = statusConfig[botStatus];
   const winRate = wins + losses > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '0.0';
 
-  /* ── Build config object for preview ── */
   const currentConfig = useMemo<BotConfig>(() => ({
     version: 2,
     m1: { 
@@ -799,539 +758,420 @@ export default function ProScannerBot() {
     }
   }, [location.state, handleLoadConfig]);
 
-  const activeSymbol = currentMarket === 1 ? m1Symbol : m2Symbol;
-  const activeDigits = (tickMapRef.current.get(activeSymbol) || []).slice(-8);
-
   return (
-    <div className="space-y-2 max-w-7xl mx-auto">
-      {/* ── Compact Header ── */}
-      <div className="flex items-center justify-between gap-2 bg-card border border-border rounded-xl px-3 py-2">
-        <h1 className="text-base font-bold text-foreground flex items-center gap-2">
-          <Scan className="w-4 h-4 text-primary" /> Pro Scanner Bot
-        </h1>
-        <div className="flex items-center gap-2">
-          <Badge className={`${status.color} text-[10px]`}>{status.icon} {status.label}</Badge>
-          {isRunning && (
-            <Badge variant="outline" className="text-[10px] text-warning animate-pulse font-mono">
-              P/L: ${netProfit.toFixed(2)}
-            </Badge>
-          )}
-          {isRunning && (
-            <Badge variant="outline" className={`text-[10px] ${currentMarket === 1 ? 'text-profit border-profit/50' : 'text-purple-400 border-purple-500/50'}`}>
-              {currentMarket === 1 ? '🏠 M1' : '🔄 M2'}
-            </Badge>
-          )}
-        </div>
-      </div>
-
-      {/* ── Scanner + Turbo + Stats Compact Row ── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-        {/* Scanner */}
-        <div className="bg-card border border-border rounded-xl p-2.5">
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="flex items-center gap-1.5">
-              <Eye className="w-3.5 h-3.5 text-primary" />
-              <span className="text-xs font-semibold text-foreground">Scanner</span>
-              <Badge variant={scannerActive ? 'default' : 'secondary'} className="text-[9px] h-4 px-1.5">
-                {scannerActive ? '🟢 ON' : '⚫ OFF'}
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-4">
+      <div className="space-y-3 max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-slate-900/80 to-slate-800/80 backdrop-blur-sm border border-slate-700/50 rounded-xl px-4 py-3 shadow-xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg shadow-lg">
+                <Scan className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
+                  Pro Scanner Bot
+                </h1>
+                <p className="text-xs text-slate-400">Advanced Market Scanning & Recovery System</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Badge className={`${status.color} bg-slate-800/50 border-slate-700 text-[10px] px-3 py-1`}>
+                {status.icon} {status.label}
               </Badge>
-            </div>
-            <Switch checked={scannerActive} onCheckedChange={setScannerActive} disabled={isRunning} />
-          </div>
-          <div className="flex flex-wrap gap-0.5">
-            {SCANNER_MARKETS.map(m => {
-              const count = tickCounts[m.symbol] || 0;
-              return (
-                <Badge key={m.symbol} variant="outline"
-                  className={`text-[8px] h-4 px-1 font-mono ${count > 0 ? 'border-primary/50 text-primary' : 'text-muted-foreground'}`}>
-                  {m.name}
+              {isRunning && (
+                <Badge variant="outline" className="text-[10px] text-amber-400 animate-pulse border-amber-500/30 bg-amber-500/10">
+                  P/L: ${netProfit.toFixed(2)}
                 </Badge>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Turbo */}
-        <div className="bg-card border border-border rounded-xl p-2.5">
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="flex items-center gap-1.5">
-              <Zap className={`w-3.5 h-3.5 ${turboMode ? 'text-profit animate-pulse' : 'text-muted-foreground'}`} />
-              <span className="text-xs font-semibold text-foreground">Turbo</span>
-            </div>
-            <Button
-              size="sm"
-              variant={turboMode ? 'default' : 'outline'}
-              className={`h-6 text-[9px] px-2 ${turboMode ? 'bg-profit hover:bg-profit/90 text-profit-foreground animate-pulse' : ''}`}
-              onClick={() => setTurboMode(!turboMode)}
-              disabled={isRunning}
-            >
-              {turboMode ? '⚡ ON' : 'OFF'}
-            </Button>
-          </div>
-          <div className="grid grid-cols-3 gap-1 text-center">
-            <div className="bg-muted/50 rounded p-1">
-              <div className="text-[8px] text-muted-foreground">Latency</div>
-              <div className="font-mono text-[10px] text-primary font-bold">{turboLatency}ms</div>
-            </div>
-            <div className="bg-muted/50 rounded p-1">
-              <div className="text-[8px] text-muted-foreground">Captured</div>
-              <div className="font-mono text-[10px] text-profit font-bold">{ticksCaptured}</div>
-            </div>
-            <div className="bg-muted/50 rounded p-1">
-              <div className="text-[8px] text-muted-foreground">Missed</div>
-              <div className="font-mono text-[10px] text-loss font-bold">{ticksMissed}</div>
+              )}
+              {isRunning && (
+                <Badge variant="outline" className={`text-[10px] ${currentMarket === 1 ? 'text-emerald-400 border-emerald-500/30' : 'text-fuchsia-400 border-fuchsia-500/30'} bg-slate-800/50`}>
+                  {currentMarket === 1 ? '🏠 M1' : '🔄 M2'}
+                </Badge>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Live Stats */}
-        <div className="bg-card border border-border rounded-xl p-2.5">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-xs font-semibold text-foreground">Stats</span>
-            <span className="font-mono text-sm font-bold text-foreground">${balance.toFixed(2)}</span>
-          </div>
-          <div className="grid grid-cols-3 gap-1 text-center">
-            <div className="bg-muted/50 rounded p-1">
-              <div className="text-[8px] text-muted-foreground">W/L</div>
-              <div className="font-mono text-[10px] font-bold"><span className="text-profit">{wins}</span>/<span className="text-loss">{losses}</span></div>
+        {/* Scanner Stats Row */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="bg-gradient-to-br from-slate-900/80 to-slate-800/80 backdrop-blur-sm border border-slate-700/50 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <Eye className="w-4 h-4 text-cyan-400" />
+                <span className="text-sm font-semibold text-slate-200">Market Scanner</span>
+                <Badge variant={scannerActive ? 'default' : 'secondary'} className="text-[10px] h-5 px-2 bg-cyan-500/20 text-cyan-400 border-cyan-500/30">
+                  {scannerActive ? '🟢 ACTIVE' : '⚫ INACTIVE'}
+                </Badge>
+              </div>
+              <Switch checked={scannerActive} onCheckedChange={setScannerActive} disabled={isRunning} />
             </div>
-            <div className="bg-muted/50 rounded p-1">
-              <div className="text-[8px] text-muted-foreground">Net P/L</div>
-              <div className={`font-mono text-[10px] font-bold ${netProfit >= 0 ? 'text-profit' : 'text-loss'}`}>${netProfit.toFixed(2)}</div>
-            </div>
-            <div className="bg-muted/50 rounded p-1">
-              <div className="text-[8px] text-muted-foreground">Stake</div>
-              <div className="font-mono text-[10px] font-bold text-foreground">${currentStake.toFixed(2)}{martingaleStep > 0 && <span className="text-warning"> M{martingaleStep}</span>}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Main 2-Column Layout ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-2">
-        {/* ═══ LEFT: Config Column ═══ */}
-        <div className="lg:col-span-4 space-y-2">
-          {/* Market 1 + Market 2 side by side on md */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-2">
-            {/* Market 1 */}
-            <div className="bg-card border-2 border-profit/30 rounded-xl p-2.5 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-profit flex items-center gap-1"><Home className="w-3.5 h-3.5" /> M1 — Home</h3>
-                <div className="flex items-center gap-1.5">
-                  {currentMarket === 1 && isRunning && <span className="w-2 h-2 rounded-full bg-profit animate-pulse" />}
-                  <Switch checked={m1Enabled} onCheckedChange={setM1Enabled} disabled={isRunning} />
-                </div>
-              </div>
-              
-              {/* Strategy Selector for M1 */}
-              <div>
-                <label className="text-[10px] text-muted-foreground mb-1 block">M1 Strategy Mode</label>
-                <Select value={m1StrategyType} onValueChange={(v: M1StrategyType) => {
-                  setM1StrategyType(v);
-                  if (v !== 'disabled') {
-                    setStrategyM1Enabled(true);
-                    setScannerActive(true);
-                  }
-                }} disabled={isRunning}>
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder="Select strategy" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="disabled">Disabled (Manual)</SelectItem>
-                    <SelectItem value="over1_under8">🎯 Over 1 / Under 8 (2 ticks)</SelectItem>
-                    <SelectItem value="over2_under7">🎯 Over 2 / Under 7 (3 ticks)</SelectItem>
-                    <SelectItem value="over3_under6">🎯 Over 3 / Under 6 (4 ticks)</SelectItem>
-                  </SelectContent>
-                </Select>
-                {m1StrategyType !== 'disabled' && (
-                  <div className="text-[8px] text-primary mt-1 animate-pulse">
-                    🔍 Scanning ALL markets for pattern...
-                  </div>
-                )}
-              </div>
-
-              <Select value={m1Symbol} onValueChange={v => setM1Symbol(v)} disabled={isRunning || m1StrategyType !== 'disabled'}>
-                <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>{SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name} ({m.symbol})</SelectItem>)}</SelectContent>
-              </Select>
-
-              {/* Virtual Hook M1 */}
-              <div className="border-t border-border/30 pt-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[9px] font-semibold text-primary flex items-center gap-1">
-                    <Anchor className="w-3 h-3" /> Virtual Hook
-                  </span>
-                  <Switch checked={m1HookEnabled} onCheckedChange={setM1HookEnabled} disabled={isRunning} />
-                </div>
-                {m1HookEnabled && (
-                  <div className="grid grid-cols-2 gap-1.5 mt-1">
-                    <div>
-                      <label className="text-[8px] text-muted-foreground">V-Losses</label>
-                      <Input type="number" min="1" max="20" value={m1VirtualLossCount} onChange={e => setM1VirtualLossCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
-                    </div>
-                    <div>
-                      <label className="text-[8px] text-muted-foreground">Real Trades</label>
-                      <Input type="number" min="1" max="10" value={m1RealCount} onChange={e => setM1RealCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Market 2 */}
-            <div className="bg-card border-2 border-purple-500/30 rounded-xl p-2.5 space-y-1.5">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-purple-400 flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5" /> M2 — Recovery</h3>
-                <div className="flex items-center gap-1.5">
-                  {currentMarket === 2 && isRunning && <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />}
-                  <Switch checked={m2Enabled} onCheckedChange={setM2Enabled} disabled={isRunning} />
-                </div>
-              </div>
-
-              {/* Recovery Strategy Selector for M2 */}
-              <div>
-                <label className="text-[10px] text-muted-foreground mb-1 block">Recovery Strategy</label>
-                <Select value={m2RecoveryType} onValueChange={(v: M2RecoveryType) => {
-                  setM2RecoveryType(v);
-                  if (v !== 'disabled') {
-                    setStrategyM2Enabled(true);
-                    setScannerActive(true);
-                  }
-                }} disabled={isRunning}>
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue placeholder="Select recovery strategy" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="disabled">Disabled (Manual)</SelectItem>
-                    <SelectItem value="all_odd_even_7">🔄 All Odd → Even (7 ticks)</SelectItem>
-                    <SelectItem value="all_odd_even_6">🔄 All Odd → Even (6 ticks)</SelectItem>
-                    <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
-                    <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
-                  </SelectContent>
-                </Select>
-                {m2RecoveryType !== 'disabled' && (
-                  <div className="text-[8px] text-purple-400 mt-1 animate-pulse">
-                    🔍 Scanning ALL markets for recovery pattern...
-                  </div>
-                )}
-              </div>
-
-              <Select value={m2Symbol} onValueChange={v => setM2Symbol(v)} disabled={isRunning || m2RecoveryType !== 'disabled'}>
-                <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>{SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name} ({m.symbol})</SelectItem>)}</SelectContent>
-              </Select>
-
-              {/* Virtual Hook M2 */}
-              <div className="border-t border-border/30 pt-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[9px] font-semibold text-primary flex items-center gap-1">
-                    <Anchor className="w-3 h-3" /> Virtual Hook
-                  </span>
-                  <Switch checked={m2HookEnabled} onCheckedChange={setM2HookEnabled} disabled={isRunning} />
-                </div>
-                {m2HookEnabled && (
-                  <div className="grid grid-cols-2 gap-1.5 mt-1">
-                    <div>
-                      <label className="text-[8px] text-muted-foreground">V-Losses</label>
-                      <Input type="number" min="1" max="20" value={m2VirtualLossCount} onChange={e => setM2VirtualLossCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
-                    </div>
-                    <div>
-                      <label className="text-[8px] text-muted-foreground">Real Trades</label>
-                      <Input type="number" min="1" max="10" value={m2RealCount} onChange={e => setM2RealCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Virtual Hook Stats */}
-          {(m1HookEnabled || m2HookEnabled) && (
-            <div className="bg-card border border-primary/30 rounded-xl p-2.5">
-              <h3 className="text-[10px] font-semibold text-primary flex items-center gap-1 mb-1">
-                <Anchor className="w-3 h-3" /> Hook Status
-              </h3>
-              <div className="grid grid-cols-4 gap-1 text-center">
-                <div className="bg-muted/50 rounded p-1">
-                  <div className="text-[8px] text-muted-foreground">V-Win</div>
-                  <div className="font-mono text-[10px] font-bold text-profit">{vhFakeWins}</div>
-                </div>
-                <div className="bg-muted/50 rounded p-1">
-                  <div className="text-[8px] text-muted-foreground">V-Loss</div>
-                  <div className="font-mono text-[10px] font-bold text-loss">{vhFakeLosses}</div>
-                </div>
-                <div className="bg-muted/50 rounded p-1">
-                  <div className="text-[8px] text-muted-foreground">Streak</div>
-                  <div className="font-mono text-[10px] font-bold text-warning">{vhConsecLosses}</div>
-                </div>
-                <div className="bg-muted/50 rounded p-1">
-                  <div className="text-[8px] text-muted-foreground">State</div>
-                  <div className={`text-[9px] font-bold ${
-                    vhStatus === 'confirmed' ? 'text-profit' :
-                    vhStatus === 'waiting' ? 'text-warning animate-pulse' :
-                    vhStatus === 'failed' ? 'text-loss' : 'text-muted-foreground'
-                  }`}>
-                    {vhStatus === 'confirmed' ? '✓' : vhStatus === 'waiting' ? '⏳' : vhStatus === 'failed' ? '✗' : '—'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Risk */}
-          <div className="bg-card border border-border rounded-xl p-2.5 space-y-1.5">
-            <h3 className="text-xs font-semibold text-foreground flex items-center gap-1"><Shield className="w-3.5 h-3.5" /> Risk</h3>
-            <div className="grid grid-cols-3 gap-1.5">
-              <div>
-                <label className="text-[8px] text-muted-foreground">Stake ($)</label>
-                <Input type="number" min="0.35" step="0.01" value={stake} onChange={e => setStake(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-              </div>
-              <div>
-                <label className="text-[8px] text-muted-foreground">Take Profit</label>
-                <Input type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-              </div>
-              <div>
-                <label className="text-[8px] text-muted-foreground">Stop Loss</label>
-                <Input type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <label className="text-[10px] text-foreground">Martingale</label>
-              <Switch checked={martingaleOn} onCheckedChange={setMartingaleOn} disabled={isRunning} />
-            </div>
-            {martingaleOn && (
-              <div className="grid grid-cols-2 gap-1.5">
-                <div>
-                  <label className="text-[8px] text-muted-foreground">Multiplier</label>
-                  <Input type="number" min="1.1" step="0.1" value={martingaleMultiplier} onChange={e => setMartingaleMultiplier(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-                </div>
-                <div>
-                  <label className="text-[8px] text-muted-foreground">Max Steps</label>
-                  <Input type="number" min="1" max="10" value={martingaleMaxSteps} onChange={e => setMartingaleMaxSteps(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Save / Load Config */}
-          <div className="bg-card border border-border rounded-xl p-2.5 space-y-1.5">
-            <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">💾 Bot Config</h3>
-            <Input
-              placeholder="Enter bot name before saving..."
-              value={botName}
-              onChange={e => setBotName(e.target.value)}
-              disabled={isRunning}
-              className="h-7 text-xs"
-            />
-            <div className="grid grid-cols-2 gap-1.5">
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 text-[10px] gap-1"
-                disabled={isRunning || !botName.trim()}
-                onClick={() => {
-                  const safeName = botName.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-                  const config = {
-                    version: 2,
-                    botName: botName.trim(),
-                    m1: { enabled: m1Enabled, symbol: m1Symbol, strategyType: m1StrategyType, hookEnabled: m1HookEnabled, virtualLossCount: m1VirtualLossCount, realCount: m1RealCount },
-                    m2: { enabled: m2Enabled, symbol: m2Symbol, recoveryType: m2RecoveryType, hookEnabled: m2HookEnabled, virtualLossCount: m2VirtualLossCount, realCount: m2RealCount },
-                    risk: { stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss },
-                    strategy: { m1Enabled: strategyM1Enabled, m2Enabled: strategyM2Enabled },
-                    scanner: { active: scannerActive },
-                    turbo: { enabled: turboMode },
-                  };
-                  const now = new Date();
-                  const ts = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}`;
-                  const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url; a.download = `${safeName}_${ts}.json`; a.click();
-                  URL.revokeObjectURL(url);
-                  toast.success(`Config "${botName.trim()}" saved!`);
-                }}
-              >
-                <Download className="w-3 h-3" /> Save Config
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 text-[10px] gap-1"
-                disabled={isRunning}
-                onClick={() => {
-                  const input = document.createElement('input');
-                  input.type = 'file'; input.accept = '.json';
-                  input.onchange = (ev: any) => {
-                    const file = ev.target.files?.[0];
-                    if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                      try {
-                        const cfg = JSON.parse(e.target?.result as string);
-                        handleLoadConfig(cfg);
-                        toast.success('Config loaded successfully!');
-                      } catch {
-                        toast.error('Failed to parse config file');
-                      }
-                    };
-                    reader.readAsText(file);
-                  };
-                  input.click();
-                }}
-              >
-                <Upload className="w-3 h-3" /> Load Config
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        {/* ═══ RIGHT: Digit Stream + Activity Log ═══ */}
-        <div className="lg:col-span-8 space-y-2">
-          {/* Digit Stream */}
-          <div className="bg-card border border-border rounded-xl p-2.5">
-            <div className="flex items-center justify-between mb-1.5">
-              <h3 className="text-[10px] font-semibold text-foreground">Live Digits — {activeSymbol}</h3>
-              <span className="text-[9px] text-muted-foreground font-mono">Win Rate: {winRate}% | Staked: ${totalStaked.toFixed(2)}</span>
-            </div>
-            <div className="flex gap-1 justify-center">
-              {activeDigits.length === 0 ? (
-                <span className="text-[10px] text-muted-foreground">Waiting for ticks...</span>
-              ) : activeDigits.map((d, i) => {
-                const isOver = d >= 5;
-                const isEven = d % 2 === 0;
-                const isLast = i === activeDigits.length - 1;
+            <div className="flex flex-wrap gap-1">
+              {SCANNER_MARKETS.map(m => {
+                const count = tickCounts[m.symbol] || 0;
                 return (
-                  <div key={i} className={`w-8 h-10 rounded-lg flex flex-col items-center justify-center text-xs font-mono font-bold border ${
-                    isLast ? 'ring-2 ring-primary' : ''
-                  } ${isOver ? 'bg-loss/10 border-loss/30 text-loss' : 'bg-profit/10 border-profit/30 text-profit'}`}>
-                    <span className="text-sm">{d}</span>
-                    <span className="text-[7px] opacity-60">{isOver ? 'O' : 'U'}{isEven ? 'E' : 'O'}</span>
-                  </div>
+                  <Badge key={m.symbol} variant="outline"
+                    className={`text-[8px] h-5 px-1.5 font-mono ${count > 0 ? 'border-cyan-500/50 text-cyan-400 bg-cyan-500/10' : 'text-slate-500 border-slate-700'}`}>
+                    {m.name}
+                  </Badge>
                 );
               })}
             </div>
           </div>
 
-          {/* Trade Summary Panel */}
-          <div className="grid grid-cols-5 gap-1.5">
-            <div className="bg-card border border-border rounded-lg p-2 text-center">
-              <div className="text-[8px] text-muted-foreground">Trades</div>
-              <div className="font-mono text-xs font-bold text-foreground">{wins + losses}</div>
+          {/* Stats Panel */}
+          <div className="bg-gradient-to-br from-slate-900/80 to-slate-800/80 backdrop-blur-sm border border-slate-700/50 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-semibold text-slate-200">Performance Stats</span>
+              <span className="font-mono text-base font-bold text-cyan-400">${balance.toFixed(2)}</span>
             </div>
-            <div className="bg-card border border-border rounded-lg p-2 text-center">
-              <div className="text-[8px] text-muted-foreground">Wins</div>
-              <div className="font-mono text-xs font-bold text-profit">{wins}</div>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-2 text-center">
-              <div className="text-[8px] text-muted-foreground">Losses</div>
-              <div className="font-mono text-xs font-bold text-loss">{losses}</div>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-2 text-center">
-              <div className="text-[8px] text-muted-foreground">Profit/Loss</div>
-              <div className={`font-mono text-xs font-bold ${netProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
-                {netProfit >= 0 ? '+' : ''}{netProfit.toFixed(2)}
+            <div className="grid grid-cols-5 gap-2">
+              <div className="text-center">
+                <div className="text-[9px] text-slate-400">Trades</div>
+                <div className="font-mono text-sm font-bold text-slate-200">{wins + losses}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[9px] text-slate-400">Wins</div>
+                <div className="font-mono text-sm font-bold text-emerald-400">{wins}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[9px] text-slate-400">Losses</div>
+                <div className="font-mono text-sm font-bold text-rose-400">{losses}</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[9px] text-slate-400">Win Rate</div>
+                <div className="font-mono text-sm font-bold text-cyan-400">{winRate}%</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[9px] text-slate-400">Staked</div>
+                <div className="font-mono text-sm font-bold text-amber-400">${totalStaked.toFixed(2)}</div>
               </div>
             </div>
-            <div className="bg-card border border-border rounded-lg p-2 text-center">
-              <div className="text-[8px] text-muted-foreground">Total Staked</div>
-              <div className="font-mono text-xs font-bold text-primary">${totalStaked.toFixed(2)}</div>
+          </div>
+        </div>
+
+        {/* Main 2-Column Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+          {/* LEFT: Config Column */}
+          <div className="lg:col-span-5 space-y-3">
+            {/* Market 1 */}
+            <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-emerald-500/30 rounded-xl p-3 shadow-xl">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-emerald-400 flex items-center gap-2">
+                  <Home className="w-4 h-4" /> Market 1 — Primary
+                </h3>
+                <div className="flex items-center gap-2">
+                  {currentMarket === 1 && isRunning && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+                  <Switch checked={m1Enabled} onCheckedChange={setM1Enabled} disabled={isRunning} />
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <div>
+                  <label className="text-[10px] text-slate-400 mb-1 block font-semibold">Strategy Mode</label>
+                  <Select value={m1StrategyType} onValueChange={(v: M1StrategyType) => {
+                    setM1StrategyType(v);
+                    if (v !== 'disabled') {
+                      setStrategyM1Enabled(true);
+                      setScannerActive(true);
+                    }
+                  }} disabled={isRunning}>
+                    <SelectTrigger className="h-9 text-xs bg-slate-800/50 border-slate-700 text-slate-200">
+                      <SelectValue placeholder="Select strategy" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-800 border-slate-700">
+                      <SelectItem value="disabled">Disabled (Manual)</SelectItem>
+                      <SelectItem value="over1_under8">🎯 Over 1 / Under 8 (2 ticks)</SelectItem>
+                      <SelectItem value="over2_under7">🎯 Over 2 / Under 7 (3 ticks)</SelectItem>
+                      <SelectItem value="over3_under6">🎯 Over 3 / Under 6 (4 ticks)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {m1StrategyType !== 'disabled' && (
+                    <div className="text-[9px] text-emerald-400 mt-1 animate-pulse flex items-center gap-1">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                      </span>
+                      Scanning ALL markets for pattern...
+                    </div>
+                  )}
+                </div>
+
+                <Select value={m1Symbol} onValueChange={v => setM1Symbol(v)} disabled={isRunning || m1StrategyType !== 'disabled'}>
+                  <SelectTrigger className="h-9 text-xs bg-slate-800/50 border-slate-700 text-slate-200">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-800 border-slate-700">
+                    {SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name} ({m.symbol})</SelectItem>)}
+                  </SelectContent>
+                </Select>
+
+                {/* Virtual Hook M1 */}
+                <div className="border-t border-slate-700/50 pt-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold text-cyan-400 flex items-center gap-1">
+                      <Anchor className="w-3 h-3" /> Virtual Hook
+                    </span>
+                    <Switch checked={m1HookEnabled} onCheckedChange={setM1HookEnabled} disabled={isRunning} />
+                  </div>
+                  {m1HookEnabled && (
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <div>
+                        <label className="text-[8px] text-slate-400">Virtual Losses</label>
+                        <Input type="number" min="1" max="20" value={m1VirtualLossCount} onChange={e => setM1VirtualLossCount(e.target.value)} disabled={isRunning} className="h-7 text-[10px] bg-slate-800/50 border-slate-700 text-slate-200" />
+                      </div>
+                      <div>
+                        <label className="text-[8px] text-slate-400">Real Trades</label>
+                        <Input type="number" min="1" max="10" value={m1RealCount} onChange={e => setM1RealCount(e.target.value)} disabled={isRunning} className="h-7 text-[10px] bg-slate-800/50 border-slate-700 text-slate-200" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Market 2 */}
+            <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-fuchsia-500/30 rounded-xl p-3 shadow-xl">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-fuchsia-400 flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4" /> Market 2 — Recovery
+                </h3>
+                <div className="flex items-center gap-2">
+                  {currentMarket === 2 && isRunning && <span className="w-2 h-2 rounded-full bg-fuchsia-400 animate-pulse" />}
+                  <Switch checked={m2Enabled} onCheckedChange={setM2Enabled} disabled={isRunning} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div>
+                  <label className="text-[10px] text-slate-400 mb-1 block font-semibold">Recovery Strategy</label>
+                  <Select value={m2RecoveryType} onValueChange={(v: M2RecoveryType) => {
+                    setM2RecoveryType(v);
+                    if (v !== 'disabled') {
+                      setStrategyM2Enabled(true);
+                      setScannerActive(true);
+                    }
+                  }} disabled={isRunning}>
+                    <SelectTrigger className="h-9 text-xs bg-slate-800/50 border-slate-700 text-slate-200">
+                      <SelectValue placeholder="Select strategy" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-slate-800 border-slate-700">
+                      <SelectItem value="disabled">Disabled (Manual)</SelectItem>
+                      <SelectItem value="all_odd_even_7">🔄 All Odd → Even (7 ticks)</SelectItem>
+                      <SelectItem value="all_odd_even_6">🔄 All Odd → Even (6 ticks)</SelectItem>
+                      <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
+                      <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {m2RecoveryType !== 'disabled' && (
+                    <div className="text-[9px] text-fuchsia-400 mt-1 animate-pulse flex items-center gap-1">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-fuchsia-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-fuchsia-500"></span>
+                      </span>
+                      Scanning ALL markets for recovery pattern...
+                    </div>
+                  )}
+                </div>
+
+                <Select value={m2Symbol} onValueChange={v => setM2Symbol(v)} disabled={isRunning || m2RecoveryType !== 'disabled'}>
+                  <SelectTrigger className="h-9 text-xs bg-slate-800/50 border-slate-700 text-slate-200">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-800 border-slate-700">
+                    {SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name} ({m.symbol})</SelectItem>)}
+                  </SelectContent>
+                </Select>
+
+                {/* Virtual Hook M2 */}
+                <div className="border-t border-slate-700/50 pt-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold text-cyan-400 flex items-center gap-1">
+                      <Anchor className="w-3 h-3" /> Virtual Hook
+                    </span>
+                    <Switch checked={m2HookEnabled} onCheckedChange={setM2HookEnabled} disabled={isRunning} />
+                  </div>
+                  {m2HookEnabled && (
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <div>
+                        <label className="text-[8px] text-slate-400">Virtual Losses</label>
+                        <Input type="number" min="1" max="20" value={m2VirtualLossCount} onChange={e => setM2VirtualLossCount(e.target.value)} disabled={isRunning} className="h-7 text-[10px] bg-slate-800/50 border-slate-700 text-slate-200" />
+                      </div>
+                      <div>
+                        <label className="text-[8px] text-slate-400">Real Trades</label>
+                        <Input type="number" min="1" max="10" value={m2RealCount} onChange={e => setM2RealCount(e.target.value)} disabled={isRunning} className="h-7 text-[10px] bg-slate-800/50 border-slate-700 text-slate-200" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Risk Management */}
+            <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl p-3 shadow-xl">
+              <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2 mb-3">
+                <Shield className="w-4 h-4 text-amber-400" /> Risk Management
+              </h3>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <div>
+                  <label className="text-[9px] text-slate-400">Stake ($)</label>
+                  <Input type="number" min="0.35" step="0.01" value={stake} onChange={e => setStake(e.target.value)} disabled={isRunning} className="h-8 text-xs bg-slate-800/50 border-slate-700 text-slate-200" />
+                </div>
+                <div>
+                  <label className="text-[9px] text-slate-400">Take Profit</label>
+                  <Input type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunning} className="h-8 text-xs bg-slate-800/50 border-slate-700 text-slate-200" />
+                </div>
+                <div>
+                  <label className="text-[9px] text-slate-400">Stop Loss</label>
+                  <Input type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunning} className="h-8 text-xs bg-slate-800/50 border-slate-700 text-slate-200" />
+                </div>
+              </div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs text-slate-300 font-semibold">Martingale System</label>
+                <Switch checked={martingaleOn} onCheckedChange={setMartingaleOn} disabled={isRunning} />
+              </div>
+              {martingaleOn && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[9px] text-slate-400">Multiplier</label>
+                    <Input type="number" min="1.1" step="0.1" value={martingaleMultiplier} onChange={e => setMartingaleMultiplier(e.target.value)} disabled={isRunning} className="h-7 text-xs bg-slate-800/50 border-slate-700 text-slate-200" />
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-slate-400">Max Steps</label>
+                    <Input type="number" min="1" max="10" value={martingaleMaxSteps} onChange={e => setMartingaleMaxSteps(e.target.value)} disabled={isRunning} className="h-7 text-xs bg-slate-800/50 border-slate-700 text-slate-200" />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Hook Status */}
+            {(m1HookEnabled || m2HookEnabled) && (
+              <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-cyan-500/30 rounded-xl p-3 shadow-xl">
+                <h3 className="text-[11px] font-semibold text-cyan-400 flex items-center gap-1 mb-2">
+                  <Anchor className="w-3.5 h-3.5" /> Virtual Hook Status
+                </h3>
+                <div className="grid grid-cols-4 gap-2 text-center">
+                  <div className="bg-slate-800/50 rounded-lg p-2">
+                    <div className="text-[8px] text-slate-400">V-Win</div>
+                    <div className="font-mono text-sm font-bold text-emerald-400">{vhFakeWins}</div>
+                  </div>
+                  <div className="bg-slate-800/50 rounded-lg p-2">
+                    <div className="text-[8px] text-slate-400">V-Loss</div>
+                    <div className="font-mono text-sm font-bold text-rose-400">{vhFakeLosses}</div>
+                  </div>
+                  <div className="bg-slate-800/50 rounded-lg p-2">
+                    <div className="text-[8px] text-slate-400">Streak</div>
+                    <div className="font-mono text-sm font-bold text-amber-400">{vhConsecLosses}</div>
+                  </div>
+                  <div className="bg-slate-800/50 rounded-lg p-2">
+                    <div className="text-[8px] text-slate-400">State</div>
+                    <div className={`text-xs font-bold ${
+                      vhStatus === 'confirmed' ? 'text-emerald-400' :
+                      vhStatus === 'waiting' ? 'text-amber-400 animate-pulse' :
+                      vhStatus === 'failed' ? 'text-rose-400' : 'text-slate-400'
+                    }`}>
+                      {vhStatus === 'confirmed' ? '✓' : vhStatus === 'waiting' ? '⏳' : vhStatus === 'failed' ? '✗' : '—'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Start/Stop Buttons */}
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                onClick={startBot}
+                disabled={isRunning || !isAuthorized || balance < parseFloat(stake)}
+                className="h-12 text-base font-bold bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-lg rounded-xl transition-all duration-200"
+              >
+                <Play className="w-4 h-4 mr-2" /> START BOT
+              </Button>
+              <Button
+                onClick={stopBot}
+                disabled={!isRunning}
+                variant="destructive"
+                className="h-12 text-base font-bold bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 shadow-lg rounded-xl transition-all duration-200"
+              >
+                <StopCircle className="w-4 h-4 mr-2" /> STOP
+              </Button>
             </div>
           </div>
 
-          {/* Start / Stop Buttons */}
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              onClick={startBot}
-              disabled={isRunning || !isAuthorized || balance < parseFloat(stake)}
-              className="h-14 text-base font-bold bg-profit hover:bg-profit/90 text-profit-foreground rounded-xl"
-            >
-              <Play className="w-5 h-5 mr-2" /> START BOT
-            </Button>
-            <Button
-              onClick={stopBot}
-              disabled={!isRunning}
-              variant="destructive"
-              className="h-14 text-base font-bold rounded-xl"
-            >
-              <StopCircle className="w-5 h-5 mr-2" /> STOP
-            </Button>
-          </div>
-
-          {/* Activity Log */}
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="px-2.5 py-2 border-b border-border flex items-center justify-between gap-2">
-              <h3 className="text-xs font-semibold text-foreground">Activity Log</h3>
-              <div className="flex items-center gap-1.5">
-                {logEntries.length > 0 && logEntries[0].switchInfo && (
-                  <span className="text-[9px] text-muted-foreground font-mono hidden md:inline truncate max-w-[200px]">
-                    {logEntries[0].switchInfo}
-                  </span>
-                )}
-                <Button variant="ghost" size="sm" onClick={clearLog} className="h-7 w-7 p-0 text-muted-foreground hover:text-loss">
-                  <Trash2 className="w-3 h-3" />
+          {/* RIGHT: Activity Log */}
+          <div className="lg:col-span-7">
+            <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
+              <div className="px-4 py-3 border-b border-slate-700/50 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-cyan-400" />
+                  Activity Log
+                </h3>
+                <Button variant="ghost" size="sm" onClick={clearLog} className="h-7 w-7 p-0 text-slate-400 hover:text-rose-400 hover:bg-slate-800/50">
+                  <Trash2 className="w-3.5 h-3.5" />
                 </Button>
               </div>
-            </div>
-            <div className="max-h-[calc(100vh-380px)] min-h-[300px] overflow-auto">
-              <table className="w-full text-[10px]">
-                <thead className="text-[9px] text-muted-foreground bg-muted/30 sticky top-0">
-                  <tr>
-                    <th className="text-left p-1.5">Time</th>
-                    <th className="text-left p-1">Mkt</th>
-                    <th className="text-left p-1">Symbol</th>
-                    <th className="text-left p-1">Type</th>
-                    <th className="text-right p-1">Stake</th>
-                    <th className="text-center p-1">Digit</th>
-                    <th className="text-center p-1">Result</th>
-                    <th className="text-right p-1">P/L</th>
-                    <th className="text-right p-1">Bal</th>
-                    <th className="text-center p-1">⏹</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {logEntries.length === 0 ? (
-                    <tr><td colSpan={10} className="text-center text-muted-foreground py-8">No trades yet — configure and start the bot</td></tr>
-                  ) : logEntries.map(e => (
-                    <tr key={e.id} className={`border-t border-border/30 hover:bg-muted/20 ${
-                      e.market === 'M1' ? 'border-l-2 border-l-profit' :
-                      e.market === 'VH' ? 'border-l-2 border-l-primary' :
-                      'border-l-2 border-l-purple-500'
-                    }`}>
-                      <td className="p-1 font-mono text-[9px]">{e.time}</td>
-                      <td className={`p-1 font-bold ${
-                        e.market === 'M1' ? 'text-profit' :
-                        e.market === 'VH' ? 'text-primary' :
-                        'text-purple-400'
-                      }`}>{e.market}</td>
-                      <td className="p-1 font-mono text-[9px]">{e.symbol}</td>
-                      <td className="p-1 text-[9px]">{e.contract.replace('DIGIT', '')}</td>
-                      <td className="p-1 font-mono text-right text-[9px]">
-                        {e.market === 'VH' ? 'FAKE' : `$${e.stake.toFixed(2)}`}
-                        {e.martingaleStep > 0 && e.market !== 'VH' && <span className="text-warning ml-0.5">M{e.martingaleStep}</span>}
-                      </td>
-                      <td className="p-1 text-center font-mono">{e.exitDigit}</td>
-                      <td className="p-1 text-center">
-                        <span className={`px-1 py-0.5 rounded-full text-[8px] font-bold ${
-                          e.result === 'Win' || e.result === 'V-Win' ? 'bg-profit/20 text-profit' :
-                          e.result === 'Loss' || e.result === 'V-Loss' ? 'bg-loss/20 text-loss' :
-                          'bg-warning/20 text-warning animate-pulse'
-                        }`}>{e.result === 'Pending' ? '...' : e.result}</span>
-                      </td>
-                      <td className={`p-1 font-mono text-right text-[9px] ${e.pnl > 0 ? 'text-profit' : e.pnl < 0 ? 'text-loss' : ''}`}>
-                        {e.result === 'Pending' ? '...' : e.market === 'VH' ? '-' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
-                      </td>
-                      <td className="p-1 font-mono text-right text-[9px]">{e.market === 'VH' ? '-' : `$${e.balance.toFixed(2)}`}</td>
-                      <td className="p-1 text-center">
-                        {isRunning && (
-                          <button onClick={stopBot} className="px-1 py-0.5 rounded bg-destructive/80 hover:bg-destructive text-destructive-foreground text-[8px] font-bold transition-colors" title="Stop Bot">
-                            ■
-                          </button>
-                        )}
-                       </td>
-                     </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="max-h-[calc(100vh-280px)] min-h-[400px] overflow-auto">
+                <table className="w-full text-[10px]">
+                  <thead className="text-[9px] text-slate-400 bg-slate-800/50 sticky top-0">
+                    <tr>
+                      <th className="text-left p-2">Time</th>
+                      <th className="text-left p-2">Mkt</th>
+                      <th className="text-left p-2">Symbol</th>
+                      <th className="text-left p-2">Type</th>
+                      <th className="text-right p-2">Stake</th>
+                      <th className="text-center p-2">Digit</th>
+                      <th className="text-center p-2">Result</th>
+                      <th className="text-right p-2">P/L</th>
+                      <th className="text-right p-2">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {logEntries.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="text-center text-slate-500 py-12">
+                          No trades yet — configure and start the bot
+                        </td>
+                      </tr>
+                    ) : logEntries.map(e => (
+                      <tr key={e.id} className={`border-t border-slate-700/30 hover:bg-slate-800/30 transition-colors ${
+                        e.market === 'M1' ? 'border-l-2 border-l-emerald-500' :
+                        e.market === 'VH' ? 'border-l-2 border-l-cyan-500' :
+                        'border-l-2 border-l-fuchsia-500'
+                      }`}>
+                        <td className="p-2 font-mono text-[9px] text-slate-400">{e.time}</td>
+                        <td className={`p-2 font-bold text-xs ${
+                          e.market === 'M1' ? 'text-emerald-400' :
+                          e.market === 'VH' ? 'text-cyan-400' :
+                          'text-fuchsia-400'
+                        }`}>{e.market}</td>
+                        <td className="p-2 font-mono text-[9px] text-slate-300">{e.symbol}</td>
+                        <td className="p-2 text-[9px] text-slate-300">{e.contract.replace('DIGIT', '')}</td>
+                        <td className="p-2 font-mono text-right text-[9px] text-slate-300">
+                          {e.market === 'VH' ? 'FAKE' : `$${e.stake.toFixed(2)}`}
+                          {e.martingaleStep > 0 && e.market !== 'VH' && <span className="text-amber-400 ml-1">M{e.martingaleStep}</span>}
+                        </td>
+                        <td className="p-2 text-center font-mono text-slate-300">{e.exitDigit}</td>
+                        <td className="p-2 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                            e.result === 'Win' || e.result === 'V-Win' ? 'bg-emerald-500/20 text-emerald-400' :
+                            e.result === 'Loss' || e.result === 'V-Loss' ? 'bg-rose-500/20 text-rose-400' :
+                            'bg-amber-500/20 text-amber-400 animate-pulse'
+                          }`}>
+                            {e.result === 'Pending' ? '...' : e.result}
+                          </span>
+                        </td>
+                        <td className={`p-2 font-mono text-right text-[9px] font-bold ${
+                          e.pnl > 0 ? 'text-emerald-400' : e.pnl < 0 ? 'text-rose-400' : 'text-slate-400'
+                        }`}>
+                          {e.result === 'Pending' ? '...' : e.market === 'VH' ? '-' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
+                        </td>
+                        <td className="p-2 font-mono text-right text-[9px] text-slate-400">
+                          {e.market === 'VH' ? '-' : `$${e.balance.toFixed(2)}`}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
