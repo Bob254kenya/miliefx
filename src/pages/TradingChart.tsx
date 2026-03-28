@@ -954,7 +954,7 @@ export default function ProScannerBot() {
                   <th className="text-left p-2">Type</th>
                   <th className="text-right p-2">Stake</th>
                   <th className="text-center p-2">Digit</th>
-                  <th className="text-center p-2">Result</th>
+                  <th className="text-center p-2">Result</th> 
                   <th className="text-right p-2">P/L</th>
                   <th className="text-right p-2">Balance</th>
                 </tr>
