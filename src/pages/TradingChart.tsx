@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'; 
 import { useLocation } from 'react-router-dom';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { copyTradingService } from '@/services/copy-trading-service';
@@ -13,9 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import {
   Play, StopCircle, Trash2, Scan,
-  Home, RefreshCw, Shield, Zap, Eye, Anchor, TrendingUp, TrendingDown, Target
+  Home, RefreshCw, Shield, TrendingUp
 } from 'lucide-react';
-import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
 const SCANNER_MARKETS: { symbol: string; name: string }[] = [
   { symbol: 'R_10', name: 'Vol 10' },
@@ -37,77 +36,29 @@ const SCANNER_MARKETS: { symbol: string; name: string }[] = [
   { symbol: 'RDBULL', name: 'Bull' },
 ];
 
-type BotStatus = 'idle' | 'trading_m1' | 'recovery' | 'waiting_pattern' | 'pattern_matched' | 'virtual_hook';
-type M1StrategyType = 'over1_under8' | 'over2_under7' | 'over3_under6' | 'disabled';
-type M2RecoveryType = 'all_odd_even_7' | 'all_odd_even_6' | 'over4_under5_7' | 'over4_under5_6' | 'disabled';
+type BotStatus = 'idle' | 'trading_m1' | 'recovery' | 'waiting_pattern' | 'pattern_matched';
+type M1StrategyType = 'over0_under9' | 'over1_under8' | 'over2_under7' | 'over3_under6' | 'over4_under5_5' | 'disabled';
+type M2RecoveryType = 'odd_even_5' | 'odd_even_6' | 'odd_even_8' | 'odd_even_9' | 'odd_even_7' | 'over4_under5_5' | 'over4_under5_6' | 'over4_under5_8' | 'over4_under5_9' | 'over4_under5_7' | 'disabled';
 
 interface LogEntry {
   id: number;
   time: string;
-  market: 'M1' | 'M2' | 'VH';
+  market: 'M1' | 'M2';
   symbol: string;
   contract: string;
   stake: number;
   martingaleStep: number;
   exitDigit: string;
-  result: 'Win' | 'Loss' | 'Pending' | 'V-Win' | 'V-Loss';
+  result: 'Win' | 'Loss' | 'Pending';
   pnl: number;
   balance: number;
   switchInfo: string;
-}
-
-class CircularTickBuffer {
-  private buffer: { digit: number; ts: number }[];
-  private head = 0;
-  private count = 0;
-  constructor(private capacity = 1000) {
-    this.buffer = new Array(capacity);
-  }
-  push(digit: number) {
-    this.buffer[this.head] = { digit, ts: performance.now() };
-    this.head = (this.head + 1) % this.capacity;
-    if (this.count < this.capacity) this.count++;
-  }
-  last(n: number): number[] {
-    const result: number[] = [];
-    const start = (this.head - Math.min(n, this.count) + this.capacity) % this.capacity;
-    for (let i = 0; i < Math.min(n, this.count); i++) {
-      result.push(this.buffer[(start + i) % this.capacity].digit);
-    }
-    return result;
-  }
-  lastTs(): number { return this.count > 0 ? this.buffer[(this.head - 1 + this.capacity) % this.capacity].ts : 0; }
-  get size() { return this.count; }
 }
 
 function waitForNextTick(symbol: string): Promise<{ quote: number }> {
   return new Promise((resolve) => {
     const unsub = derivApi.onMessage((data: any) => {
       if (data.tick && data.tick.symbol === symbol) { unsub(); resolve({ quote: data.tick.quote }); }
-    });
-  });
-}
-
-function simulateVirtualContract(
-  contractType: string, barrier: string, symbol: string
-): Promise<{ won: boolean; digit: number }> {
-  return new Promise((resolve) => {
-    const unsub = derivApi.onMessage((data: any) => {
-      if (data.tick && data.tick.symbol === symbol) {
-        unsub();
-        const digit = getLastDigit(data.tick.quote);
-        const b = parseInt(barrier) || 0;
-        let won = false;
-        switch (contractType) {
-          case 'DIGITEVEN': won = digit % 2 === 0; break;
-          case 'DIGITODD': won = digit % 2 !== 0; break;
-          case 'DIGITMATCH': won = digit === b; break;
-          case 'DIGITDIFF': won = digit !== b; break;
-          case 'DIGITOVER': won = digit > b; break;
-          case 'DIGITUNDER': won = digit < b; break;
-        }
-        resolve({ won, digit });
-      }
     });
   });
 }
@@ -123,23 +74,7 @@ export default function ProScannerBot() {
 
   /* ── Market 2 config ── */
   const [m2Enabled, setM2Enabled] = useState(true);
-  const [m2RecoveryType, setM2RecoveryType] = useState<M2RecoveryType>('over4_under5_7');
-
-  /* ── Virtual Hook M1 ── */
-  const [m1HookEnabled, setM1HookEnabled] = useState(false);
-  const [m1VirtualLossCount, setM1VirtualLossCount] = useState('3');
-  const [m1RealCount, setM1RealCount] = useState('2');
-
-  /* ── Virtual Hook M2 ── */
-  const [m2HookEnabled, setM2HookEnabled] = useState(false);
-  const [m2VirtualLossCount, setM2VirtualLossCount] = useState('3');
-  const [m2RealCount, setM2RealCount] = useState('2');
-
-  /* ── Virtual Hook stats ── */
-  const [vhFakeWins, setVhFakeWins] = useState(0);
-  const [vhFakeLosses, setVhFakeLosses] = useState(0);
-  const [vhConsecLosses, setVhConsecLosses] = useState(0);
-  const [vhStatus, setVhStatus] = useState<'idle' | 'waiting' | 'confirmed' | 'failed'>('idle');
+  const [m2RecoveryType, setM2RecoveryType] = useState<M2RecoveryType>('over4_under5_9');
 
   /* ── Risk ── */
   const [stake, setStake] = useState('0.35');
@@ -156,10 +91,6 @@ export default function ProScannerBot() {
   /* ── Scanner ── */
   const [scannerActive, setScannerActive] = useState(true);
 
-  /* ── Turbo ── */
-  const [turboMode, setTurboMode] = useState(false);
-  const turboBuffersRef = useRef<Map<string, CircularTickBuffer>>(new Map());
-
   /* ── Bot state ── */
   const [botStatus, setBotStatus] = useState<BotStatus>('idle');
   const [isRunning, setIsRunning] = useState(false);
@@ -173,6 +104,11 @@ export default function ProScannerBot() {
   const [martingaleStep, setMartingaleStepState] = useState(0);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const logIdRef = useRef(0);
+  
+  // Track last trade timestamp per symbol to prevent multiple trades on same pattern
+  const lastTradeTimeRef = useRef<Map<string, number>>(new Map());
+  // Track last pattern digits to avoid re-trading same pattern
+  const lastPatternDigitsRef = useRef<Map<string, string>>(new Map());
 
   /* ── Tick data ── */
   const tickMapRef = useRef<Map<string, number[]>>(new Map());
@@ -190,30 +126,40 @@ export default function ProScannerBot() {
       arr.push(digit);
       if (arr.length > 200) arr.shift();
       map.set(sym, arr);
-
-      if (!turboBuffersRef.current.has(sym)) {
-        turboBuffersRef.current.set(sym, new CircularTickBuffer(1000));
-      }
-      const buf = turboBuffersRef.current.get(sym)!;
-      buf.push(digit);
     };
     const unsub = derivApi.onMessage(handler);
     SCANNER_MARKETS.forEach(m => { derivApi.subscribeTicks(m.symbol as MarketSymbol, () => {}).catch(() => {}); });
     return () => { active = false; unsub(); };
   }, []);
 
-  const checkM1Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string } => {
+  const checkM1Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string; patternDigits?: string } => {
     const digits = tickMapRef.current.get(symbol) || [];
     
     switch (m1StrategyType) {
+      case 'over0_under9': {
+        if (digits.length < 2) return { matched: false };
+        const last2 = digits.slice(-2);
+        const patternKey = `${last2.join(',')}`;
+        
+        if (last2[0] === 0 && last2[1] === 0) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '0', patternDigits: patternKey };
+        }
+        if (last2[0] === 9 && last2[1] === 9) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '9', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
       case 'over1_under8': {
         if (digits.length < 2) return { matched: false };
         const last2 = digits.slice(-2);
+        const patternKey = `${last2.join(',')}`;
+        
         if (last2[0] === 0 && last2[1] === 0) {
-          return { matched: true, contractType: 'DIGITOVER', barrier: '1' };
+          return { matched: true, contractType: 'DIGITOVER', barrier: '1', patternDigits: patternKey };
         }
         if (last2[0] === 9 && last2[1] === 9) {
-          return { matched: true, contractType: 'DIGITUNDER', barrier: '8' };
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '8', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -221,14 +167,15 @@ export default function ProScannerBot() {
       case 'over2_under7': {
         if (digits.length < 3) return { matched: false };
         const last3 = digits.slice(-3);
+        const patternKey = `${last3.join(',')}`;
         const allLessThan2 = last3.every(d => d < 2);
         const allGreaterThan7 = last3.every(d => d > 7);
         
         if (allLessThan2) {
-          return { matched: true, contractType: 'DIGITOVER', barrier: '2' };
+          return { matched: true, contractType: 'DIGITOVER', barrier: '2', patternDigits: patternKey };
         }
         if (allGreaterThan7) {
-          return { matched: true, contractType: 'DIGITUNDER', barrier: '7' };
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '7', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -236,14 +183,31 @@ export default function ProScannerBot() {
       case 'over3_under6': {
         if (digits.length < 4) return { matched: false };
         const last4 = digits.slice(-4);
+        const patternKey = `${last4.join(',')}`;
         const allLessThan3 = last4.every(d => d < 3);
         const allGreaterThan6 = last4.every(d => d > 6);
         
         if (allLessThan3) {
-          return { matched: true, contractType: 'DIGITOVER', barrier: '3' };
+          return { matched: true, contractType: 'DIGITOVER', barrier: '3', patternDigits: patternKey };
         }
         if (allGreaterThan6) {
-          return { matched: true, contractType: 'DIGITUNDER', barrier: '6' };
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '6', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      case 'over4_under5_5': {
+        if (digits.length < 5) return { matched: false };
+        const last5 = digits.slice(-5);
+        const patternKey = `${last5.join(',')}`;
+        const allOver4 = last5.every(d => d >= 5);
+        const allUnder5 = last5.every(d => d <= 4);
+        
+        if (allOver4) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
+        }
+        if (allUnder5) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -253,56 +217,114 @@ export default function ProScannerBot() {
     }
   }, [m1StrategyType]);
 
-  // CORRECTED M2 Pattern Check for ALL markets
-  const checkM2Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string } => {
+  const checkM2Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string; patternDigits?: string } => {
     const digits = tickMapRef.current.get(symbol) || [];
     
     switch (m2RecoveryType) {
-      case 'all_odd_even_7': {
-        if (digits.length < 7) return { matched: false };
-        const last7 = digits.slice(-7);
-        const allOdd = last7.every(d => d % 2 !== 0);
-        const allEven = last7.every(d => d % 2 === 0);
+      case 'odd_even_5': {
+        if (digits.length < 5) return { matched: false };
+        const last5 = digits.slice(-5);
+        const patternKey = `${last5.join(',')}`;
+        const allOdd = last5.every(d => d % 2 !== 0);
+        const allEven = last5.every(d => d % 2 === 0);
         
         if (allOdd) {
-          return { matched: true, contractType: 'DIGITEVEN' };
+          console.log(`🎯 ALL ODD (5 ticks) pattern detected on ${symbol}:`, last5);
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         if (allEven) {
-          return { matched: true, contractType: 'DIGITODD' };
+          console.log(`🎯 ALL EVEN (5 ticks) pattern detected on ${symbol}:`, last5);
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         return { matched: false };
       }
       
-      case 'all_odd_even_6': {
+      case 'odd_even_6': {
         if (digits.length < 6) return { matched: false };
         const last6 = digits.slice(-6);
+        const patternKey = `${last6.join(',')}`;
         const allOdd = last6.every(d => d % 2 !== 0);
         const allEven = last6.every(d => d % 2 === 0);
         
         if (allOdd) {
-          return { matched: true, contractType: 'DIGITEVEN' };
+          console.log(`🎯 ALL ODD (6 ticks) pattern detected on ${symbol}:`, last6);
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         if (allEven) {
-          return { matched: true, contractType: 'DIGITODD' };
+          console.log(`🎯 ALL EVEN (6 ticks) pattern detected on ${symbol}:`, last6);
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         return { matched: false };
       }
       
-      case 'over4_under5_7': {
+      case 'odd_even_8': {
+        if (digits.length < 8) return { matched: false };
+        const last8 = digits.slice(-8);
+        const patternKey = `${last8.join(',')}`;
+        const allOdd = last8.every(d => d % 2 !== 0);
+        const allEven = last8.every(d => d % 2 === 0);
+        
+        if (allOdd) {
+          console.log(`🎯 ALL ODD (8 ticks) pattern detected on ${symbol}:`, last8);
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+        }
+        if (allEven) {
+          console.log(`🎯 ALL EVEN (8 ticks) pattern detected on ${symbol}:`, last8);
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      case 'odd_even_9': {
+        if (digits.length < 9) return { matched: false };
+        const last9 = digits.slice(-9);
+        const patternKey = `${last9.join(',')}`;
+        const allOdd = last9.every(d => d % 2 !== 0);
+        const allEven = last9.every(d => d % 2 === 0);
+        
+        if (allOdd) {
+          console.log(`🎯 ALL ODD (9 ticks) pattern detected on ${symbol}:`, last9);
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+        }
+        if (allEven) {
+          console.log(`🎯 ALL EVEN (9 ticks) pattern detected on ${symbol}:`, last9);
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      case 'odd_even_7': {
         if (digits.length < 7) return { matched: false };
         const last7 = digits.slice(-7);
-        // CORRECTED: All digits >= 5 for OVER 4 pattern
-        const allOver4 = last7.every(d => d >= 5);
-        // CORRECTED: All digits <= 4 for UNDER 5 pattern
-        const allUnder5 = last7.every(d => d <= 4);
+        const patternKey = `${last7.join(',')}`;
+        const allOdd = last7.every(d => d % 2 !== 0);
+        const allEven = last7.every(d => d % 2 === 0);
+        
+        if (allOdd) {
+          console.log(`🎯 ALL ODD (7 ticks) pattern detected on ${symbol}:`, last7);
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+        }
+        if (allEven) {
+          console.log(`🎯 ALL EVEN (7 ticks) pattern detected on ${symbol}:`, last7);
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      case 'over4_under5_5': {
+        if (digits.length < 5) return { matched: false };
+        const last5 = digits.slice(-5);
+        const patternKey = `${last5.join(',')}`;
+        const allOver4 = last5.every(d => d >= 5);
+        const allUnder5 = last5.every(d => d <= 4);
         
         if (allOver4) {
-          console.log(`🎯 OVER 4 pattern detected on ${symbol}:`, last7);
-          return { matched: true, contractType: 'DIGITOVER', barrier: '4' };
+          console.log(`🎯 OVER 4 (5 ticks) pattern detected on ${symbol}:`, last5);
+          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
         }
         if (allUnder5) {
-          console.log(`🎯 UNDER 5 pattern detected on ${symbol}:`, last7);
-          return { matched: true, contractType: 'DIGITUNDER', barrier: '5' };
+          console.log(`🎯 UNDER 5 (5 ticks) pattern detected on ${symbol}:`, last5);
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -310,18 +332,71 @@ export default function ProScannerBot() {
       case 'over4_under5_6': {
         if (digits.length < 6) return { matched: false };
         const last6 = digits.slice(-6);
-        // CORRECTED: All digits >= 5 for OVER 4 pattern
+        const patternKey = `${last6.join(',')}`;
         const allOver4 = last6.every(d => d >= 5);
-        // CORRECTED: All digits <= 4 for UNDER 5 pattern
         const allUnder5 = last6.every(d => d <= 4);
         
         if (allOver4) {
-          console.log(`🎯 OVER 4 pattern detected on ${symbol}:`, last6);
-          return { matched: true, contractType: 'DIGITOVER', barrier: '4' };
+          console.log(`🎯 OVER 4 (6 ticks) pattern detected on ${symbol}:`, last6);
+          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
         }
         if (allUnder5) {
-          console.log(`🎯 UNDER 5 pattern detected on ${symbol}:`, last6);
-          return { matched: true, contractType: 'DIGITUNDER', barrier: '5' };
+          console.log(`🎯 UNDER 5 (6 ticks) pattern detected on ${symbol}:`, last6);
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      case 'over4_under5_8': {
+        if (digits.length < 8) return { matched: false };
+        const last8 = digits.slice(-8);
+        const patternKey = `${last8.join(',')}`;
+        const allOver4 = last8.every(d => d >= 5);
+        const allUnder5 = last8.every(d => d <= 4);
+        
+        if (allOver4) {
+          console.log(`🎯 OVER 4 (8 ticks) pattern detected on ${symbol}:`, last8);
+          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
+        }
+        if (allUnder5) {
+          console.log(`🎯 UNDER 5 (8 ticks) pattern detected on ${symbol}:`, last8);
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      case 'over4_under5_9': {
+        if (digits.length < 9) return { matched: false };
+        const last9 = digits.slice(-9);
+        const patternKey = `${last9.join(',')}`;
+        const allOver4 = last9.every(d => d >= 5);
+        const allUnder5 = last9.every(d => d <= 4);
+        
+        if (allOver4) {
+          console.log(`🎯 OVER 4 (9 ticks) pattern detected on ${symbol}:`, last9);
+          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
+        }
+        if (allUnder5) {
+          console.log(`🎯 UNDER 5 (9 ticks) pattern detected on ${symbol}:`, last9);
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      case 'over4_under5_7': {
+        if (digits.length < 7) return { matched: false };
+        const last7 = digits.slice(-7);
+        const patternKey = `${last7.join(',')}`;
+        const allOver4 = last7.every(d => d >= 5);
+        const allUnder5 = last7.every(d => d <= 4);
+        
+        if (allOver4) {
+          console.log(`🎯 OVER 4 (7 ticks) pattern detected on ${symbol}:`, last7);
+          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
+        }
+        if (allUnder5) {
+          console.log(`🎯 UNDER 5 (7 ticks) pattern detected on ${symbol}:`, last7);
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -331,21 +406,61 @@ export default function ProScannerBot() {
     }
   }, [m2RecoveryType]);
 
-  const findM1Match = useCallback((): { symbol: string; contractType: string; barrier?: string } | null => {
+  const findM1Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null => {
     for (const market of SCANNER_MARKETS) {
       const result = checkM1Pattern(market.symbol);
-      if (result.matched && result.contractType) {
-        return { symbol: market.symbol, contractType: result.contractType, barrier: result.barrier };
+      if (result.matched && result.contractType && result.patternDigits) {
+        // Check if we already traded this exact pattern on this symbol
+        const lastPattern = lastPatternDigitsRef.current.get(market.symbol);
+        if (lastPattern === result.patternDigits) {
+          console.log(`⏭️ Skipping ${market.symbol} - same pattern already traded: ${result.patternDigits}`);
+          continue;
+        }
+        
+        // Check cooldown period (30 seconds minimum between trades on same symbol)
+        const lastTrade = lastTradeTimeRef.current.get(market.symbol) || 0;
+        const now = Date.now();
+        if (now - lastTrade < 30000) {
+          console.log(`⏭️ Skipping ${market.symbol} - cooldown period (${Math.floor((now - lastTrade) / 1000)}s since last trade)`);
+          continue;
+        }
+        
+        return { 
+          symbol: market.symbol, 
+          contractType: result.contractType, 
+          barrier: result.barrier,
+          patternDigits: result.patternDigits 
+        };
       }
     }
     return null;
   }, [checkM1Pattern]);
 
-  const findM2Match = useCallback((): { symbol: string; contractType: string; barrier?: string } | null => {
+  const findM2Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null => {
     for (const market of SCANNER_MARKETS) {
       const result = checkM2Pattern(market.symbol);
-      if (result.matched && result.contractType) {
-        return { symbol: market.symbol, contractType: result.contractType, barrier: result.barrier };
+      if (result.matched && result.contractType && result.patternDigits) {
+        // Check if we already traded this exact pattern on this symbol
+        const lastPattern = lastPatternDigitsRef.current.get(market.symbol);
+        if (lastPattern === result.patternDigits) {
+          console.log(`⏭️ Skipping ${market.symbol} - same pattern already traded: ${result.patternDigits}`);
+          continue;
+        }
+        
+        // Check cooldown period (30 seconds minimum between trades on same symbol)
+        const lastTrade = lastTradeTimeRef.current.get(market.symbol) || 0;
+        const now = Date.now();
+        if (now - lastTrade < 30000) {
+          console.log(`⏭️ Skipping ${market.symbol} - cooldown period (${Math.floor((now - lastTrade) / 1000)}s since last trade)`);
+          continue;
+        }
+        
+        return { 
+          symbol: market.symbol, 
+          contractType: result.contractType, 
+          barrier: result.barrier,
+          patternDigits: result.patternDigits 
+        };
       }
     }
     return null;
@@ -363,7 +478,6 @@ export default function ProScannerBot() {
     setLogEntries([]);
     setWins(0); setLosses(0); setTotalStaked(0); setNetProfit(0);
     setMartingaleStepState(0);
-    setVhFakeWins(0); setVhFakeLosses(0); setVhConsecLosses(0); setVhStatus('idle');
   }, []);
 
   const executeRealTrade = useCallback(async (
@@ -376,25 +490,28 @@ export default function ProScannerBot() {
     localBalance: number,
     localPnl: number,
     baseStake: number,
+    patternDigits: string
   ) => {
     const logId = ++logIdRef.current;
     const now = new Date().toLocaleTimeString();
     setTotalStaked(prev => prev + cStake);
     setCurrentStakeState(cStake);
 
+    // Record that we're trading this pattern
+    lastPatternDigitsRef.current.set(tradeSymbol, patternDigits);
+    lastTradeTimeRef.current.set(tradeSymbol, Date.now());
+
     addLog(logId, {
       time: now, market: mkt === 1 ? 'M1' : 'M2', symbol: tradeSymbol,
       contract: contractType, stake: cStake, martingaleStep: mStep,
       exitDigit: '...', result: 'Pending', pnl: 0, balance: localBalance,
-      switchInfo: '',
+      switchInfo: `Pattern: ${patternDigits}`,
     });
 
     let inRecovery = mkt === 2;
 
     try {
-      if (!turboMode) {
-        await waitForNextTick(tradeSymbol as MarketSymbol);
-      }
+      await waitForNextTick(tradeSymbol as MarketSymbol);
 
       const buyParams: any = {
         contract_type: contractType, symbol: tradeSymbol,
@@ -419,14 +536,14 @@ export default function ProScannerBot() {
 
       const exitDigit = String(getLastDigit(result.sellPrice || 0));
 
-      let switchInfo = '';
+      let switchInfo = `Pattern: ${patternDigits} | Exit: ${exitDigit}`;
       if (won) {
         setWins(prev => prev + 1);
         if (inRecovery) {
-          switchInfo = '✓ Recovery WIN → Back to M1';
+          switchInfo += ' ✓ Recovery WIN → Back to M1';
           inRecovery = false;
         } else {
-          switchInfo = '→ Continue M1';
+          switchInfo += ' ✓ WIN → Continue scanning';
         }
         mStep = 0;
         cStake = baseStake;
@@ -437,13 +554,18 @@ export default function ProScannerBot() {
         }
         if (!inRecovery && m2Enabled) {
           inRecovery = true;
-          switchInfo = '✗ Loss → Switch to M2 Recovery';
+          switchInfo += ' ✗ Loss → Switch to M2 Recovery (waiting for fresh pattern)';
         } else {
-          switchInfo = inRecovery ? '→ Stay M2' : '→ Continue M1';
+          switchInfo += inRecovery ? ' ✗ Loss → Stay M2 (waiting for fresh pattern)' : ' ✗ Loss → Continue scanning';
         }
-        if (martingaleOn) {
-          const maxS = parseInt(martingaleMaxSteps) || 5;
-          if (mStep < maxS) {
+        
+        // Reset martingale on loss to start fresh with next pattern
+        if (!martingaleOn || mStep >= parseInt(martingaleMaxSteps)) {
+          mStep = 0;
+          cStake = baseStake;
+        } else if (martingaleOn && !won) {
+          // Only apply martingale if we're staying in recovery and will try again
+          if (inRecovery && m2Enabled) {
             cStake = parseFloat((cStake * (parseFloat(martingaleMultiplier) || 2)).toFixed(2));
             mStep++;
           } else {
@@ -476,10 +598,10 @@ export default function ProScannerBot() {
       return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak };
     } catch (err: any) {
       updateLog(logId, { result: 'Loss', pnl: 0, exitDigit: '-', switchInfo: `Error: ${err.message}` });
-      if (!turboMode) await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 2000));
       return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak: false };
     }
-  }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, turboMode, activeAccount, recordLoss]);
+  }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, activeAccount, recordLoss]);
 
   const startBot = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
@@ -500,13 +622,17 @@ export default function ProScannerBot() {
     setBotStatus('trading_m1');
     setCurrentStakeState(baseStake);
     setMartingaleStepState(0);
-    setVhFakeWins(0); setVhFakeLosses(0); setVhConsecLosses(0); setVhStatus('idle');
+    
+    // Clear tracking on new session
+    lastTradeTimeRef.current.clear();
+    lastPatternDigitsRef.current.clear();
 
     let cStake = baseStake;
     let mStep = 0;
     let inRecovery = false;
     let localPnl = 0;
     let localBalance = balance;
+    let lastTradeWasLoss = false;
 
     while (runningRef.current) {
       const mkt: 1 | 2 = inRecovery ? 2 : 1;
@@ -518,27 +644,30 @@ export default function ProScannerBot() {
       let tradeSymbol: string;
       let contractType: string;
       let barrier: string | undefined;
-      const hookEnabled = mkt === 1 ? m1HookEnabled : m2HookEnabled;
-      const requiredLosses = parseInt(mkt === 1 ? m1VirtualLossCount : m2VirtualLossCount) || 3;
-      const realCount = parseInt(mkt === 1 ? m1RealCount : m2RealCount) || 2;
+      let patternDigits: string;
+
+      // If we just had a loss, force waiting for a completely new pattern
+      if (lastTradeWasLoss && inRecovery) {
+        console.log('⏳ Last trade was a loss - waiting for fresh pattern before next trade');
+        await new Promise(r => setTimeout(r, 1000));
+        lastTradeWasLoss = false;
+        continue;
+      }
 
       if (!inRecovery && strategyM1Enabled && m1StrategyType !== 'disabled') {
         setBotStatus('waiting_pattern');
 
         let matched = false;
-        let matchData: { symbol: string; contractType: string; barrier?: string } | null = null;
+        let matchData: { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null = null;
         
         while (runningRef.current && !matched) {
           matchData = findM1Match();
           if (matchData) {
             matched = true;
-            toast.info(`🎯 M1 Pattern found on ${matchData.symbol}`);
+            toast.info(`🎯 M1 Fresh Pattern found on ${matchData.symbol}`);
           }
           if (!matched) {
-            await new Promise<void>(r => {
-              if (turboMode) requestAnimationFrame(() => r());
-              else setTimeout(r, 100);
-            });
+            await new Promise<void>(r => setTimeout(r, 100));
           }
         }
         if (!runningRef.current) break;
@@ -547,25 +676,23 @@ export default function ProScannerBot() {
         tradeSymbol = matchData!.symbol;
         contractType = matchData!.contractType;
         barrier = matchData!.barrier;
-        if (!turboMode) await new Promise(r => setTimeout(r, 300));
+        patternDigits = matchData!.patternDigits;
+        await new Promise(r => setTimeout(r, 300));
       }
       else if (inRecovery && strategyM2Enabled && m2RecoveryType !== 'disabled') {
         setBotStatus('waiting_pattern');
 
         let matched = false;
-        let matchData: { symbol: string; contractType: string; barrier?: string } | null = null;
+        let matchData: { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null = null;
         
         while (runningRef.current && !matched) {
           matchData = findM2Match();
           if (matchData) {
             matched = true;
-            toast.info(`🔄 M2 Recovery pattern found on ${matchData.symbol}`);
+            toast.info(`🔄 M2 Fresh Recovery pattern found on ${matchData.symbol}`);
           }
           if (!matched) {
-            await new Promise<void>(r => {
-              if (turboMode) requestAnimationFrame(() => r());
-              else setTimeout(r, 100);
-            });
+            await new Promise<void>(r => setTimeout(r, 100));
           }
         }
         if (!runningRef.current) break;
@@ -574,80 +701,26 @@ export default function ProScannerBot() {
         tradeSymbol = matchData!.symbol;
         contractType = matchData!.contractType;
         barrier = matchData!.barrier;
-        if (!turboMode) await new Promise(r => setTimeout(r, 300));
+        patternDigits = matchData!.patternDigits;
+        await new Promise(r => setTimeout(r, 300));
       }
       else {
         setBotStatus(mkt === 1 ? 'trading_m1' : 'recovery');
         tradeSymbol = 'R_100';
         contractType = 'DIGITEVEN';
         barrier = undefined;
-      }
-
-      if (hookEnabled) {
-        setBotStatus('virtual_hook');
-        setVhStatus('waiting');
-        setVhFakeWins(0);
-        setVhFakeLosses(0);
-        setVhConsecLosses(0);
-        let consecLosses = 0;
-        let virtualTradeNum = 0;
-
-        while (consecLosses < requiredLosses && runningRef.current) {
-          virtualTradeNum++;
-          const vLogId = ++logIdRef.current;
-          const vNow = new Date().toLocaleTimeString();
-          addLog(vLogId, {
-            time: vNow, market: 'VH', symbol: tradeSymbol,
-            contract: contractType, stake: 0, martingaleStep: 0,
-            exitDigit: '...', result: 'Pending', pnl: 0, balance: localBalance,
-            switchInfo: `Virtual #${virtualTradeNum} (losses: ${consecLosses}/${requiredLosses})`,
-          });
-
-          const vResult = await simulateVirtualContract(contractType, barrier || '5', tradeSymbol);
-          if (!runningRef.current) break;
-
-          if (vResult.won) {
-            consecLosses = 0;
-            setVhConsecLosses(0);
-            setVhFakeWins(prev => prev + 1);
-            updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Win', switchInfo: `Virtual WIN → Losses reset (0/${requiredLosses})` });
-          } else {
-            consecLosses++;
-            setVhConsecLosses(consecLosses);
-            setVhFakeLosses(prev => prev + 1);
-            updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Loss', switchInfo: `Virtual LOSS (${consecLosses}/${requiredLosses})` });
-          }
-        }
-
-        if (!runningRef.current) break;
-
-        setVhStatus('confirmed');
-        toast.success(`🎣 Hook confirmed! ${requiredLosses} consecutive losses detected → Executing ${realCount} real trade(s)`);
-
-        for (let ri = 0; ri < realCount && runningRef.current; ri++) {
-          const result = await executeRealTrade(
-            contractType, barrier, tradeSymbol, cStake, mStep, mkt, localBalance, localPnl, baseStake
-          );
-          if (!result || !runningRef.current) break;
-          localPnl = result.localPnl;
-          localBalance = result.localBalance;
-          cStake = result.cStake;
-          mStep = result.mStep;
-          inRecovery = result.inRecovery;
-
-          if (result.shouldBreak) { runningRef.current = false; break; }
-        }
-
-        setVhStatus('idle');
-        setVhConsecLosses(0);
-        if (!runningRef.current) break;
-        continue;
+        patternDigits = 'default';
       }
 
       const result = await executeRealTrade(
-        contractType, barrier, tradeSymbol, cStake, mStep, mkt, localBalance, localPnl, baseStake
+        contractType, barrier, tradeSymbol, cStake, mStep, mkt, localBalance, localPnl, baseStake, patternDigits
       );
       if (!result || !runningRef.current) break;
+      
+      // Track if this trade was a loss
+      const wasLoss = result.cStake === cStake && result.mStep === mStep && result.inRecovery === inRecovery ? false : true;
+      lastTradeWasLoss = !result.shouldBreak && result.localPnl < localPnl;
+      
       localPnl = result.localPnl;
       localBalance = result.localBalance;
       cStake = result.cStake;
@@ -656,7 +729,8 @@ export default function ProScannerBot() {
 
       if (result.shouldBreak) break;
 
-      if (!turboMode) await new Promise(r => setTimeout(r, 400));
+      // Wait before scanning for next pattern
+      await new Promise(r => setTimeout(r, 1000));
     }
 
     setIsRunning(false);
@@ -665,8 +739,7 @@ export default function ProScannerBot() {
   }, [isAuthorized, isRunning, balance, stake, m1Enabled, m2Enabled,
     martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss,
     strategyM1Enabled, strategyM2Enabled, m1StrategyType, m2RecoveryType,
-    findM1Match, findM2Match, addLog, updateLog, executeRealTrade, turboMode,
-    m1HookEnabled, m2HookEnabled, m1VirtualLossCount, m2VirtualLossCount, m1RealCount, m2RealCount]);
+    findM1Match, findM2Match, addLog, updateLog, executeRealTrade]);
 
   const stopBot = useCallback(() => {
     runningRef.current = false;
@@ -680,7 +753,6 @@ export default function ProScannerBot() {
     recovery: { icon: '🟣', label: 'RECOVERY MODE', color: 'text-fuchsia-400' },
     waiting_pattern: { icon: '🟡', label: 'WAITING PATTERN', color: 'text-amber-400' },
     pattern_matched: { icon: '✅', label: 'PATTERN MATCHED', color: 'text-emerald-400' },
-    virtual_hook: { icon: '🎣', label: 'VIRTUAL HOOK', color: 'text-cyan-400' },
   };
 
   const status = statusConfig[botStatus];
@@ -698,9 +770,9 @@ export default function ProScannerBot() {
               </div>
               <div>
                 <h1 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
-                 Milliefx Ultimate 2026 Bot
+                 Ramzfx Ultimate 2026 Bot
                 </h1>
-                <p className="text-xs text-slate-400"> Ramzfx Advanced Market Scanning & Recovery System</p>
+                <p className="text-xs text-slate-400"> Advanced Market Scanning & Recovery System</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -784,9 +856,11 @@ export default function ProScannerBot() {
                     <SelectValue placeholder="Select strategy" />
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
+                    <SelectItem value="over0_under9">🎯 Over 0 / Under 9 (2 ticks)</SelectItem>
                     <SelectItem value="over1_under8">🎯 Over 1 / Under 8 (2 ticks)</SelectItem>
                     <SelectItem value="over2_under7">🎯 Over 2 / Under 7 (3 ticks)</SelectItem>
                     <SelectItem value="over3_under6">🎯 Over 3 / Under 6 (4 ticks)</SelectItem>
+                    <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                   </SelectContent>
                 </Select>
                 {m1StrategyType !== 'disabled' && (
@@ -795,7 +869,7 @@ export default function ProScannerBot() {
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
                     </span>
-                    Scanning ALL markets for pattern...
+                    Scanning ALL markets for fresh patterns...
                   </div>
                 )}
               </div>
@@ -828,10 +902,17 @@ export default function ProScannerBot() {
                     <SelectValue placeholder="Select strategy" />
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
-                    <SelectItem value="all_odd_even_7">🔄 Odd / Even (7 ticks)</SelectItem>
-                    <SelectItem value="all_odd_even_6">🔄 Odd / Even (6 ticks)</SelectItem>
-                    <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
+                    <SelectItem value="odd_even_5">🔄 Odd / Even (5 ticks)</SelectItem>
+                    <SelectItem value="odd_even_6">🔄 Odd / Even (6 ticks)</SelectItem>
+                    <SelectItem value="odd_even_7">🔄 Odd / Even (7 ticks)</SelectItem>
+                    <SelectItem value="odd_even_8">🔄 Odd / Even (8 ticks)</SelectItem>
+                    <SelectItem value="odd_even_9">🔄 Odd / Even (9 ticks)</SelectItem>
+                    <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                     <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
+                    <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
+                    <SelectItem value="over4_under5_8">🎯 Over 4 / Under 5 (8 ticks)</SelectItem>
+                    <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
+                    
                   </SelectContent>
                 </Select>
                 {m2RecoveryType !== 'disabled' && (
@@ -840,7 +921,7 @@ export default function ProScannerBot() {
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-fuchsia-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-fuchsia-500"></span>
                     </span>
-                    Scanning ALL markets for recovery pattern...
+                    Scanning ALL markets for fresh recovery patterns...
                   </div>
                 )}
               </div>
@@ -885,86 +966,6 @@ export default function ProScannerBot() {
           )}
         </div>
 
-        {/* Virtual Hook Settings */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {/* M1 Virtual Hook */}
-          <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-emerald-500/20 rounded-xl p-3 shadow-xl">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-bold text-emerald-400 flex items-center gap-1">
-                <Anchor className="w-3.5 h-3.5" /> M1 Virtual Hook
-              </h3>
-              <Switch checked={m1HookEnabled} onCheckedChange={setM1HookEnabled} disabled={isRunning} />
-            </div>
-            {m1HookEnabled && (
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <div>
-                  <label className="text-[9px] text-slate-400 block mb-1">Virtual Losses</label>
-                  <Input type="number" min="1" max="10" value={m1VirtualLossCount} onChange={e => setM1VirtualLossCount(e.target.value)} disabled={isRunning} className="h-7 text-xs bg-slate-800/50 border-slate-700" />
-                </div>
-                <div>
-                  <label className="text-[9px] text-slate-400 block mb-1">Real Trades</label>
-                  <Input type="number" min="1" max="5" value={m1RealCount} onChange={e => setM1RealCount(e.target.value)} disabled={isRunning} className="h-7 text-xs bg-slate-800/50 border-slate-700" />
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* M2 Virtual Hook */}
-          <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-fuchsia-500/20 rounded-xl p-3 shadow-xl">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-bold text-fuchsia-400 flex items-center gap-1">
-                <Anchor className="w-3.5 h-3.5" /> M2 Virtual Hook
-              </h3>
-              <Switch checked={m2HookEnabled} onCheckedChange={setM2HookEnabled} disabled={isRunning} />
-            </div>
-            {m2HookEnabled && (
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <div>
-                  <label className="text-[9px] text-slate-400 block mb-1">Virtual Losses</label>
-                  <Input type="number" min="1" max="10" value={m2VirtualLossCount} onChange={e => setM2VirtualLossCount(e.target.value)} disabled={isRunning} className="h-7 text-xs bg-slate-800/50 border-slate-700" />
-                </div>
-                <div>
-                  <label className="text-[9px] text-slate-400 block mb-1">Real Trades</label>
-                  <Input type="number" min="1" max="5" value={m2RealCount} onChange={e => setM2RealCount(e.target.value)} disabled={isRunning} className="h-7 text-xs bg-slate-800/50 border-slate-700" />
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Hook Status */}
-        {(m1HookEnabled || m2HookEnabled) && (
-          <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-cyan-500/30 rounded-xl p-3 shadow-xl">
-            <h3 className="text-[11px] font-semibold text-cyan-400 flex items-center gap-1 mb-2">
-              <Anchor className="w-3.5 h-3.5" /> Virtual Hook Status
-            </h3>
-            <div className="grid grid-cols-4 gap-2 text-center">
-              <div className="bg-slate-800/50 rounded-lg p-2">
-                <div className="text-[8px] text-slate-400">V-Win</div>
-                <div className="font-mono text-sm font-bold text-emerald-400">{vhFakeWins}</div>
-              </div>
-              <div className="bg-slate-800/50 rounded-lg p-2">
-                <div className="text-[8px] text-slate-400">V-Loss</div>
-                <div className="font-mono text-sm font-bold text-rose-400">{vhFakeLosses}</div>
-              </div>
-              <div className="bg-slate-800/50 rounded-lg p-2">
-                <div className="text-[8px] text-slate-400">Streak</div>
-                <div className="font-mono text-sm font-bold text-amber-400">{vhConsecLosses}</div>
-              </div>
-              <div className="bg-slate-800/50 rounded-lg p-2">
-                <div className="text-[8px] text-slate-400">State</div>
-                <div className={`text-xs font-bold ${
-                  vhStatus === 'confirmed' ? 'text-emerald-400' :
-                  vhStatus === 'waiting' ? 'text-amber-400 animate-pulse' :
-                  vhStatus === 'failed' ? 'text-rose-400' : 'text-slate-400'
-                }`}>
-                  {vhStatus === 'confirmed' ? '✓' : vhStatus === 'waiting' ? '⏳' : vhStatus === 'failed' ? '✗' : '—'}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Start/Stop Buttons */}
         <div className="grid grid-cols-2 gap-3">
           <Button
@@ -982,18 +983,6 @@ export default function ProScannerBot() {
           >
             <StopCircle className="w-4 h-4 mr-2" /> STOP 🛑 
           </Button>
-        </div>
-
-        {/* Turbo Mode Toggle */}
-        <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl p-3 shadow-xl">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4 text-amber-400" />
-              <span className="text-sm font-semibold text-slate-200">Turbo Mode</span>
-              <span className="text-[10px] text-slate-400">(Faster scanning, uses more CPU)</span>
-            </div>
-            <Switch checked={turboMode} onCheckedChange={setTurboMode} disabled={isRunning} />
-          </div>
         </div>
 
         {/* Activity Log - Full Width */}
@@ -1019,7 +1008,6 @@ export default function ProScannerBot() {
                   <th className="text-left p-2">Symbol</th>
                   <th className="text-left p-2">Type</th>
                   <th className="text-right p-2">Stake</th>
-                  <th className="text-center p-2">Digit</th>
                   <th className="text-center p-2">Result</th> 
                   <th className="text-right p-2">P/L</th>
                   <th className="text-right p-2">Balance</th>
@@ -1028,33 +1016,28 @@ export default function ProScannerBot() {
               <tbody>
                 {logEntries.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="text-center text-slate-500 py-12">
+                    <td colSpan={8} className="text-center text-slate-500 py-12">
                       No trades yet — configure and start the bot
                     </td>
                   </tr>
                 ) : logEntries.map(e => (
                   <tr key={e.id} className={`border-t border-slate-700/30 hover:bg-slate-800/30 transition-colors ${
-                    e.market === 'M1' ? 'border-l-2 border-l-emerald-500' :
-                    e.market === 'VH' ? 'border-l-2 border-l-cyan-500' :
-                    'border-l-2 border-l-fuchsia-500'
+                    e.market === 'M1' ? 'border-l-2 border-l-emerald-500' : 'border-l-2 border-l-fuchsia-500'
                   }`}>
                     <td className="p-2 font-mono text-[9px] text-slate-400">{e.time}</td>
                     <td className={`p-2 font-bold text-xs ${
-                      e.market === 'M1' ? 'text-emerald-400' :
-                      e.market === 'VH' ? 'text-cyan-400' :
-                      'text-fuchsia-400'
+                      e.market === 'M1' ? 'text-emerald-400' : 'text-fuchsia-400'
                     }`}>{e.market}</td>
                     <td className="p-2 font-mono text-[9px] text-slate-300">{e.symbol}</td>
                     <td className="p-2 text-[9px] text-slate-300">{e.contract.replace('DIGIT', '')}</td>
                     <td className="p-2 font-mono text-right text-[9px] text-slate-300">
-                      {e.market === 'VH' ? 'FAKE' : `$${e.stake.toFixed(2)}`}
-                      {e.martingaleStep > 0 && e.market !== 'VH' && <span className="text-amber-400 ml-1">M{e.martingaleStep}</span>}
+                      ${e.stake.toFixed(2)}
+                      {e.martingaleStep > 0 && <span className="text-amber-400 ml-1">M{e.martingaleStep}</span>}
                     </td>
-                    <td className="p-2 text-center font-mono text-slate-300">{e.exitDigit}</td>
                     <td className="p-2 text-center">
                       <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                        e.result === 'Win' || e.result === 'V-Win' ? 'bg-emerald-500/20 text-emerald-400' :
-                        e.result === 'Loss' || e.result === 'V-Loss' ? 'bg-rose-500/20 text-rose-400' :
+                        e.result === 'Win' ? 'bg-emerald-500/20 text-emerald-400' :
+                        e.result === 'Loss' ? 'bg-rose-500/20 text-rose-400' :
                         'bg-amber-500/20 text-amber-400 animate-pulse'
                       }`}>
                         {e.result === 'Pending' ? '...' : e.result}
@@ -1063,10 +1046,10 @@ export default function ProScannerBot() {
                     <td className={`p-2 font-mono text-right text-[9px] font-bold ${
                       e.pnl > 0 ? 'text-emerald-400' : e.pnl < 0 ? 'text-rose-400' : 'text-slate-400'
                     }`}>
-                      {e.result === 'Pending' ? '...' : e.market === 'VH' ? '-' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
+                      {e.result === 'Pending' ? '...' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
                     </td>
                     <td className="p-2 font-mono text-right text-[9px] text-slate-400">
-                      {e.market === 'VH' ? '-' : `$${e.balance.toFixed(2)}`}
+                      ${e.balance.toFixed(2)}
                     </td>
                   </tr>
                 ))}
