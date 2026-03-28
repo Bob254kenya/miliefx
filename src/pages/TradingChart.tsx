@@ -698,7 +698,7 @@ export default function ProScannerBot() {
               </div>
               <div>
                 <h1 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
-                 Ramzfx Ultimate 2026 Bot
+                 Milliefx Ultimate 2026 Bot
                 </h1>
                 <p className="text-xs text-slate-400"> Ramzfx Advanced Market Scanning & Recovery System</p>
               </div>
