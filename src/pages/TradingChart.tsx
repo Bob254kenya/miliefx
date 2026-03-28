@@ -689,7 +689,7 @@ export default function ProScannerBot() {
               </div>
               <div>
                 <h1 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
-                  Pro Scanner Bot
+                 Millie Ultimate 2026 Bot
                 </h1>
                 <p className="text-xs text-slate-400">Advanced Market Scanning & Recovery System</p>
               </div>
@@ -717,7 +717,7 @@ export default function ProScannerBot() {
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-semibold text-slate-200 flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-cyan-400" />
-              Performance Stats
+              Trade Report 
             </span>
             <span className="font-mono text-xl font-bold text-cyan-400">${balance.toFixed(2)}</span>
           </div>
@@ -821,8 +821,8 @@ export default function ProScannerBot() {
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
                     <SelectItem value="disabled">Disabled (Manual)</SelectItem>
-                    <SelectItem value="all_odd_even_7">🔄 All Odd → Even (7 ticks)</SelectItem>
-                    <SelectItem value="all_odd_even_6">🔄 All Odd → Even (6 ticks)</SelectItem>
+                    <SelectItem value="all_odd_even_7">🔄 Odd → Even (7 ticks)</SelectItem>
+                    <SelectItem value="all_odd_even_6">🔄 Odd /Even (6 ticks)</SelectItem>
                     <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
                     <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
                   </SelectContent>
@@ -844,7 +844,7 @@ export default function ProScannerBot() {
         {/* Risk Management */}
         <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl p-4 shadow-xl">
           <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2 mb-3">
-            <Shield className="w-4 h-4 text-amber-400" /> Risk Management
+            <Shield className="w-4 h-4 text-amber-400" /> Bot Configuration 🚦
           </h3>
           <div className="grid grid-cols-3 gap-3 mb-3">
             <div>
@@ -871,7 +871,7 @@ export default function ProScannerBot() {
                 <Input type="number" min="1.1" step="0.1" value={martingaleMultiplier} onChange={e => setMartingaleMultiplier(e.target.value)} disabled={isRunning} className="h-8 text-xs bg-slate-800/50 border-slate-700 text-slate-200" />
               </div>
               <div>
-                <label className="text-[10px] text-slate-400 block mb-1">Max Steps</label>
+                <label className="text-[10px] text-slate-400 block mb-1">Reset Martingale After </label>
                 <Input type="number" min="1" max="10" value={martingaleMaxSteps} onChange={e => setMartingaleMaxSteps(e.target.value)} disabled={isRunning} className="h-8 text-xs bg-slate-800/50 border-slate-700 text-slate-200" />
               </div>
             </div>
@@ -918,7 +918,7 @@ export default function ProScannerBot() {
             disabled={isRunning || !isAuthorized || balance < parseFloat(stake)}
             className="h-12 text-base font-bold bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-lg rounded-xl transition-all duration-200"
           >
-            <Play className="w-4 h-4 mr-2" /> START BOT
+            <Play className="w-4 h-4 mr-2" /> Run BOT 🎬
           </Button>
           <Button
             onClick={stopBot}
@@ -926,7 +926,7 @@ export default function ProScannerBot() {
             variant="destructive"
             className="h-12 text-base font-bold bg-gradient-to-r from-rose-600 to-rose-500 hover:from-rose-500 hover:to-rose-400 shadow-lg rounded-xl transition-all duration-200"
           >
-            <StopCircle className="w-4 h-4 mr-2" /> STOP
+            <StopCircle className="w-4 h-4 mr-2" /> STOP 🛑 
           </Button>
         </div>
 
@@ -935,7 +935,7 @@ export default function ProScannerBot() {
           <div className="px-4 py-3 border-b border-slate-700/50 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-cyan-400" />
-              Activity Log
+              Trade Results  
               <Badge className="ml-2 bg-slate-800 text-slate-300 text-[9px]">
                 Current Stake: ${currentStake.toFixed(2)}{martingaleStep > 0 && ` M${martingaleStep}`}
               </Badge>
