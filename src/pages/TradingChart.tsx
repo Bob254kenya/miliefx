@@ -1,886 +1,1290 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { useLocation } from 'react-router-dom';
-import { derivApi, type MarketSymbol } from '@/services/deriv-api';
-import { copyTradingService } from '@/services/copy-trading-service';
-import { getLastDigit } from '@/services/analysis';
-import { useAuth } from '@/contexts/AuthContext';
-import { useLossRequirement } from '@/hooks/useLossRequirement';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
+// App.tsx
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Progress } from '@/components/ui/progress';
 import { toast } from 'sonner';
 import {
-  Play, StopCircle, Trash2, Scan,
-  Home, RefreshCw, Shield, Zap, Eye, Activity, TrendingUp, TrendingDown
+  TrendingUp,
+  TrendingDown,
+  Activity,
+  Target,
+  Zap,
+  Volume2,
+  Clock,
+  BarChart3,
+  ArrowUp,
+  ArrowDown,
+  Gauge,
+  Signal,
+  AlertCircle,
+  CheckCircle2,
+  XCircle,
+  Play,
+  Pause,
+  RefreshCw,
+  Flame,
+  AlertTriangle,
+  BarChart,
+  Eye,
+  EyeOff,
+  Layers,
+  Timer,
+  Brain,
+  Shield,
+  Star,
+  Award,
+  Hash,
+  Circle,
+  Divide,
+  Equal,
+  Percent
 } from 'lucide-react';
 
-const SCANNER_MARKETS: { symbol: string; name: string }[] = [
-  { symbol: 'R_10', name: 'Vol 10' },
-  { symbol: 'R_25', name: 'Vol 25' },
-  { symbol: 'R_50', name: 'Vol 50' },
-  { symbol: 'R_75', name: 'Vol 75' },
-  { symbol: 'R_100', name: 'Vol 100' },
-  { symbol: '1HZ10V', name: 'V10 1s' },
-  { symbol: '1HZ15V', name: 'V15 1s' },
-  { symbol: '1HZ25V', name: 'V25 1s' },
-  { symbol: '1HZ30V', name: 'V30 1s' },
-  { symbol: '1HZ50V', name: 'V50 1s' },
-  { symbol: '1HZ75V', name: 'V75 1s' },
-  { symbol: '1HZ90V', name: 'V90 1s' },
-  { symbol: '1HZ100V', name: 'V100 1s' },
-  { symbol: 'JD10', name: 'Jump 10' },
-  { symbol: 'JD25', name: 'Jump 25' },
-  { symbol: 'RDBEAR', name: 'Bear' },
-  { symbol: 'RDBULL', name: 'Bull' },
+// ---------- Types ----------
+type Market = {
+  symbol: string;
+  name: string;
+  group: string;
+  baseVol: number;
+  recommended: boolean;
+};
+
+type SignalCategory = 'over_under' | 'rise_fall' | 'even_odd' | 'digit_match';
+type SignalType = 
+  | 'over_4' | 'under_5'
+  | 'rise' | 'fall'
+  | 'even' | 'odd'
+  | 'digit_match';
+type SignalStrength = 'critical' | 'strong' | 'moderate' | 'weak';
+
+interface Trade {
+  id: string;
+  market: Market;
+  type: string;
+  entryPrice: number;
+  stake: number;
+  status: 'open' | 'won' | 'lost';
+  profit: number;
+  entryTick: number;
+  exitTick?: number;
+  entryTickTime: number;
+  exitTickTime?: number;
+  contractId?: string;
+}
+
+interface Signal {
+  id: string;
+  market: Market;
+  category: SignalCategory;
+  type: SignalType;
+  strength: SignalStrength;
+  entryPrice: string;
+  confidence: number;
+  timestamp: number;
+  timeframe: string;
+  conditionMet: string;
+  priority: number;
+  stats?: any;
+}
+
+interface DigitStats {
+  digit: number;
+  count: number;
+  percentage: number;
+}
+
+interface ZoneAnalysis {
+  lowerZone: number[];
+  upperZone: number[];
+  lowerCount: number;
+  upperCount: number;
+  lowerPct: number;
+  upperPct: number;
+  difference: number;
+  dominantZone: 'lower' | 'upper' | 'balanced';
+}
+
+interface LastTicksAnalysis {
+  ticks: number[];
+  over4Count: number;
+  under5Count: number;
+  over4Pct: number;
+  under5Pct: number;
+  trend: 'increasing' | 'decreasing' | 'stable';
+  hasSpike: boolean;
+  isSlow: boolean;
+}
+
+// ---------- Market Config ----------
+const VOLATILITIES = {
+  vol: ["1HZ10V", "1HZ25V", "1HZ50V", "1HZ75V", "1HZ100V", "R_10", "R_25", "R_50", "R_75", "R_100"],
+  jump: ["JD10", "JD25", "JD50", "JD75", "JD100"],
+  bull: ["RDBULL"],
+  bear: ["RDBEAR"],
+};
+
+const ALL_MARKETS: Market[] = [
+  ...VOLATILITIES.vol.map(s => ({ 
+    symbol: s, 
+    name: s, 
+    group: s.includes('1HZ') ? 'vol1s' : 'vol', 
+    baseVol: parseInt(s.match(/\d+/)?.[0] || '10'),
+    recommended: s === 'R_25' || s === 'R_50'
+  })),
+  ...VOLATILITIES.jump.map(s => ({ 
+    symbol: s, 
+    name: s, 
+    group: 'jump', 
+    baseVol: parseInt(s.match(/\d+/)?.[0] || '10'),
+    recommended: s === 'JD25' || s === 'JD50'
+  })),
+  ...VOLATILITIES.bull.map(s => ({ symbol: s, name: 'Bull Market', group: 'bull', baseVol: 50, recommended: false })),
+  ...VOLATILITIES.bear.map(s => ({ symbol: s, name: 'Bear Market', group: 'bear', baseVol: 50, recommended: false }))
 ];
 
-const INITIAL_TRADE_TYPES = [
-  { id: 1, name: 'Over 1 / Under 8', window: 2, over: 1, under: 8 },
-  { id: 2, name: 'Over 2 / Under 7', window: 3, over: 2, under: 7 },
-  { id: 3, name: 'Over 3 / Under 6', window: 4, over: 3, under: 6 },
-] as const;
+// ---------- Helpers ----------
+const getLastDigit = (price: number): number => {
+  const priceStr = price.toString();
+  const match = priceStr.match(/\d+(?:\.\d+)?/);
+  if (!match) return 0;
+  const numStr = match[0].replace('.', '');
+  return parseInt(numStr.slice(-1), 10);
+};
 
-const RECOVERY_TYPES = [
-  { id: 1, name: 'Even/Odd (last 7)', window: 7, type: 'evenodd' },
-  { id: 2, name: 'Even/Odd (last 6)', window: 6, type: 'evenodd' },
-  { id: 3, name: 'Over/Under (last 7)', window: 7, type: 'overunder', over: 4, under: 5 },
-  { id: 4, name: 'Over/Under (last 6)', window: 6, type: 'overunder', over: 4, under: 5 },
-] as const;
+const analyzeZoneDistribution = (ticks: number[]): ZoneAnalysis => {
+  const lowerZone = ticks.filter(d => d >= 0 && d <= 4);
+  const upperZone = ticks.filter(d => d >= 5 && d <= 9);
+  const lowerCount = lowerZone.length;
+  const upperCount = upperZone.length;
+  const total = ticks.length;
+  return {
+    lowerZone: lowerZone.map(d => d),
+    upperZone: upperZone.map(d => d),
+    lowerCount,
+    upperCount,
+    lowerPct: (lowerCount / total) * 100,
+    upperPct: (upperCount / total) * 100,
+    difference: Math.abs(upperCount - lowerCount),
+    dominantZone: upperCount > lowerCount ? 'upper' : lowerCount > upperCount ? 'lower' : 'balanced',
+  };
+};
 
-interface TickData {
-  digit: number;
-  quote: number;
-  timestamp: number;
+const analyzeLastTicks = (ticks: number[], count: number = 20): LastTicksAnalysis => {
+  const lastTicks = ticks.slice(-count);
+  const over4Count = lastTicks.filter(d => d > 4).length;
+  const under5Count = lastTicks.filter(d => d < 5).length;
+  const last5 = lastTicks.slice(-5);
+  const prev5 = lastTicks.slice(-10, -5);
+  const spikeDetected = Math.abs(
+    last5.filter(d => d > 4).length - prev5.filter(d => d > 4).length
+  ) >= 3;
+  const recent = lastTicks.slice(-10);
+  const older = lastTicks.slice(-20, -10);
+  const recentOver = recent.filter(d => d > 4).length;
+  const olderOver = older.filter(d => d > 4).length;
+  let trend: 'increasing' | 'decreasing' | 'stable' = 'stable';
+  if (recentOver > olderOver + 2) trend = 'increasing';
+  else if (recentOver < olderOver - 2) trend = 'decreasing';
+  return {
+    ticks: lastTicks,
+    over4Count,
+    under5Count,
+    over4Pct: (over4Count / count) * 100,
+    under5Pct: (under5Count / count) * 100,
+    trend,
+    hasSpike: spikeDetected,
+    isSlow: true,
+  };
+};
+
+const analyzeDigitFrequency = (ticks: number[]): {
+  frequencies: Record<number, number>;
+  percentages: Record<number, number>;
+  mostFrequent: DigitStats;
+  secondMostFrequent: DigitStats;
+  thirdMostFrequent: DigitStats;
+  leastFrequent: DigitStats;
+  sortedDigits: DigitStats[];
+} => {
+  const frequencies: Record<number, number> = {};
+  for (let i = 0; i <= 9; i++) frequencies[i] = 0;
+  ticks.forEach(d => frequencies[d]++);
+  const total = ticks.length;
+  const percentages: Record<number, number> = {};
+  const sorted: DigitStats[] = [];
+  for (let i = 0; i <= 9; i++) {
+    const pct = (frequencies[i] / total) * 100;
+    percentages[i] = pct;
+    sorted.push({ digit: i, count: frequencies[i], percentage: pct });
+  }
+  sorted.sort((a, b) => b.count - a.count);
+  return {
+    frequencies,
+    percentages,
+    mostFrequent: sorted[0],
+    secondMostFrequent: sorted[1],
+    thirdMostFrequent: sorted[2],
+    leastFrequent: sorted[sorted.length - 1],
+    sortedDigits: sorted,
+  };
+};
+
+const calculateRSI = (ticks: number[], period: number = 14): number => {
+  if (ticks.length < period + 1) return 50;
+  const changes: number[] = [];
+  for (let i = 1; i < ticks.length; i++) {
+    changes.push(ticks[i] - ticks[i - 1]);
+  }
+  const gains = changes.slice(-period).filter(c => c > 0);
+  const losses = changes.slice(-period).filter(c => c < 0);
+  const avgGain = gains.length ? gains.reduce((a, b) => a + b, 0) / period : 0;
+  const avgLoss = losses.length ? Math.abs(losses.reduce((a, b) => a + b, 0)) / period : 0;
+  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
+};
+
+const calculateMACD = (ticks: number[]): { macd: number; signal: number; histogram: number } => {
+  const ema12 = (() => {
+    const k = 2 / (12 + 1);
+    let ema = ticks.slice(0, 12).reduce((a, b) => a + b, 0) / 12;
+    for (let i = 12; i < ticks.length; i++) {
+      ema = ticks[i] * k + ema * (1 - k);
+    }
+    return ema;
+  })();
+  const ema26 = (() => {
+    const k = 2 / (26 + 1);
+    let ema = ticks.slice(0, 26).reduce((a, b) => a + b, 0) / 26;
+    for (let i = 26; i < ticks.length; i++) {
+      ema = ticks[i] * k + ema * (1 - k);
+    }
+    return ema;
+  })();
+  const macd = ema12 - ema26;
+  const signal = macd * 0.8;
+  const histogram = macd - signal;
+  return { macd, signal, histogram };
+};
+
+// ---------- Signal Generation ----------
+const generateOverUnderSignals = (
+  market: Market,
+  ticks: number[]
+): Omit<Signal, 'id' | 'timestamp' | 'priority'>[] => {
+  if (!ticks || ticks.length < 1000) return [];
+  const signals: Omit<Signal, 'id' | 'timestamp' | 'priority'>[] = [];
+  const zoneAnalysis = analyzeZoneDistribution(ticks);
+  const lastTicksAnalysis = analyzeLastTicks(ticks);
+  
+  // OVER 4
+  if (zoneAnalysis.upperCount > zoneAnalysis.lowerCount && zoneAnalysis.difference >= 60 && lastTicksAnalysis.over4Pct > 50) {
+    let strength: SignalStrength = 'moderate';
+    let confidence = 65;
+    if (zoneAnalysis.difference >= 80 && lastTicksAnalysis.over4Pct >= 70) {
+      strength = 'critical';
+      confidence = 92;
+    } else if (zoneAnalysis.difference >= 70 && lastTicksAnalysis.over4Pct >= 60) {
+      strength = 'strong';
+      confidence = 82;
+    }
+    signals.push({
+      market,
+      category: 'over_under',
+      type: 'over_4',
+      strength,
+      entryPrice: 'OVER 4',
+      confidence,
+      timeframe: '1m',
+      conditionMet: `Upper zone ${zoneAnalysis.upperPct.toFixed(1)}% vs Lower ${zoneAnalysis.lowerPct.toFixed(1)}%. Diff: ${zoneAnalysis.difference} ticks. Last 20: ${lastTicksAnalysis.over4Pct.toFixed(0)}% over.`,
+      stats: {
+        lowerCount: zoneAnalysis.lowerCount,
+        upperCount: zoneAnalysis.upperCount,
+        difference: zoneAnalysis.difference,
+        last20Pct: lastTicksAnalysis.over4Pct,
+      },
+    });
+  }
+  
+  // UNDER 5
+  if (zoneAnalysis.lowerCount > zoneAnalysis.upperCount && zoneAnalysis.difference >= 60 && lastTicksAnalysis.under5Pct > 50) {
+    let strength: SignalStrength = 'moderate';
+    let confidence = 65;
+    if (zoneAnalysis.difference >= 80 && lastTicksAnalysis.under5Pct >= 70) {
+      strength = 'critical';
+      confidence = 92;
+    } else if (zoneAnalysis.difference >= 70 && lastTicksAnalysis.under5Pct >= 60) {
+      strength = 'strong';
+      confidence = 82;
+    }
+    signals.push({
+      market,
+      category: 'over_under',
+      type: 'under_5',
+      strength,
+      entryPrice: 'UNDER 5',
+      confidence,
+      timeframe: '1m',
+      conditionMet: `Lower zone ${zoneAnalysis.lowerPct.toFixed(1)}% vs Upper ${zoneAnalysis.upperPct.toFixed(1)}%. Diff: ${zoneAnalysis.difference} ticks. Last 20: ${lastTicksAnalysis.under5Pct.toFixed(0)}% under.`,
+      stats: {
+        lowerCount: zoneAnalysis.lowerCount,
+        upperCount: zoneAnalysis.upperCount,
+        difference: zoneAnalysis.difference,
+        last20Pct: lastTicksAnalysis.under5Pct,
+      },
+    });
+  }
+  
+  return signals;
+};
+
+const generateRiseFallSignals = (
+  market: Market,
+  ticks: number[]
+): Omit<Signal, 'id' | 'timestamp' | 'priority'>[] => {
+  if (!ticks || ticks.length < 100) return [];
+  const signals: Omit<Signal, 'id' | 'timestamp' | 'priority'>[] = [];
+  const rsi = calculateRSI(ticks, 14);
+  const macd = calculateMACD(ticks);
+  const lastTicksAnalysis = analyzeLastTicks(ticks);
+  
+  // RISE
+  if (rsi < 45 && macd.macd > 0 && lastTicksAnalysis.trend !== 'decreasing') {
+    let strength: SignalStrength = 'moderate';
+    let confidence = 65;
+    if (rsi < 30 && macd.histogram > 0.5 && lastTicksAnalysis.over4Pct > 55) {
+      strength = 'strong';
+      confidence = 85;
+    }
+    signals.push({
+      market,
+      category: 'rise_fall',
+      type: 'rise',
+      strength,
+      entryPrice: 'RISE',
+      confidence,
+      timeframe: '1m',
+      conditionMet: `RSI at ${rsi.toFixed(1)} (oversold) + MACD bullish. Last 20: ${lastTicksAnalysis.over4Pct.toFixed(0)}% over.`,
+      stats: { rsi, macd: macd.macd, last20Pct: lastTicksAnalysis.over4Pct },
+    });
+  }
+  
+  // FALL
+  if (rsi > 55 && macd.macd < 0 && lastTicksAnalysis.trend !== 'increasing') {
+    let strength: SignalStrength = 'moderate';
+    let confidence = 65;
+    if (rsi > 70 && macd.histogram < -0.5 && lastTicksAnalysis.under5Pct > 55) {
+      strength = 'strong';
+      confidence = 85;
+    }
+    signals.push({
+      market,
+      category: 'rise_fall',
+      type: 'fall',
+      strength,
+      entryPrice: 'FALL',
+      confidence,
+      timeframe: '1m',
+      conditionMet: `RSI at ${rsi.toFixed(1)} (overbought) + MACD bearish. Last 20: ${lastTicksAnalysis.under5Pct.toFixed(0)}% under.`,
+      stats: { rsi, macd: macd.macd, last20Pct: lastTicksAnalysis.under5Pct },
+    });
+  }
+  
+  return signals;
+};
+
+const generateEvenOddSignals = (
+  market: Market,
+  ticks: number[]
+): Omit<Signal, 'id' | 'timestamp' | 'priority'>[] => {
+  if (!ticks || ticks.length < 500) return [];
+  const signals: Omit<Signal, 'id' | 'timestamp' | 'priority'>[] = [];
+  const digitFreq = analyzeDigitFrequency(ticks);
+  const evenCount = [0, 2, 4, 6, 8].reduce((sum, d) => sum + digitFreq.frequencies[d], 0);
+  const oddCount = [1, 3, 5, 7, 9].reduce((sum, d) => sum + digitFreq.frequencies[d], 0);
+  const total = ticks.length;
+  const evenPct = (evenCount / total) * 100;
+  const oddPct = (oddCount / total) * 100;
+  const last20Analysis = analyzeLastTicks(ticks, 20);
+  
+  // EVEN Strong
+  if (evenPct >= 55) {
+    let strength: SignalStrength = 'moderate';
+    let confidence = 70;
+    if (evenPct >= 70) {
+      strength = 'critical';
+      confidence = 92;
+    } else if (evenPct >= 60) {
+      strength = 'strong';
+      confidence = 82;
+    }
+    signals.push({
+      market,
+      category: 'even_odd',
+      type: 'even',
+      strength,
+      entryPrice: 'EVEN',
+      confidence,
+      timeframe: '1m',
+      conditionMet: `Even digits at ${evenPct.toFixed(1)}% (${evenCount}/${total}). Strong even bias.`,
+      stats: { evenPct, oddPct, last20Pct: last20Analysis.over4Pct },
+    });
+  }
+  
+  // ODD Strong
+  if (oddPct >= 55) {
+    let strength: SignalStrength = 'moderate';
+    let confidence = 70;
+    if (oddPct >= 70) {
+      strength = 'critical';
+      confidence = 92;
+    } else if (oddPct >= 60) {
+      strength = 'strong';
+      confidence = 82;
+    }
+    signals.push({
+      market,
+      category: 'even_odd',
+      type: 'odd',
+      strength,
+      entryPrice: 'ODD',
+      confidence,
+      timeframe: '1m',
+      conditionMet: `Odd digits at ${oddPct.toFixed(1)}% (${oddCount}/${total}). Strong odd bias.`,
+      stats: { evenPct, oddPct, last20Pct: last20Analysis.under5Pct },
+    });
+  }
+  
+  // EVEN Building
+  if (evenPct >= 52 && evenPct < 55) {
+    signals.push({
+      market,
+      category: 'even_odd',
+      type: 'even',
+      strength: 'weak',
+      entryPrice: 'EVEN (Building)',
+      confidence: 60,
+      timeframe: '1m',
+      conditionMet: `Even digits at ${evenPct.toFixed(1)}% - approaching threshold.`,
+      stats: { evenPct, oddPct },
+    });
+  }
+  
+  // ODD Building
+  if (oddPct >= 52 && oddPct < 55) {
+    signals.push({
+      market,
+      category: 'even_odd',
+      type: 'odd',
+      strength: 'weak',
+      entryPrice: 'ODD (Building)',
+      confidence: 60,
+      timeframe: '1m',
+      conditionMet: `Odd digits at ${oddPct.toFixed(1)}% - approaching threshold.`,
+      stats: { evenPct, oddPct },
+    });
+  }
+  
+  return signals;
+};
+
+const generateDigitMatchSignals = (
+  market: Market,
+  ticks: number[]
+): Omit<Signal, 'id' | 'timestamp' | 'priority'>[] => {
+  if (!ticks || ticks.length < 500) return [];
+  const signals: Omit<Signal, 'id' | 'timestamp' | 'priority'>[] = [];
+  const digitFreq = analyzeDigitFrequency(ticks);
+  const topDigits = [digitFreq.mostFrequent, digitFreq.secondMostFrequent, digitFreq.thirdMostFrequent];
+  
+  topDigits.forEach((digit, idx) => {
+    if (digit.percentage >= 10) {
+      let strength: SignalStrength = 'moderate';
+      let confidence = 65;
+      if (digit.percentage >= 18) {
+        strength = 'critical';
+        confidence = 92;
+      } else if (digit.percentage >= 15) {
+        strength = 'strong';
+        confidence = 85;
+      } else if (digit.percentage >= 12) {
+        strength = 'moderate';
+        confidence = 75;
+      }
+      const rankText = idx === 0 ? 'most' : idx === 1 ? 'second most' : 'third most';
+      signals.push({
+        market,
+        category: 'digit_match',
+        type: 'digit_match',
+        strength,
+        entryPrice: `MATCH ${digit.digit}`,
+        confidence,
+        timeframe: '1m',
+        conditionMet: `Digit ${digit.digit} appears ${digit.percentage.toFixed(1)}% - ${rankText} frequent.`,
+        stats: {
+          matchDigit: digit.digit,
+          matchPct: digit.percentage,
+          digitFrequency: digitFreq.frequencies,
+        },
+      });
+    }
+  });
+  
+  return signals;
+};
+
+// ---------- Trade Logic ----------
+const evaluateInitialCondition = (ticks: number[], initialType: string): { shouldTrade: boolean; type?: string } => {
+  if (!ticks || ticks.length < 2) return { shouldTrade: false };
+  
+  if (initialType === 'over1_under8') {
+    const last2 = ticks.slice(-2);
+    const allLessThan1 = last2.every(d => d < 1);
+    const allGreaterThan8 = last2.every(d => d > 8);
+    if (allLessThan1) return { shouldTrade: true, type: 'over_1' };
+    if (allGreaterThan8) return { shouldTrade: true, type: 'under_8' };
+  } else if (initialType === 'over2_under7') {
+    const last3 = ticks.slice(-3);
+    const allLessThan2 = last3.every(d => d < 2);
+    const allGreaterThan7 = last3.every(d => d > 7);
+    if (allLessThan2) return { shouldTrade: true, type: 'over_2' };
+    if (allGreaterThan7) return { shouldTrade: true, type: 'under_7' };
+  } else if (initialType === 'over3_under6') {
+    const last4 = ticks.slice(-4);
+    const allLessThan3 = last4.every(d => d < 3);
+    const allGreaterThan6 = last4.every(d => d > 6);
+    if (allLessThan3) return { shouldTrade: true, type: 'over_3' };
+    if (allGreaterThan6) return { shouldTrade: true, type: 'under_6' };
+  }
+  
+  return { shouldTrade: false };
+};
+
+const evaluateRecoveryCondition = (ticks: number[], recoveryType: string): { shouldTrade: boolean; type?: string } => {
+  if (!ticks || ticks.length < 7) return { shouldTrade: false };
+  
+  if (recoveryType === 'evenOdd_7') {
+    const last7 = ticks.slice(-7);
+    const oddCount = last7.filter(d => d % 2 === 1).length;
+    const evenCount = last7.filter(d => d % 2 === 0).length;
+    if (oddCount > evenCount) return { shouldTrade: true, type: 'even' };
+    if (evenCount > oddCount) return { shouldTrade: true, type: 'odd' };
+  } else if (recoveryType === 'evenOdd_6') {
+    const last6 = ticks.slice(-6);
+    const oddCount = last6.filter(d => d % 2 === 1).length;
+    const evenCount = last6.filter(d => d % 2 === 0).length;
+    if (oddCount > evenCount) return { shouldTrade: true, type: 'even' };
+    if (evenCount > oddCount) return { shouldTrade: true, type: 'odd' };
+  } else if (recoveryType === 'overUnder_7') {
+    const last7 = ticks.slice(-7);
+    const lessThan4 = last7.filter(d => d < 4).length;
+    const greaterThan5 = last7.filter(d => d > 5).length;
+    if (lessThan4 > greaterThan5) return { shouldTrade: true, type: 'over_4' };
+    if (greaterThan5 > lessThan4) return { shouldTrade: true, type: 'under_5' };
+  } else if (recoveryType === 'overUnder_6') {
+    const last6 = ticks.slice(-6);
+    const lessThan4 = last6.filter(d => d < 4).length;
+    const greaterThan5 = last6.filter(d => d > 5).length;
+    if (lessThan4 > greaterThan5) return { shouldTrade: true, type: 'over_4' };
+    if (greaterThan5 > lessThan4) return { shouldTrade: true, type: 'under_5' };
+  }
+  
+  return { shouldTrade: false };
+};
+
+// ---------- WebSocket Manager ----------
+interface DerivWebSocketManagerProps {
+  onTick: (symbol: string, digit: number, price: number) => void;
+  onTradeResult?: (trade: Trade) => void;
+  appId?: number;
 }
 
-interface TradeDetails {
-  entry_tick: number;
-  exit_tick: number;
-  entry_tick_time: number;
-  exit_tick_time: number;
-  profit: number;
-  buy_price: number;
-  sell_price: number;
+class DerivWebSocketManager {
+  private ws: WebSocket | null = null;
+  private subscriptions: Set<string> = new Set();
+  private onTickCallback: (symbol: string, digit: number, price: number) => void;
+  private onTradeResultCallback?: (trade: Trade) => void;
+  private pendingProposals: Map<string, { trade: Trade; resolve: (value: any) => void; reject: (value: any) => void }> = new Map();
+  private openContracts: Map<string, Trade> = new Map();
+  private appId: number;
+
+  constructor(props: DerivWebSocketManagerProps) {
+    this.onTickCallback = props.onTick;
+    this.onTradeResultCallback = props.onTradeResult;
+    this.appId = props.appId || 1089;
+    this.connect();
+  }
+
+  private connect() {
+    this.ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${this.appId}`);
+    
+    this.ws.onopen = () => {
+      console.log('WebSocket connected');
+      // Re-subscribe to all markets
+      this.subscriptions.forEach(symbol => {
+        this.sendSubscribe(symbol);
+      });
+    };
+    
+    this.ws.onmessage = (msg) => {
+      const data = JSON.parse(msg.data);
+      this.handleMessage(data);
+    };
+    
+    this.ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+    
+    this.ws.onclose = () => {
+      console.log('WebSocket closed, reconnecting in 3s...');
+      setTimeout(() => this.connect(), 3000);
+    };
+  }
+
+  private handleMessage(data: any) {
+    // Handle tick updates
+    if (data.tick) {
+      const symbol = data.tick.symbol;
+      const price = data.tick.quote;
+      const digit = getLastDigit(price);
+      this.onTickCallback(symbol, digit, price);
+    }
+    
+    // Handle tick history response
+    if (data.history) {
+      const symbol = data.echo_req?.ticks_history;
+      if (symbol && data.history.prices) {
+        data.history.prices.forEach((price: number) => {
+          const digit = getLastDigit(price);
+          this.onTickCallback(symbol, digit, price);
+        });
+        // Subscribe to real-time ticks after history
+        this.sendSubscribe(symbol);
+      }
+    }
+    
+    // Handle proposal response
+    if (data.proposal) {
+      const reqId = data.echo_req?.req_id;
+      const pending = this.pendingProposals.get(reqId);
+      if (pending) {
+        pending.resolve(data.proposal);
+        this.pendingProposals.delete(reqId);
+      }
+    }
+    
+    // Handle proposal open contract response
+    if (data.proposal_open_contract) {
+      const contract = data.proposal_open_contract;
+      const trade = this.openContracts.get(contract.contract_id);
+      if (trade) {
+        trade.entryTick = contract.entry_tick;
+        trade.entryTickTime = contract.entry_tick_time;
+        if (contract.exit_tick !== undefined) {
+          trade.exitTick = contract.exit_tick;
+          trade.exitTickTime = contract.exit_tick_time;
+          trade.profit = contract.profit;
+          trade.status = contract.profit > 0 ? 'won' : 'lost';
+          if (this.onTradeResultCallback) {
+            this.onTradeResultCallback(trade);
+          }
+          this.openContracts.delete(contract.contract_id);
+        }
+      }
+    }
+  }
+
+  private send(message: any) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message));
+    } else {
+      console.warn('WebSocket not open, message queued');
+      setTimeout(() => this.send(message), 1000);
+    }
+  }
+
+  sendSubscribe(symbol: string) {
+    this.subscriptions.add(symbol);
+    this.send({ ticks: symbol, subscribe: 1 });
+  }
+
+  fetchTickHistory(symbol: string, count: number = 1000) {
+    this.send({ ticks_history: symbol, count, end: 'latest', style: 'ticks' });
+  }
+
+  async placeTrade(
+    symbol: string,
+    amount: number,
+    contractType: string,
+    duration: number = 1,
+    durationUnit: string = 't'
+  ): Promise<any> {
+    const reqId = `proposal_${Date.now()}_${Math.random()}`;
+    const proposalRequest = {
+      proposal: 1,
+      amount,
+      basis: 'stake',
+      contract_type: contractType,
+      currency: 'USD',
+      duration,
+      duration_unit: durationUnit,
+      symbol,
+      req_id: reqId,
+    };
+    
+    return new Promise((resolve, reject) => {
+      this.pendingProposals.set(reqId, { resolve, reject, trade: {} as Trade });
+      this.send(proposalRequest);
+    });
+  }
+
+  async buyContract(proposalId: string, price: number): Promise<any> {
+    const buyRequest = {
+      buy: proposalId,
+      price,
+    };
+    return new Promise((resolve, reject) => {
+      const reqId = `buy_${Date.now()}`;
+      const handler = (msg: MessageEvent) => {
+        const data = JSON.parse(msg.data);
+        if (data.buy && data.echo_req?.buy === proposalId) {
+          this.ws?.removeEventListener('message', handler);
+          resolve(data.buy);
+        }
+        if (data.error && data.echo_req?.buy === proposalId) {
+          this.ws?.removeEventListener('message', handler);
+          reject(data.error);
+        }
+      };
+      this.ws?.addEventListener('message', handler);
+      this.send(buyRequest);
+    });
+  }
+
+  subscribeToContract(contractId: string, trade: Trade) {
+    this.openContracts.set(contractId, trade);
+    this.send({ proposal_open_contract: 1, contract_id: contractId, subscribe: 1 });
+  }
+
+  disconnect() {
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+  }
 }
 
-interface LogEntry {
-  id: number;
-  time: string;
-  type: 'INITIAL' | 'RECOVERY';
-  symbol: string;
-  contract: string;
-  stake: number;
-  step: number;
-  entryTick: number;
-  exitTick: number;
-  result: 'Win' | 'Loss';
-  pnl: number;
-  balance: number;
-  condition: string;
-}
-
-type BotStatus = 'idle' | 'scanning' | 'trading' | 'recovery';
-
-export default function ProScannerBot() {
-  const { isAuthorized, balance, activeAccount } = useAuth();
-  const { recordLoss } = useLossRequirement();
-  const location = useLocation();
-
-  // Configuration
-  const [initialTradeType, setInitialTradeType] = useState(1);
-  const [recoveryType, setRecoveryType] = useState(1);
-  const [stake, setStake] = useState('0.35');
-  const [martingaleOn, setMartingaleOn] = useState(false);
-  const [martingaleMultiplier, setMartingaleMultiplier] = useState('2');
-  const [martingaleMaxSteps, setMartingaleMaxSteps] = useState('3');
-  const [takeProfit, setTakeProfit] = useState('10');
-  const [stopLoss, setStopLoss] = useState('5');
-  const [turboMode, setTurboMode] = useState(false);
-
-  // Bot State
-  const [isRunning, setIsRunning] = useState(false);
-  const [botStatus, setBotStatus] = useState<BotStatus>('idle');
-  const [currentSymbol, setCurrentSymbol] = useState('');
-  const [wins, setWins] = useState(0);
-  const [losses, setLosses] = useState(0);
-  const [totalStaked, setTotalStaked] = useState(0);
-  const [netProfit, setNetProfit] = useState(0);
-  const [currentStake, setCurrentStake] = useState(0);
-  const [martingaleStep, setMartingaleStep] = useState(0);
-  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
-  const [activeDigits, setActiveDigits] = useState<number[]>([]);
-  const [lastTradeDetails, setLastTradeDetails] = useState<TradeDetails | null>(null);
+// ---------- Main Component ----------
+export default function TradingBot() {
+  // State
+  const [isBotActive, setIsBotActive] = useState(false);
+  const [initialType, setInitialType] = useState('over1_under8');
+  const [recoveryType, setRecoveryType] = useState('evenOdd_7');
+  const [stake, setStake] = useState(0.5);
+  const [takeProfit, setTakeProfit] = useState(5);
+  const [stopLoss, setStopLoss] = useState(30);
+  const [martingaleEnabled, setMartingaleEnabled] = useState(false);
+  const [selectedMarkets, setSelectedMarkets] = useState<string[]>(['R_25', 'R_50']);
+  const [balance, setBalance] = useState(1000);
+  const [wonTrades, setWonTrades] = useState(0);
+  const [lostTrades, setLostTrades] = useState(0);
+  const [activeTrades, setActiveTrades] = useState<Trade[]>([]);
+  const [tradeHistory, setTradeHistory] = useState<Trade[]>([]);
+  const [signals, setSignals] = useState<Signal[]>([]);
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [consecutiveLosses, setConsecutiveLosses] = useState(0);
+  const [currentStake, setCurrentStake] = useState(stake);
   
   // Refs
-  const runningRef = useRef(false);
-  const tickBuffersRef = useRef<Map<string, TickData[]>>(new Map());
-  const logIdRef = useRef(0);
-
-  // Initialize tick buffers
-  useEffect(() => {
-    if (!derivApi.isConnected) return;
-
-    const handleTick = (data: any) => {
-      if (!data.tick) return;
-      
-      const symbol = data.tick.symbol as string;
-      const digit = getLastDigit(data.tick.quote);
-      const tickData: TickData = {
-        digit,
-        quote: data.tick.quote,
-        timestamp: Date.now()
-      };
-      
-      if (!tickBuffersRef.current.has(symbol)) {
-        tickBuffersRef.current.set(symbol, []);
-      }
-      
-      const buffer = tickBuffersRef.current.get(symbol)!;
-      buffer.push(tickData);
-      
-      // Keep last 100 ticks
-      while (buffer.length > 100) buffer.shift();
-      
-      // Update active digits for current symbol
-      if (symbol === currentSymbol || (!currentSymbol && symbol === SCANNER_MARKETS[0].symbol)) {
-        const digits = buffer.slice(-8).map(t => t.digit);
-        setActiveDigits(digits);
-      }
-    };
-
-    const unsubscribe = derivApi.onMessage(handleTick);
-    
-    // Subscribe to all markets
-    SCANNER_MARKETS.forEach(market => {
-      derivApi.subscribeTicks(market.symbol as MarketSymbol, () => {}).catch(console.error);
-    });
-
-    return () => unsubscribe();
-  }, [currentSymbol]);
-
-  // Check initial trade condition
-  const checkInitialCondition = useCallback((digits: number[]): { shouldTrade: boolean; contractType: string; barrier: string; condition: string } | null => {
-    const config = INITIAL_TRADE_TYPES.find(t => t.id === initialTradeType);
-    if (!config || digits.length < config.window) return null;
-    
-    const lastDigits = digits.slice(-config.window);
-    const allUnderOver = lastDigits.every(d => d < config.over);
-    const allOverUnder = lastDigits.every(d => d > config.under);
-    
-    if (allUnderOver) {
-      return {
-        shouldTrade: true,
-        contractType: 'DIGITOVER',
-        barrier: config.over.toString(),
-        condition: `Last ${config.window} digits [${lastDigits.join(',')}] all < ${config.over} → OVER ${config.over}`
-      };
-    } else if (allOverUnder) {
-      return {
-        shouldTrade: true,
-        contractType: 'DIGITUNDER',
-        barrier: config.under.toString(),
-        condition: `Last ${config.window} digits [${lastDigits.join(',')}] all > ${config.under} → UNDER ${config.under}`
-      };
+  const ticksMap = useRef<Record<string, number[]>>({});
+  const wsManager = useRef<DerivWebSocketManager | null>(null);
+  const isProcessingTrade = useRef(false);
+  
+  // Market tick handler
+  const handleTick = useCallback((symbol: string, digit: number, price: number) => {
+    if (!ticksMap.current[symbol]) {
+      ticksMap.current[symbol] = [];
     }
+    const ticks = ticksMap.current[symbol];
+    if (ticks.length >= 2000) ticks.shift();
+    ticks.push(digit);
+    ticksMap.current[symbol] = [...ticks];
     
-    return null;
-  }, [initialTradeType]);
-
-  // Check recovery condition
-  const checkRecoveryCondition = useCallback((digits: number[]): { shouldTrade: boolean; contractType: string; barrier?: string; condition: string } | null => {
-    const config = RECOVERY_TYPES.find(t => t.id === recoveryType);
-    if (!config || digits.length < config.window) return null;
-    
-    const lastDigits = digits.slice(-config.window);
-    
-    if (config.type === 'evenodd') {
-      const allOdd = lastDigits.every(d => d % 2 === 1);
-      const allEven = lastDigits.every(d => d % 2 === 0);
+    // Generate signals from this tick update
+    const market = ALL_MARKETS.find(m => m.symbol === symbol);
+    if (market && ticks.length >= 1000) {
+      const overUnder = generateOverUnderSignals(market, ticks);
+      const riseFall = generateRiseFallSignals(market, ticks);
+      const evenOdd = generateEvenOddSignals(market, ticks);
+      const digitMatch = generateDigitMatchSignals(market, ticks);
+      const allSignals = [...overUnder, ...riseFall, ...evenOdd, ...digitMatch];
       
-      if (allOdd) {
-        return {
-          shouldTrade: true,
-          contractType: 'DIGITEVEN',
-          condition: `Last ${config.window} digits [${lastDigits.join(',')}] all odd → EVEN`
-        };
-      } else if (allEven) {
-        return {
-          shouldTrade: true,
-          contractType: 'DIGITODD',
-          condition: `Last ${config.window} digits [${lastDigits.join(',')}] all even → ODD`
-        };
-      }
-    } else if (config.type === 'overunder') {
-      const allUnderOver = lastDigits.every(d => d < config.over);
-      const allOverUnder = lastDigits.every(d => d > config.under);
-      
-      if (allUnderOver) {
-        return {
-          shouldTrade: true,
-          contractType: 'DIGITOVER',
-          barrier: config.over.toString(),
-          condition: `Last ${config.window} digits [${lastDigits.join(',')}] all < ${config.over} → OVER ${config.over}`
-        };
-      } else if (allOverUnder) {
-        return {
-          shouldTrade: true,
-          contractType: 'DIGITUNDER',
-          barrier: config.under.toString(),
-          condition: `Last ${config.window} digits [${lastDigits.join(',')}] all > ${config.under} → UNDER ${config.under}`
-        };
-      }
-    }
-    
-    return null;
-  }, [recoveryType]);
-
-  // Get contract details with proper tick information
-  const getContractDetails = useCallback(async (contractId: string): Promise<TradeDetails | null> => {
-    return new Promise((resolve) => {
-      let attempts = 0;
-      const maxAttempts = 20;
-      
-      const fetchContract = () => {
-        derivApi.sendMessage({
-          proposal_open_contract: 1,
-          contract_id: contractId,
-          subscribe: 1
-        }).catch(() => {});
-      };
-      
-      const unsubscribe = derivApi.onMessage((data: any) => {
-        if (data.proposal_open_contract && data.proposal_open_contract.contract_id === contractId) {
-          const contract = data.proposal_open_contract;
-          
-          // Check if contract is sold/closed
-          if (contract.is_sold === 1 || contract.status === 'sold') {
-            unsubscribe();
-            resolve({
-              entry_tick: contract.entry_tick || 0,
-              exit_tick: contract.exit_tick || 0,
-              entry_tick_time: contract.entry_tick_time || 0,
-              exit_tick_time: contract.exit_tick_time || 0,
-              profit: contract.profit || 0,
-              buy_price: contract.buy_price || 0,
-              sell_price: contract.sell_price || 0
-            });
-          } else if (attempts >= maxAttempts) {
-            unsubscribe();
-            resolve(null);
-          } else {
-            attempts++;
-            setTimeout(fetchContract, 1000);
-          }
-        }
+      setSignals(prev => {
+        const newSignals = allSignals.map((s, idx) => ({
+          ...s,
+          id: `${s.market.symbol}-${s.type}-${Date.now()}-${idx}`,
+          timestamp: Date.now(),
+          priority: idx + 1,
+        }));
+        return [...newSignals, ...prev].slice(0, 30);
       });
+    }
+  }, []);
+  
+  // Trade result handler
+  const handleTradeResult = useCallback((trade: Trade) => {
+    setActiveTrades(prev => prev.filter(t => t.id !== trade.id));
+    setTradeHistory(prev => [trade, ...prev].slice(0, 50));
+    
+    if (trade.status === 'won') {
+      setWonTrades(prev => prev + 1);
+      setBalance(prev => prev + trade.profit);
+      setConsecutiveLosses(0);
+      setRecoveryMode(false);
+      setCurrentStake(stake);
+      toast.success(`Trade WON! Profit: $${trade.profit.toFixed(2)}`);
+    } else if (trade.status === 'lost') {
+      setLostTrades(prev => prev + 1);
+      setBalance(prev => prev + trade.profit); // profit is negative
+      setConsecutiveLosses(prev => prev + 1);
       
-      fetchContract();
+      if (martingaleEnabled) {
+        setRecoveryMode(true);
+        const newStake = currentStake * 2;
+        setCurrentStake(newStake);
+        toast.info(`Trade LOST. Entering recovery mode with stake $${newStake.toFixed(2)}`);
+      } else {
+        toast.error(`Trade LOST! Loss: $${Math.abs(trade.profit).toFixed(2)}`);
+      }
+    }
+    
+    isProcessingTrade.current = false;
+  }, [stake, martingaleEnabled, currentStake]);
+  
+  // Check and execute trades
+  const checkAndExecuteTrade = useCallback(async () => {
+    if (!isBotActive || isProcessingTrade.current) return;
+    
+    for (const symbol of selectedMarkets) {
+      const ticks = ticksMap.current[symbol];
+      if (!ticks || ticks.length < 7) continue;
       
-      // Timeout after 30 seconds
-      setTimeout(() => {
-        unsubscribe();
-        resolve(null);
-      }, 30000);
+      let shouldTrade = false;
+      let tradeType = '';
+      
+      if (!recoveryMode) {
+        const result = evaluateInitialCondition(ticks, initialType);
+        if (result.shouldTrade) {
+          shouldTrade = true;
+          tradeType = result.type!;
+        }
+      } else {
+        const result = evaluateRecoveryCondition(ticks, recoveryType);
+        if (result.shouldTrade) {
+          shouldTrade = true;
+          tradeType = result.type!;
+        }
+      }
+      
+      if (shouldTrade && wsManager.current) {
+        isProcessingTrade.current = true;
+        
+        // Map trade type to contract type
+        let contractType = '';
+        if (tradeType.includes('over')) contractType = 'CALL';
+        else if (tradeType.includes('under')) contractType = 'PUT';
+        else if (tradeType === 'rise') contractType = 'CALL';
+        else if (tradeType === 'fall') contractType = 'PUT';
+        else if (tradeType === 'even') contractType = 'CALL';
+        else if (tradeType === 'odd') contractType = 'PUT';
+        else contractType = 'CALL';
+        
+        try {
+          const proposal = await wsManager.current.placeTrade(symbol, currentStake, contractType, 1, 't');
+          if (proposal && proposal.id) {
+            const buyResult = await wsManager.current.buyContract(proposal.id, proposal.ask_price);
+            const newTrade: Trade = {
+              id: buyResult.contract_id,
+              market: ALL_MARKETS.find(m => m.symbol === symbol)!,
+              type: tradeType,
+              entryPrice: buyResult.longcode ? parseFloat(buyResult.longcode.match(/\d+\.\d+/)?.[0] || '0') : 0,
+              stake: currentStake,
+              status: 'open',
+              profit: 0,
+              entryTick: 0,
+              entryTickTime: Date.now(),
+              contractId: buyResult.contract_id,
+            };
+            setActiveTrades(prev => [...prev, newTrade]);
+            wsManager.current.subscribeToContract(buyResult.contract_id, newTrade);
+            toast.info(`Trade executed: ${tradeType} on ${symbol} with stake $${currentStake}`);
+          }
+        } catch (error) {
+          console.error('Trade execution error:', error);
+          isProcessingTrade.current = false;
+        }
+      }
+    }
+  }, [isBotActive, recoveryMode, initialType, recoveryType, selectedMarkets, currentStake]);
+  
+  // Auto-scan and trade interval
+  useEffect(() => {
+    if (!isBotActive) return;
+    
+    const interval = setInterval(() => {
+      checkAndExecuteTrade();
+    }, 2000);
+    
+    return () => clearInterval(interval);
+  }, [isBotActive, checkAndExecuteTrade]);
+  
+  // Initialize WebSocket connection
+  useEffect(() => {
+    wsManager.current = new DerivWebSocketManager({
+      onTick: handleTick,
+      onTradeResult: handleTradeResult,
+      appId: 1089,
     });
-  }, []);
-
-  // Execute a single trade
-  const executeTrade = useCallback(async (
-    symbol: string,
-    contractType: string,
-    barrier: string | undefined,
-    stakeAmount: number,
-    step: number,
-    condition: string,
-    isRecovery: boolean
-  ): Promise<{ success: boolean; pnl: number; details: TradeDetails | null }> => {
-    const logId = ++logIdRef.current;
-    const now = new Date().toLocaleTimeString();
     
-    setTotalStaked(prev => prev + stakeAmount);
-    setCurrentStake(stakeAmount);
+    // Fetch initial history for selected markets
+    selectedMarkets.forEach(symbol => {
+      wsManager.current?.fetchTickHistory(symbol, 1000);
+    });
     
-    // Add pending log
-    setLogEntries(prev => [{
-      id: logId,
-      time: now,
-      type: isRecovery ? 'RECOVERY' : 'INITIAL',
-      symbol,
-      contract: contractType,
-      stake: stakeAmount,
-      step,
-      entryTick: 0,
-      exitTick: 0,
-      result: 'Win',
-      pnl: 0,
-      balance: balance + netProfit,
-      condition
-    }, ...prev].slice(0, 100));
-    
-    try {
-      // Wait for next tick if not in turbo mode
-      if (!turboMode) {
-        await new Promise<void>((resolve) => {
-          const unsubscribe = derivApi.onMessage((data: any) => {
-            if (data.tick && data.tick.symbol === symbol) {
-              unsubscribe();
-              resolve();
-            }
-          });
-        });
-      }
-      
-      // Prepare buy parameters
-      const buyParams: any = {
-        contract_type: contractType,
-        symbol: symbol,
-        duration: 1,
-        duration_unit: 't',
-        basis: 'stake',
-        amount: stakeAmount,
-      };
-      
-      if (barrier && (contractType === 'DIGITOVER' || contractType === 'DIGITUNDER')) {
-        buyParams.barrier = barrier;
-      }
-      
-      // Buy contract
-      const { contractId } = await derivApi.buyContract(buyParams);
-      
-      // Wait for contract result
-      const result = await derivApi.waitForContractResult(contractId);
-      const won = result.status === 'won';
-      const pnl = result.profit;
-      
-      // Get detailed contract info
-      const details = await getContractDetails(contractId);
-      
-      // Update log entry
-      setLogEntries(prev => prev.map(entry => 
-        entry.id === logId ? {
-          ...entry,
-          entryTick: details?.entry_tick || 0,
-          exitTick: details?.exit_tick || 0,
-          result: won ? 'Win' : 'Loss',
-          pnl,
-          balance: balance + netProfit + pnl
-        } : entry
-      ));
-      
-      setLastTradeDetails(details);
-      
-      return { success: won, pnl, details };
-    } catch (error: any) {
-      console.error('Trade error:', error);
-      
-      // Update log with error
-      setLogEntries(prev => prev.map(entry => 
-        entry.id === logId ? {
-          ...entry,
-          result: 'Loss',
-          pnl: 0,
-          condition: `Error: ${error.message}`
-        } : entry
-      ));
-      
-      return { success: false, pnl: 0, details: null };
-    }
-  }, [turboMode, balance, netProfit, getContractDetails]);
-
-  // Find symbol matching condition
-  const findMatchingSymbol = useCallback((
-    checkFn: (digits: number[]) => { shouldTrade: boolean } | null
-  ): { symbol: string; condition: any } | null => {
-    for (const market of SCANNER_MARKETS) {
-      const buffer = tickBuffersRef.current.get(market.symbol);
-      if (buffer && buffer.length > 0) {
-        const digits = buffer.map(t => t.digit);
-        const result = checkFn(digits);
-        if (result?.shouldTrade) {
-          return { symbol: market.symbol, condition: result };
-        }
-      }
-    }
-    return null;
-  }, []);
-
-  // Main bot loop
-  const startBot = useCallback(async () => {
-    if (!isAuthorized || isRunning) {
-      toast.error('Please connect your account first');
+    return () => {
+      wsManager.current?.disconnect();
+    };
+  }, [selectedMarkets]);
+  
+  // Start bot
+  const startBot = () => {
+    if (selectedMarkets.length === 0) {
+      toast.error('Please select at least one market');
       return;
     }
-    
-    const baseStake = parseFloat(stake);
-    if (baseStake < 0.35) {
-      toast.error('Minimum stake is $0.35');
-      return;
-    }
-    
-    setIsRunning(true);
-    runningRef.current = true;
-    setBotStatus('scanning');
-    
-    let currentStakeAmount = baseStake;
-    let currentStep = 0;
-    let currentPnl = 0;
-    let inRecovery = false;
-    
-    while (runningRef.current) {
-      setBotStatus(inRecovery ? 'recovery' : 'scanning');
-      
-      // Find matching symbol and condition
-      let match: { symbol: string; condition: any } | null = null;
-      
-      if (!inRecovery) {
-        match = findMatchingSymbol((digits) => checkInitialCondition(digits));
-      } else {
-        match = findMatchingSymbol((digits) => checkRecoveryCondition(digits));
-      }
-      
-      if (match) {
-        setCurrentSymbol(match.symbol);
-        setBotStatus('trading');
-        
-        const { success, pnl, details } = await executeTrade(
-          match.symbol,
-          match.condition.contractType,
-          match.condition.barrier,
-          currentStakeAmount,
-          currentStep,
-          match.condition.condition,
-          inRecovery
-        );
-        
-        currentPnl += pnl;
-        setNetProfit(currentPnl);
-        
-        if (success) {
-          setWins(prev => prev + 1);
-          currentStep = 0;
-          currentStakeAmount = baseStake;
-          inRecovery = false;
-        } else {
-          setLosses(prev => prev + 1);
-          
-          // Record loss for virtual trading
-          if (activeAccount?.is_virtual) {
-            recordLoss(currentStakeAmount, match.symbol, 6000);
-          }
-          
-          if (!inRecovery) {
-            // Switch to recovery mode
-            inRecovery = true;
-            toast.info('Loss detected - Switching to recovery mode');
-          } else if (martingaleOn && currentStep < parseInt(martingaleMaxSteps)) {
-            // Increase stake for martingale
-            const multiplier = parseFloat(martingaleMultiplier);
-            currentStakeAmount = parseFloat((currentStakeAmount * multiplier).toFixed(2));
-            currentStep++;
-            setMartingaleStep(currentStep);
-            toast.info(`Martingale step ${currentStep} - Stake increased to $${currentStakeAmount}`);
-          } else {
-            // Reset after max steps
-            currentStep = 0;
-            currentStakeAmount = baseStake;
-            inRecovery = false;
-          }
-        }
-        
-        setCurrentStake(currentStakeAmount);
-        setMartingaleStep(currentStep);
-        
-        // Check TP/SL
-        if (currentPnl >= parseFloat(takeProfit)) {
-          toast.success(`🎯 Take Profit reached! +$${currentPnl.toFixed(2)}`);
-          break;
-        }
-        if (currentPnl <= -parseFloat(stopLoss)) {
-          toast.error(`🛑 Stop Loss reached! $${currentPnl.toFixed(2)}`);
-          break;
-        }
-        
-        // Small delay between trades
-        if (!turboMode) {
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
-      } else {
-        // No condition met, wait for ticks
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
-    
-    setIsRunning(false);
-    runningRef.current = false;
-    setBotStatus('idle');
-  }, [isAuthorized, isRunning, stake, initialTradeType, recoveryType, martingaleOn, 
-      martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, turboMode, 
-      activeAccount, recordLoss, findMatchingSymbol, checkInitialCondition, 
-      checkRecoveryCondition, executeTrade]);
-
-  const stopBot = useCallback(() => {
-    runningRef.current = false;
-    setIsRunning(false);
-    setBotStatus('idle');
+    setIsBotActive(true);
+    setRecoveryMode(false);
+    setConsecutiveLosses(0);
+    setCurrentStake(stake);
+    toast.success('Bot started!');
+  };
+  
+  // Stop bot
+  const stopBot = () => {
+    setIsBotActive(false);
     toast.info('Bot stopped');
-  }, []);
-
-  const clearLog = useCallback(() => {
-    setLogEntries([]);
-    setWins(0);
-    setLosses(0);
-    setTotalStaked(0);
-    setNetProfit(0);
-    setMartingaleStep(0);
-    setLastTradeDetails(null);
-  }, []);
-
-  const winRate = wins + losses > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '0';
-
+  };
+  
+  // Market selection handler
+  const handleMarketToggle = (symbol: string) => {
+    setSelectedMarkets(prev => {
+      if (prev.includes(symbol)) {
+        return prev.filter(s => s !== symbol);
+      } else {
+        return [...prev, symbol];
+      }
+    });
+  };
+  
+  // UI Helpers
+  const getSignalTypeColor = (type: SignalType) => {
+    if (type === 'over_4') return 'text-emerald-400';
+    if (type === 'under_5') return 'text-rose-400';
+    if (type === 'rise') return 'text-emerald-400';
+    if (type === 'fall') return 'text-rose-400';
+    if (type === 'even') return 'text-sky-400';
+    if (type === 'odd') return 'text-amber-400';
+    return 'text-purple-400';
+  };
+  
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background to-background/95 p-4">
-      <div className="max-w-7xl mx-auto space-y-4">
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+      <div className="container mx-auto px-4 py-6 max-w-7xl">
         {/* Header */}
-        <div className="bg-card border border-border rounded-xl p-4">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-3">
-              <div className="bg-primary/10 p-2 rounded-lg">
-                <Scan className="w-6 h-6 text-primary" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold">Pro Scanner Bot</h1>
-                <p className="text-xs text-muted-foreground">Auto-scan & trade across all markets</p>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-4">
-              <div className="text-right">
-                <div className="text-xs text-muted-foreground">Balance</div>
-                <div className="font-mono text-xl font-bold">${balance.toFixed(2)}</div>
-              </div>
-              <div className="text-right">
-                <div className="text-xs text-muted-foreground">P/L</div>
-                <div className={`font-mono text-xl font-bold ${netProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                  {netProfit >= 0 ? '+' : ''}{netProfit.toFixed(2)}
-                </div>
-              </div>
-              <Badge className={`text-sm px-3 py-1 ${
-                botStatus === 'idle' ? 'bg-muted' :
-                botStatus === 'scanning' ? 'bg-blue-500' :
-                botStatus === 'trading' ? 'bg-green-500' :
-                'bg-purple-500'
-              }`}>
-                {botStatus.toUpperCase()}
-              </Badge>
-            </div>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+          <div>
+            <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+              Deriv Trading Bot
+            </h1>
+            <p className="text-slate-400 text-sm">Automated trading with last digit pattern analysis</p>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              onClick={isBotActive ? stopBot : startBot}
+              className={`gap-2 ${isBotActive ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+            >
+              {isBotActive ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+              {isBotActive ? 'STOP BOT' : 'START BOT'}
+            </Button>
           </div>
         </div>
-
-        <div className="grid lg:grid-cols-12 gap-4">
-          {/* Left Panel - Configuration */}
-          <div className="lg:col-span-5 space-y-4">
-            {/* Initial Trade Type */}
-            <div className="bg-card border-2 border-green-500/30 rounded-xl p-4">
-              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-green-500" />
-                Initial Trade
-              </h2>
-              <div className="space-y-2">
-                {INITIAL_TRADE_TYPES.map(type => (
-                  <label key={type.id} className="flex items-start gap-3 p-3 rounded-lg hover:bg-muted/50 cursor-pointer border border-transparent hover:border-border transition-all">
-                    <input
-                      type="radio"
-                      name="initialTrade"
-                      checked={initialTradeType === type.id}
-                      onChange={() => setInitialTradeType(type.id)}
-                      disabled={isRunning}
-                      className="mt-1"
-                    />
-                    <div className="flex-1">
-                      <div className="font-medium">{type.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        Last {type.window} digits all &lt; {type.over} → OVER {type.over} | 
-                        All &gt; {type.under} → UNDER {type.under}
-                      </div>
-                    </div>
-                  </label>
-                ))}
+        
+        {/* Stats Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <Card className="bg-slate-900/50 border-slate-800">
+            <CardContent className="p-4">
+              <div className="text-slate-400 text-sm">Balance</div>
+              <div className={`text-2xl font-bold ${balance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                ${balance.toFixed(2)}
               </div>
-            </div>
-
-            {/* Recovery Type */}
-            <div className="bg-card border-2 border-purple-500/30 rounded-xl p-4">
-              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                <RefreshCw className="w-5 h-5 text-purple-500" />
-                Recovery Mode
+            </CardContent>
+          </Card>
+          <Card className="bg-slate-900/50 border-slate-800">
+            <CardContent className="p-4">
+              <div className="text-slate-400 text-sm">Won Trades</div>
+              <div className="text-2xl font-bold text-emerald-400">{wonTrades}</div>
+            </CardContent>
+          </Card>
+          <Card className="bg-slate-900/50 border-slate-800">
+            <CardContent className="p-4">
+              <div className="text-slate-400 text-sm">Lost Trades</div>
+              <div className="text-2xl font-bold text-rose-400">{lostTrades}</div>
+            </CardContent>
+          </Card>
+          <Card className="bg-slate-900/50 border-slate-800">
+            <CardContent className="p-4">
+              <div className="text-slate-400 text-sm">Active Trades</div>
+              <div className="text-2xl font-bold text-blue-400">{activeTrades.length}</div>
+            </CardContent>
+          </Card>
+        </div>
+        
+        {/* Configuration Panel */}
+        <div className="grid md:grid-cols-2 gap-6 mb-6">
+          <Card className="bg-slate-900/50 border-slate-800">
+            <CardContent className="p-4">
+              <h2 className="font-semibold mb-4 flex items-center gap-2">
+                <Target className="w-4 h-4 text-blue-400" />
+                Initial Trade Settings
               </h2>
-              <div className="space-y-2">
-                {RECOVERY_TYPES.map(type => (
-                  <label key={type.id} className="flex items-start gap-3 p-3 rounded-lg hover:bg-muted/50 cursor-pointer border border-transparent hover:border-border transition-all">
-                    <input
-                      type="radio"
-                      name="recoveryType"
-                      checked={recoveryType === type.id}
-                      onChange={() => setRecoveryType(type.id)}
-                      disabled={isRunning}
-                      className="mt-1"
-                    />
-                    <div className="flex-1">
-                      <div className="font-medium">{type.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {type.type === 'evenodd' 
-                          ? `Last ${type.window} digits all odd → EVEN | All even → ODD`
-                          : `Last ${type.window} digits all < ${type.over} → OVER ${type.over} | All > ${type.under} → UNDER ${type.under}`
-                        }
-                      </div>
-                    </div>
-                  </label>
-                ))}
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm text-slate-400 block mb-1">Initial Trade Type</label>
+                  <Select value={initialType} onValueChange={setInitialType}>
+                    <SelectTrigger className="bg-slate-800 border-slate-700">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="over1_under8">Over 1 / Under 8 (last 2 digits)</SelectItem>
+                      <SelectItem value="over2_under7">Over 2 / Under 7 (last 3 digits)</SelectItem>
+                      <SelectItem value="over3_under6">Over 3 / Under 6 (last 4 digits)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-sm text-slate-400 block mb-1">Recovery Type</label>
+                  <Select value={recoveryType} onValueChange={setRecoveryType}>
+                    <SelectTrigger className="bg-slate-800 border-slate-700">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="evenOdd_7">Even/Odd pattern (last 7)</SelectItem>
+                      <SelectItem value="evenOdd_6">Even/Odd pattern (last 6)</SelectItem>
+                      <SelectItem value="overUnder_7">Over/Under pattern (last 7)</SelectItem>
+                      <SelectItem value="overUnder_6">Over/Under pattern (last 6)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-            </div>
-
-            {/* Risk Settings */}
-            <div className="bg-card border border-border rounded-xl p-4">
-              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                <Shield className="w-5 h-5" />
+            </CardContent>
+          </Card>
+          
+          <Card className="bg-slate-900/50 border-slate-800">
+            <CardContent className="p-4">
+              <h2 className="font-semibold mb-4 flex items-center gap-2">
+                <Shield className="w-4 h-4 text-purple-400" />
                 Risk Management
               </h2>
-              
-              <div className="grid grid-cols-2 gap-3 mb-3">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Stake ($)</label>
+                  <label className="text-sm text-slate-400 block mb-1">Stake ($)</label>
                   <Input
                     type="number"
-                    min="0.35"
-                    step="0.01"
                     value={stake}
-                    onChange={e => setStake(e.target.value)}
-                    disabled={isRunning}
+                    onChange={(e) => setStake(parseFloat(e.target.value) || 0)}
+                    className="bg-slate-800 border-slate-700"
+                    step={0.1}
+                    min={0.1}
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Take Profit ($)</label>
+                  <label className="text-sm text-slate-400 block mb-1">Take Profit ($)</label>
                   <Input
                     type="number"
                     value={takeProfit}
-                    onChange={e => setTakeProfit(e.target.value)}
-                    disabled={isRunning}
+                    onChange={(e) => setTakeProfit(parseFloat(e.target.value) || 0)}
+                    className="bg-slate-800 border-slate-700"
                   />
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Stop Loss ($)</label>
+                  <label className="text-sm text-slate-400 block mb-1">Stop Loss ($)</label>
                   <Input
                     type="number"
                     value={stopLoss}
-                    onChange={e => setStopLoss(e.target.value)}
-                    disabled={isRunning}
+                    onChange={(e) => setStopLoss(parseFloat(e.target.value) || 0)}
+                    className="bg-slate-800 border-slate-700"
                   />
                 </div>
-                <div className="flex items-center justify-between">
-                  <label className="text-sm">Turbo Mode</label>
-                  <Switch checked={turboMode} onCheckedChange={setTurboMode} disabled={isRunning} />
+                <div className="flex items-center justify-between pt-2">
+                  <label className="text-sm text-slate-400">Martingale</label>
+                  <Button
+                    variant={martingaleEnabled ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setMartingaleEnabled(!martingaleEnabled)}
+                    className={martingaleEnabled ? "bg-blue-600" : ""}
+                  >
+                    {martingaleEnabled ? "ON" : "OFF"}
+                  </Button>
                 </div>
               </div>
-              
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-sm">Martingale</label>
-                <Switch checked={martingaleOn} onCheckedChange={setMartingaleOn} disabled={isRunning} />
-              </div>
-              
-              {martingaleOn && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Multiplier</label>
-                    <Input
-                      type="number"
-                      min="1.1"
-                      step="0.1"
-                      value={martingaleMultiplier}
-                      onChange={e => setMartingaleMultiplier(e.target.value)}
-                      disabled={isRunning}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground block mb-1">Max Steps</label>
-                    <Input
-                      type="number"
-                      min="1"
-                      max="10"
-                      value={martingaleMaxSteps}
-                      onChange={e => setMartingaleMaxSteps(e.target.value)}
-                      disabled={isRunning}
-                    />
-                  </div>
+              {recoveryMode && (
+                <div className="mt-4 p-2 bg-amber-500/20 border border-amber-500/30 rounded-lg">
+                  <p className="text-amber-400 text-sm flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    RECOVERY MODE ACTIVE - Stake: ${currentStake.toFixed(2)}
+                  </p>
                 </div>
               )}
-            </div>
-
-            {/* Control Buttons */}
-            <div className="grid grid-cols-2 gap-3">
-              <Button
-                onClick={startBot}
-                disabled={isRunning || !isAuthorized}
-                className="h-12 bg-green-500 hover:bg-green-600 text-white"
-              >
-                <Play className="w-4 h-4 mr-2" />
-                START BOT
-              </Button>
-              <Button
-                onClick={stopBot}
-                disabled={!isRunning}
-                variant="destructive"
-                className="h-12"
-              >
-                <StopCircle className="w-4 h-4 mr-2" />
-                STOP
-              </Button>
-            </div>
-          </div>
-
-          {/* Right Panel - Live Data */}
-          <div className="lg:col-span-7 space-y-4">
-            {/* Live Digits */}
-            <div className="bg-card border border-border rounded-xl p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-semibold">Live Digits</h2>
-                <Badge variant="outline" className="text-sm">
-                  Win Rate: {winRate}%
-                </Badge>
-              </div>
-              <div className="flex gap-2 justify-center flex-wrap">
-                {activeDigits.length === 0 ? (
-                  <div className="text-center text-muted-foreground py-8">
-                    Waiting for market data...
-                  </div>
-                ) : activeDigits.map((digit, i) => {
-                  const isOver = digit >= 5;
-                  const isEven = digit % 2 === 0;
-                  const isLast = i === activeDigits.length - 1;
-                  return (
-                    <div
-                      key={i}
-                      className={`w-14 h-16 rounded-lg flex flex-col items-center justify-center border-2 transition-all ${
-                        isLast ? 'ring-2 ring-primary scale-105' : ''
-                      } ${isOver ? 'bg-red-500/10 border-red-500/50' : 'bg-green-500/10 border-green-500/50'}`}
-                    >
-                      <span className="text-2xl font-mono font-bold">{digit}</span>
-                      <span className="text-[10px] mt-1">
-                        {isOver ? 'OVER' : 'UNDER'} | {isEven ? 'EVEN' : 'ODD'}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-              {currentSymbol && (
-                <div className="text-center text-xs text-muted-foreground mt-3">
-                  Current Market: {currentSymbol}
-                </div>
-              )}
-            </div>
-
-            {/* Stats Cards */}
-            <div className="grid grid-cols-4 gap-3">
-              <div className="bg-card border border-border rounded-lg p-3 text-center">
-                <div className="text-xs text-muted-foreground">Total Trades</div>
-                <div className="text-2xl font-bold">{wins + losses}</div>
-              </div>
-              <div className="bg-card border border-border rounded-lg p-3 text-center">
-                <div className="text-xs text-muted-foreground">Wins</div>
-                <div className="text-2xl font-bold text-green-500">{wins}</div>
-              </div>
-              <div className="bg-card border border-border rounded-lg p-3 text-center">
-                <div className="text-xs text-muted-foreground">Losses</div>
-                <div className="text-2xl font-bold text-red-500">{losses}</div>
-              </div>
-              <div className="bg-card border border-border rounded-lg p-3 text-center">
-                <div className="text-xs text-muted-foreground">Total Staked</div>
-                <div className="text-2xl font-bold">${totalStaked.toFixed(2)}</div>
-              </div>
-            </div>
-
-            {/* Last Trade Details */}
-            {lastTradeDetails && (
-              <div className="bg-card border border-primary/30 rounded-xl p-4">
-                <h3 className="text-sm font-semibold mb-2">Last Trade Details</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <div>
-                    <div className="text-xs text-muted-foreground">Entry Tick</div>
-                    <div className="font-mono text-lg font-bold">{lastTradeDetails.entry_tick || 'N/A'}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">Exit Tick</div>
-                    <div className="font-mono text-lg font-bold">{lastTradeDetails.exit_tick || 'N/A'}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">Entry Price</div>
-                    <div className="font-mono text-lg font-bold">${lastTradeDetails.buy_price?.toFixed(2) || 'N/A'}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">Exit Price</div>
-                    <div className="font-mono text-lg font-bold">${lastTradeDetails.sell_price?.toFixed(2) || 'N/A'}</div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Activity Log */}
-            <div className="bg-card border border-border rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-                <h2 className="text-lg font-semibold">Activity Log</h2>
-                <Button variant="ghost" size="sm" onClick={clearLog}>
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="max-h-[400px] overflow-auto">
-                {logEntries.length === 0 ? (
-                  <div className="text-center text-muted-foreground py-12">
-                    No trades yet. Start the bot to begin trading.
-                  </div>
-                ) : (
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50 sticky top-0">
-                      <tr>
-                        <th className="text-left p-3">Time</th>
-                        <th className="text-left p-3">Type</th>
-                        <th className="text-left p-3">Symbol</th>
-                        <th className="text-right p-3">Stake</th>
-                        <th className="text-center p-3">Result</th>
-                        <th className="text-right p-3">P/L</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {logEntries.map(entry => (
-                        <tr key={entry.id} className="border-t border-border/50 hover:bg-muted/30">
-                          <td className="p-3 font-mono text-xs">{entry.time}</td>
-                          <td className="p-3">
-                            <Badge variant={entry.type === 'INITIAL' ? 'default' : 'secondary'} className="text-xs">
-                              {entry.type}
-                            </Badge>
-                          </td>
-                          <td className="p-3 font-mono text-xs">{entry.symbol}</td>
-                          <td className="p-3 text-right font-mono">
-                            ${entry.stake.toFixed(2)}
-                            {entry.step > 0 && <span className="text-orange-500 ml-1">M{entry.step}</span>}
-                          </td>
-                          <td className="p-3 text-center">
-                            <Badge className={entry.result === 'Win' ? 'bg-green-500' : 'bg-red-500'}>
-                              {entry.result}
-                            </Badge>
-                          </td>
-                          <td className={`p-3 text-right font-mono font-bold ${entry.pnl >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                            {entry.pnl >= 0 ? '+' : ''}{entry.pnl.toFixed(2)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         </div>
+        
+        {/* Market Selection */}
+        <Card className="bg-slate-900/50 border-slate-800 mb-6">
+          <CardContent className="p-4">
+            <h2 className="font-semibold mb-3 flex items-center gap-2">
+              <Layers className="w-4 h-4 text-emerald-400" />
+              Select Markets
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              {ALL_MARKETS.slice(0, 10).map(market => (
+                <Button
+                  key={market.symbol}
+                  variant={selectedMarkets.includes(market.symbol) ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => handleMarketToggle(market.symbol)}
+                  className={`text-xs ${selectedMarkets.includes(market.symbol) ? 'bg-blue-600' : ''}`}
+                >
+                  {market.name}
+                  {market.recommended && <Star className="w-3 h-3 ml-1 text-yellow-400" />}
+                </Button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+        
+        {/* Active Trades */}
+        {activeTrades.length > 0 && (
+          <Card className="bg-slate-900/50 border-slate-800 mb-6">
+            <CardContent className="p-4">
+              <h2 className="font-semibold mb-3 flex items-center gap-2">
+                <Activity className="w-4 h-4 text-green-400" />
+                Active Trades
+              </h2>
+              <div className="space-y-2">
+                {activeTrades.map(trade => (
+                  <div key={trade.id} className="flex items-center justify-between p-2 bg-slate-800/50 rounded-lg">
+                    <div>
+                      <div className="font-mono text-sm">{trade.market.name}</div>
+                      <div className="text-xs text-slate-400">{trade.type}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm">Stake: ${trade.stake}</div>
+                      <div className="text-xs text-yellow-400">Open</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        
+        {/* Signals Panel */}
+        <Card className="bg-slate-900/50 border-slate-800">
+          <CardContent className="p-4">
+            <h2 className="font-semibold mb-3 flex items-center gap-2">
+              <Signal className="w-4 h-4 text-purple-400" />
+              Live Signals
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
+              {signals.slice(0, 12).map(signal => (
+                <div key={signal.id} className="p-2 bg-slate-800/50 rounded-lg border border-slate-700">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="font-mono text-xs">{signal.market.name}</span>
+                      <div className={`text-sm font-bold ${getSignalTypeColor(signal.type)}`}>
+                        {signal.entryPrice}
+                      </div>
+                    </div>
+                    <Badge className={`text-[9px] ${
+                      signal.strength === 'critical' ? 'bg-red-500/20 text-red-400' :
+                      signal.strength === 'strong' ? 'bg-emerald-500/20 text-emerald-400' :
+                      'bg-amber-500/20 text-amber-400'
+                    }`}>
+                      {signal.strength}
+                    </Badge>
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-1 line-clamp-2">{signal.conditionMet}</div>
+                  <div className="text-[9px] text-slate-500 mt-1">
+                    Conf: {signal.confidence}%
+                  </div>
+                </div>
+              ))}
+              {signals.length === 0 && (
+                <div className="col-span-full text-center py-8 text-slate-500">
+                  Waiting for market data...
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+        
+        {/* Trade History */}
+        {tradeHistory.length > 0 && (
+          <Card className="bg-slate-900/50 border-slate-800 mt-6">
+            <CardContent className="p-4">
+              <h2 className="font-semibold mb-3 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-slate-400" />
+                Trade History
+              </h2>
+              <div className="max-h-64 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-slate-400 border-b border-slate-700">
+                    <tr>
+                      <th className="text-left py-2">Market</th>
+                      <th className="text-left">Type</th>
+                      <th className="text-right">Stake</th>
+                      <th className="text-right">Profit</th>
+                      <th className="text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tradeHistory.slice(0, 20).map(trade => (
+                      <tr key={trade.id} className="border-b border-slate-800">
+                        <td className="py-2">{trade.market.name}</td>
+                        <td>{trade.type}</td>
+                        <td className="text-right">${trade.stake.toFixed(2)}</td>
+                        <td className={`text-right ${trade.profit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {trade.profit >= 0 ? '+' : ''}{trade.profit.toFixed(2)}
+                        </td>
+                        <td className="text-right">
+                          <Badge className={trade.status === 'won' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}>
+                            {trade.status.toUpperCase()}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
