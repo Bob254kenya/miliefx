@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react'; 
+import { useState, useRef, useCallback, useEffect } from 'react'; 
 import { useLocation } from 'react-router-dom';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { copyTradingService } from '@/services/copy-trading-service';
@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import {
   Play, StopCircle, Trash2, Scan,
-  Home, RefreshCw, Shield, TrendingUp
+  Home, RefreshCw, Shield, TrendingUp, DollarSign
 } from 'lucide-react';
 
 const SCANNER_MARKETS: { symbol: string; name: string }[] = [
@@ -55,10 +55,26 @@ interface LogEntry {
   switchInfo: string;
 }
 
+interface DetectedPattern {
+  symbol: string;
+  name: string;
+  patternType: string;
+  timestamp: number;
+  digits: number[];
+}
+
 function waitForNextTick(symbol: string): Promise<{ quote: number }> {
   return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      unsub();
+      resolve({ quote: 0 });
+    }, 5000);
     const unsub = derivApi.onMessage((data: any) => {
-      if (data.tick && data.tick.symbol === symbol) { unsub(); resolve({ quote: data.tick.quote }); }
+      if (data.tick && data.tick.symbol === symbol) { 
+        clearTimeout(timeout);
+        unsub(); 
+        resolve({ quote: data.tick.quote }); 
+      }
     });
   });
 }
@@ -66,7 +82,6 @@ function waitForNextTick(symbol: string): Promise<{ quote: number }> {
 export default function ProScannerBot() {
   const { isAuthorized, balance, activeAccount } = useAuth();
   const { recordLoss } = useLossRequirement();
-  const location = useLocation();
 
   /* ── Market 1 config ── */
   const [m1Enabled, setM1Enabled] = useState(true);
@@ -90,6 +105,9 @@ export default function ProScannerBot() {
 
   /* ── Scanner ── */
   const [scannerActive, setScannerActive] = useState(true);
+  
+  /* ── Detected Patterns for Display ── */
+  const [detectedPatterns, setDetectedPatterns] = useState<DetectedPattern[]>([]);
 
   /* ── Bot state ── */
   const [botStatus, setBotStatus] = useState<BotStatus>('idle');
@@ -109,6 +127,8 @@ export default function ProScannerBot() {
   const lastTradeTimeRef = useRef<Map<string, number>>(new Map());
   // Track last pattern digits to avoid re-trading same pattern
   const lastPatternDigitsRef = useRef<Map<string, string>>(new Map());
+  // Track overall last trade time to prevent rapid successive trades
+  const lastTradeOverallRef = useRef<number>(0);
 
   /* ── Tick data ── */
   const tickMapRef = useRef<Map<string, number[]>>(new Map());
@@ -229,11 +249,9 @@ export default function ProScannerBot() {
         const allEven = last5.every(d => d % 2 === 0);
         
         if (allOdd) {
-          console.log(`🎯 ALL ODD (5 ticks) pattern detected on ${symbol}:`, last5);
           return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         if (allEven) {
-          console.log(`🎯 ALL EVEN (5 ticks) pattern detected on ${symbol}:`, last5);
           return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         return { matched: false };
@@ -247,11 +265,9 @@ export default function ProScannerBot() {
         const allEven = last6.every(d => d % 2 === 0);
         
         if (allOdd) {
-          console.log(`🎯 ALL ODD (6 ticks) pattern detected on ${symbol}:`, last6);
           return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         if (allEven) {
-          console.log(`🎯 ALL EVEN (6 ticks) pattern detected on ${symbol}:`, last6);
           return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         return { matched: false };
@@ -265,11 +281,9 @@ export default function ProScannerBot() {
         const allEven = last8.every(d => d % 2 === 0);
         
         if (allOdd) {
-          console.log(`🎯 ALL ODD (8 ticks) pattern detected on ${symbol}:`, last8);
           return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         if (allEven) {
-          console.log(`🎯 ALL EVEN (8 ticks) pattern detected on ${symbol}:`, last8);
           return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         return { matched: false };
@@ -283,11 +297,9 @@ export default function ProScannerBot() {
         const allEven = last9.every(d => d % 2 === 0);
         
         if (allOdd) {
-          console.log(`🎯 ALL ODD (9 ticks) pattern detected on ${symbol}:`, last9);
           return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         if (allEven) {
-          console.log(`🎯 ALL EVEN (9 ticks) pattern detected on ${symbol}:`, last9);
           return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         return { matched: false };
@@ -301,11 +313,9 @@ export default function ProScannerBot() {
         const allEven = last7.every(d => d % 2 === 0);
         
         if (allOdd) {
-          console.log(`🎯 ALL ODD (7 ticks) pattern detected on ${symbol}:`, last7);
           return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         if (allEven) {
-          console.log(`🎯 ALL EVEN (7 ticks) pattern detected on ${symbol}:`, last7);
           return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         return { matched: false };
@@ -319,11 +329,9 @@ export default function ProScannerBot() {
         const allUnder5 = last5.every(d => d <= 4);
         
         if (allOver4) {
-          console.log(`🎯 OVER 4 (5 ticks) pattern detected on ${symbol}:`, last5);
           return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
         }
         if (allUnder5) {
-          console.log(`🎯 UNDER 5 (5 ticks) pattern detected on ${symbol}:`, last5);
           return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
         }
         return { matched: false };
@@ -337,11 +345,9 @@ export default function ProScannerBot() {
         const allUnder5 = last6.every(d => d <= 4);
         
         if (allOver4) {
-          console.log(`🎯 OVER 4 (6 ticks) pattern detected on ${symbol}:`, last6);
           return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
         }
         if (allUnder5) {
-          console.log(`🎯 UNDER 5 (6 ticks) pattern detected on ${symbol}:`, last6);
           return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
         }
         return { matched: false };
@@ -355,11 +361,9 @@ export default function ProScannerBot() {
         const allUnder5 = last8.every(d => d <= 4);
         
         if (allOver4) {
-          console.log(`🎯 OVER 4 (8 ticks) pattern detected on ${symbol}:`, last8);
           return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
         }
         if (allUnder5) {
-          console.log(`🎯 UNDER 5 (8 ticks) pattern detected on ${symbol}:`, last8);
           return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
         }
         return { matched: false };
@@ -373,11 +377,9 @@ export default function ProScannerBot() {
         const allUnder5 = last9.every(d => d <= 4);
         
         if (allOver4) {
-          console.log(`🎯 OVER 4 (9 ticks) pattern detected on ${symbol}:`, last9);
           return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
         }
         if (allUnder5) {
-          console.log(`🎯 UNDER 5 (9 ticks) pattern detected on ${symbol}:`, last9);
           return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
         }
         return { matched: false };
@@ -391,11 +393,9 @@ export default function ProScannerBot() {
         const allUnder5 = last7.every(d => d <= 4);
         
         if (allOver4) {
-          console.log(`🎯 OVER 4 (7 ticks) pattern detected on ${symbol}:`, last7);
           return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
         }
         if (allUnder5) {
-          console.log(`🎯 UNDER 5 (7 ticks) pattern detected on ${symbol}:`, last7);
           return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
         }
         return { matched: false };
@@ -406,22 +406,38 @@ export default function ProScannerBot() {
     }
   }, [m2RecoveryType]);
 
+  // Function to add detected pattern to display
+  const addDetectedPattern = useCallback((symbol: string, name: string, patternType: string, digits: number[]) => {
+    const newPattern = {
+      symbol,
+      name,
+      patternType,
+      timestamp: Date.now(),
+      digits: [...digits]
+    };
+    setDetectedPatterns(prev => [newPattern, ...prev].slice(0, 10));
+    setTimeout(() => {
+      setDetectedPatterns(prev => prev.filter(p => p.timestamp !== newPattern.timestamp));
+    }, 5000);
+  }, []);
+
   const findM1Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null => {
+    // Prevent rapid successive trades
+    if (Date.now() - lastTradeOverallRef.current < 2000) return null;
+    
     for (const market of SCANNER_MARKETS) {
       const result = checkM1Pattern(market.symbol);
       if (result.matched && result.contractType && result.patternDigits) {
-        // Check if we already traded this exact pattern on this symbol
+        const digits = tickMapRef.current.get(market.symbol) || [];
+        addDetectedPattern(market.symbol, market.name, `M1: ${m1StrategyType}`, digits.slice(-5));
+        
         const lastPattern = lastPatternDigitsRef.current.get(market.symbol);
         if (lastPattern === result.patternDigits) {
-          console.log(`⏭️ Skipping ${market.symbol} - same pattern already traded: ${result.patternDigits}`);
           continue;
         }
         
-        // Check cooldown period (30 seconds minimum between trades on same symbol)
         const lastTrade = lastTradeTimeRef.current.get(market.symbol) || 0;
-        const now = Date.now();
-        if (now - lastTrade < 30000) {
-          console.log(`⏭️ Skipping ${market.symbol} - cooldown period (${Math.floor((now - lastTrade) / 1000)}s since last trade)`);
+        if (Date.now() - lastTrade < 30000) {
           continue;
         }
         
@@ -434,24 +450,25 @@ export default function ProScannerBot() {
       }
     }
     return null;
-  }, [checkM1Pattern]);
+  }, [checkM1Pattern, m1StrategyType, addDetectedPattern]);
 
   const findM2Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null => {
+    // Prevent rapid successive trades
+    if (Date.now() - lastTradeOverallRef.current < 2000) return null;
+    
     for (const market of SCANNER_MARKETS) {
       const result = checkM2Pattern(market.symbol);
       if (result.matched && result.contractType && result.patternDigits) {
-        // Check if we already traded this exact pattern on this symbol
+        const digits = tickMapRef.current.get(market.symbol) || [];
+        addDetectedPattern(market.symbol, market.name, `M2: ${m2RecoveryType}`, digits.slice(-5));
+        
         const lastPattern = lastPatternDigitsRef.current.get(market.symbol);
         if (lastPattern === result.patternDigits) {
-          console.log(`⏭️ Skipping ${market.symbol} - same pattern already traded: ${result.patternDigits}`);
           continue;
         }
         
-        // Check cooldown period (30 seconds minimum between trades on same symbol)
         const lastTrade = lastTradeTimeRef.current.get(market.symbol) || 0;
-        const now = Date.now();
-        if (now - lastTrade < 30000) {
-          console.log(`⏭️ Skipping ${market.symbol} - cooldown period (${Math.floor((now - lastTrade) / 1000)}s since last trade)`);
+        if (Date.now() - lastTrade < 30000) {
           continue;
         }
         
@@ -464,7 +481,7 @@ export default function ProScannerBot() {
       }
     }
     return null;
-  }, [checkM2Pattern]);
+  }, [checkM2Pattern, m2RecoveryType, addDetectedPattern]);
 
   const addLog = useCallback((id: number, entry: Omit<LogEntry, 'id'>) => {
     setLogEntries(prev => [{ ...entry, id }, ...prev].slice(0, 100));
@@ -497,9 +514,9 @@ export default function ProScannerBot() {
     setTotalStaked(prev => prev + cStake);
     setCurrentStakeState(cStake);
 
-    // Record that we're trading this pattern
     lastPatternDigitsRef.current.set(tradeSymbol, patternDigits);
     lastTradeTimeRef.current.set(tradeSymbol, Date.now());
+    lastTradeOverallRef.current = Date.now();
 
     addLog(logId, {
       time: now, market: mkt === 1 ? 'M1' : 'M2', symbol: tradeSymbol,
@@ -547,7 +564,6 @@ export default function ProScannerBot() {
           shouldResetMartingale = true;
         } else {
           switchInfo += ' ✓ WIN → Continue scanning';
-          // Reset martingale on win in M1
           shouldResetMartingale = true;
         }
       } else {
@@ -556,36 +572,29 @@ export default function ProScannerBot() {
           recordLoss(cStake, tradeSymbol, 6000);
         }
         
-        // Apply martingale on loss for BOTH M1 and M2 (if enabled)
         if (martingaleOn && mStep < parseInt(martingaleMaxSteps)) {
-          // Increase stake for next trade
           cStake = parseFloat((cStake * (parseFloat(martingaleMultiplier) || 2)).toFixed(2));
           mStep++;
           
           if (!inRecovery && m2Enabled) {
-            // If we're in M1 and have a loss, we still apply martingale BUT also switch to M2 for next pattern
             inRecovery = true;
-            switchInfo += ` ✗ Loss → Apply martingale (Step ${mStep}) & Switch to M2 Recovery (waiting for fresh pattern)`;
+            switchInfo += ` ✗ Loss → Martingale (Step ${mStep}) → M2 Recovery`;
           } else if (!inRecovery && !m2Enabled) {
-            // If M2 is disabled, stay in M1 but apply martingale
-            switchInfo += ` ✗ Loss → Apply martingale (Step ${mStep}) & Continue scanning M1 for fresh patterns`;
+            switchInfo += ` ✗ Loss → Martingale (Step ${mStep}) → Continue M1`;
           } else if (inRecovery) {
-            // Already in M2, just apply martingale
-            switchInfo += ` ✗ Loss → Apply martingale (Step ${mStep}) & Stay M2 (waiting for fresh pattern)`;
+            switchInfo += ` ✗ Loss → Martingale (Step ${mStep}) → Stay M2`;
           }
         } else {
-          // Max martingale steps reached or martingale disabled - reset
-          switchInfo += martingaleOn ? ` ✗ Loss → Max martingale steps (${mStep}/${martingaleMaxSteps}) reached. Reset to base stake.` : ' ✗ Loss → Martingale disabled. Reset to base stake.';
+          switchInfo += martingaleOn ? ` ✗ Loss → Max steps reached. Reset.` : ' ✗ Loss → Martingale disabled. Reset.';
           shouldResetMartingale = true;
           
           if (!inRecovery && m2Enabled) {
             inRecovery = true;
-            switchInfo += ' Switching to M2 Recovery for next pattern';
+            switchInfo += ' → M2 Recovery';
           }
         }
       }
       
-      // Reset martingale if we won or reached max steps
       if (shouldResetMartingale) {
         mStep = 0;
         cStake = baseStake;
@@ -624,13 +633,6 @@ export default function ProScannerBot() {
     const baseStake = parseFloat(stake);
     if (baseStake < 0.35) { toast.error('Min stake $0.35'); return; }
     if (!m1Enabled && !m2Enabled) { toast.error('Enable at least one market'); return; }
-    
-    if (strategyM1Enabled && m1StrategyType !== 'disabled') {
-      setScannerActive(true);
-    }
-    if (strategyM2Enabled && m2RecoveryType !== 'disabled') {
-      setScannerActive(true);
-    }
 
     setIsRunning(true);
     runningRef.current = true;
@@ -639,9 +641,9 @@ export default function ProScannerBot() {
     setCurrentStakeState(baseStake);
     setMartingaleStepState(0);
     
-    // Clear tracking on new session
     lastTradeTimeRef.current.clear();
     lastPatternDigitsRef.current.clear();
+    lastTradeOverallRef.current = 0;
 
     let cStake = baseStake;
     let mStep = 0;
@@ -662,10 +664,9 @@ export default function ProScannerBot() {
       let barrier: string | undefined;
       let patternDigits: string;
 
-      // If we're waiting for a fresh pattern after a loss (for M1 with martingale)
       if (waitingForPatternAfterLoss) {
-        console.log('⏳ Waiting for fresh pattern after loss before next trade');
-        await new Promise(r => setTimeout(r, 500));
+        console.log('⏳ Waiting for fresh pattern after loss');
+        await new Promise(r => setTimeout(r, 1000));
         waitingForPatternAfterLoss = false;
         continue;
       }
@@ -675,50 +676,54 @@ export default function ProScannerBot() {
 
         let matched = false;
         let matchData: { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null = null;
+        let attempts = 0;
         
-        while (runningRef.current && !matched) {
+        while (runningRef.current && !matched && attempts < 300) {
           matchData = findM1Match();
           if (matchData) {
             matched = true;
-            toast.info(`🎯 M1 Fresh Pattern found on ${matchData.symbol}`);
+            toast.info(`🎯 M1 Pattern on ${matchData.symbol}`);
           }
           if (!matched) {
             await new Promise<void>(r => setTimeout(r, 100));
+            attempts++;
           }
         }
-        if (!runningRef.current) break;
+        if (!runningRef.current || !matched) continue;
 
         setBotStatus('pattern_matched');
         tradeSymbol = matchData!.symbol;
         contractType = matchData!.contractType;
         barrier = matchData!.barrier;
         patternDigits = matchData!.patternDigits;
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 500));
       }
       else if (inRecovery && strategyM2Enabled && m2RecoveryType !== 'disabled') {
         setBotStatus('waiting_pattern');
 
         let matched = false;
         let matchData: { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null = null;
+        let attempts = 0;
         
-        while (runningRef.current && !matched) {
+        while (runningRef.current && !matched && attempts < 300) {
           matchData = findM2Match();
           if (matchData) {
             matched = true;
-            toast.info(`🔄 M2 Fresh Recovery pattern found on ${matchData.symbol}`);
+            toast.info(`🔄 M2 Pattern on ${matchData.symbol}`);
           }
           if (!matched) {
             await new Promise<void>(r => setTimeout(r, 100));
+            attempts++;
           }
         }
-        if (!runningRef.current) break;
+        if (!runningRef.current || !matched) continue;
 
         setBotStatus('pattern_matched');
         tradeSymbol = matchData!.symbol;
         contractType = matchData!.contractType;
         barrier = matchData!.barrier;
         patternDigits = matchData!.patternDigits;
-        await new Promise(r => setTimeout(r, 300));
+        await new Promise(r => setTimeout(r, 500));
       }
       else {
         setBotStatus(mkt === 1 ? 'trading_m1' : 'recovery');
@@ -733,10 +738,8 @@ export default function ProScannerBot() {
       );
       if (!result || !runningRef.current) break;
       
-      // Check if this trade was a loss to set waiting flag
       const wasLoss = result.cStake !== cStake || result.mStep !== mStep || result.inRecovery !== inRecovery;
       if (wasLoss && !result.shouldBreak && martingaleOn && result.mStep > 0 && !result.inRecovery) {
-        // If we're in M1 and had a loss with martingale applied, wait for fresh pattern
         waitingForPatternAfterLoss = true;
       }
       
@@ -748,7 +751,6 @@ export default function ProScannerBot() {
 
       if (result.shouldBreak) break;
 
-      // Wait before scanning for next pattern
       await new Promise(r => setTimeout(r, 1000));
     }
 
@@ -777,6 +779,9 @@ export default function ProScannerBot() {
   const status = statusConfig[botStatus];
   const winRate = wins + losses > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '0.0';
 
+  // Colors for dollar icons
+  const dollarColors = ['text-emerald-400', 'text-cyan-400', 'text-amber-400', 'text-rose-400', 'text-purple-400', 'text-blue-400', 'text-indigo-400', 'text-pink-400'];
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-4">
       <div className="space-y-3 max-w-7xl mx-auto">
@@ -789,9 +794,9 @@ export default function ProScannerBot() {
               </div>
               <div>
                 <h1 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
-                 Ramzfx Ultimate 2026 Bot
+                 Milliefx Ultimate 2026 Bot
                 </h1>
-                <p className="text-xs text-slate-400">Ramzfx Advanced Market Scanning & Recovery System</p>
+                <p className="text-xs text-slate-400">Milliefx Advanced Market Scanning & Recovery System</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -931,7 +936,6 @@ export default function ProScannerBot() {
                     <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
                     <SelectItem value="over4_under5_8">🎯 Over 4 / Under 5 (8 ticks)</SelectItem>
                     <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
-                    
                   </SelectContent>
                 </Select>
                 {m2RecoveryType !== 'disabled' && (
@@ -985,13 +989,13 @@ export default function ProScannerBot() {
           )}
         </div>
 
-        {/* Single Start/Stop Button with Animation - Reduced Width */}
+        {/* Single Start/Stop Button - Width 600px */}
         <div className="flex justify-center">
           <button
             onClick={isRunning ? stopBot : startBot}
             disabled={!isRunning && (!isAuthorized || balance < parseFloat(stake))}
             className={`
-              relative w-[200px] h-14 text-base font-bold rounded-xl transition-all duration-300 ease-out
+              relative w-[600px] h-14 text-base font-bold rounded-xl transition-all duration-300 ease-out
               overflow-hidden group
               ${isRunning 
                 ? 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white shadow-lg shadow-red-500/30' 
@@ -1001,7 +1005,6 @@ export default function ProScannerBot() {
               active:scale-95 transform
             `}
           >
-            {/* Animated background pulse effect when running */}
             {isRunning && (
               <>
                 <span className="absolute inset-0 bg-white/20 animate-pulse rounded-xl" />
@@ -1009,7 +1012,6 @@ export default function ProScannerBot() {
               </>
             )}
             
-            {/* Button content with animated icons */}
             <div className="relative flex items-center justify-center gap-3">
               {isRunning ? (
                 <>
@@ -1042,6 +1044,119 @@ export default function ProScannerBot() {
               )}
             </div>
           </button>
+        </div>
+
+        {/* Market Scanner Patterns Container - Reduced to 600px width, 100px height */}
+        <div className="flex justify-center">
+          <div className="w-[1000px] bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
+            <div className="p-3 border-b border-slate-700/50">
+              <div className="flex items-center gap-2">
+                <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
+                  <Scan className="w-3 h-3 text-white" />
+                </div>
+                <h3 className="text-xs font-bold text-slate-200">Market Scanner - Pattern Detection</h3>
+                {scannerActive && (
+                  <div className="flex items-center gap-1 ml-auto">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                    </span>
+                    <span className="text-[8px] text-emerald-400">Active</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            {/* Animated Dollar Icons Row - Right to Left Movement with Different Colors */}
+            <div className="py-2 bg-slate-800/30 overflow-hidden relative">
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10">SCANNING</span>
+              </div>
+              <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite' }}>
+                {[...Array(15)].map((_, i) => (
+                  <DollarSign 
+                    key={i}
+                    className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
+                    style={{ 
+                      animationDuration: `${0.5 + (i % 3) * 0.2}s`,
+                      filter: 'drop-shadow(0 0 1px currentColor)'
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite', position: 'absolute', top: 0, left: '100%' }}>
+                {[...Array(15)].map((_, i) => (
+                  <DollarSign 
+                    key={`dup-${i}`}
+                    className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
+                    style={{ 
+                      animationDuration: `${0.5 + (i % 3) * 0.2}s`,
+                      filter: 'drop-shadow(0 0 1px currentColor)'
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+            
+            {/* Detected Patterns Display - height 100px */}
+            <div className="h-[60px] overflow-y-auto">
+              {detectedPatterns.length === 0 ? (
+                <div className="h-full flex items-center justify-center">
+                  {/* Empty - no message shown until patterns found */}
+                </div>
+              ) : (
+                <div className="p-2 space-y-1.5">
+                  {detectedPatterns.map((pattern) => (
+                    <div 
+                      key={pattern.timestamp}
+                      className="bg-slate-800/50 rounded-lg p-2 border border-slate-700/50 animate-slideIn"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
+                            <DollarSign className="w-3 h-3 text-amber-400" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-[10px] font-bold text-slate-200">{pattern.symbol}</span>
+                              <Badge className="text-[7px] bg-slate-700/50 text-slate-300 px-1 py-0">{pattern.name}</Badge>
+                            </div>
+                            <div className="text-[8px] text-amber-400">{pattern.patternType}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex gap-0.5">
+                            {pattern.digits.map((digit, i) => (
+                              <span 
+                                key={i}
+                                className="w-5 h-5 rounded bg-slate-700 flex items-center justify-center text-[9px] font-mono font-bold text-cyan-400"
+                              >
+                                {digit}
+                              </span>
+                            ))}
+                          </div>
+                          <Badge className="text-[7px] bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-1 py-0">
+                            FOUND
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            {/* Scanning Animation Text */}
+            <div className="p-2 border-t border-slate-700/30">
+              <div className="flex items-center justify-between text-[8px] text-slate-500">
+                <span className="flex items-center gap-1">
+                  <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
+                  {SCANNER_MARKETS.length} markets
+                </span>
+                <span className="font-mono text-[7px]">M1: {m1StrategyType !== 'disabled' ? m1StrategyType.substring(0, 8) : 'OFF'} | M2: {m2RecoveryType !== 'disabled' ? m2RecoveryType.substring(0, 8) : 'OFF'}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Activity Log - Full Width */}
@@ -1117,21 +1232,6 @@ export default function ProScannerBot() {
           </div>
         </div>
       </div>
-
-      {/* Add these styles to your global CSS or use Tailwind config */}
-      <style>{`
-        @keyframes shimmer {
-          0% {
-            transform: translateX(-100%);
-          }
-          100% {
-            transform: translateX(100%);
-          }
-        }
-        .animate-shimmer {
-          animation: shimmer 2s infinite;
-        }
-      `}</style>
     </div>
   );
 }
