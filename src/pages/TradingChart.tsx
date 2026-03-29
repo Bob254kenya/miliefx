@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'; 
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { copyTradingService } from '@/services/copy-trading-service';
@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import {
   Play, StopCircle, Trash2, Scan,
-  Home, RefreshCw, Shield, TrendingUp, DollarSign
+  Home, RefreshCw, Shield, TrendingUp, DollarSign, Bot
 } from 'lucide-react';
 
 const SCANNER_MARKETS: { symbol: string; name: string }[] = [
@@ -37,13 +37,25 @@ const SCANNER_MARKETS: { symbol: string; name: string }[] = [
 ];
 
 type BotStatus = 'idle' | 'trading_m1' | 'recovery' | 'waiting_pattern' | 'pattern_matched';
-type M1StrategyType = 'over0_under9' | 'over1_under8' | 'over2_under7' | 'over3_under6' | 'over4_under5_5' | 'disabled';
-type M2RecoveryType = 'odd_even_5' | 'odd_even_6' | 'odd_even_8' | 'odd_even_9' | 'odd_even_7' | 'over4_under5_5' | 'over4_under5_6' | 'over4_under5_8' | 'over4_under5_9' | 'over4_under5_7' | 'disabled';
+type M1StrategyType = 
+  | 'over0_under9_2' | 'over0_under9_3'
+  | 'over1_under8_2' | 'over1_under8_3'
+  | 'over2_under7_3' | 'over2_under7_4'
+  | 'over3_under6_4' | 'over3_under6_5'
+  | 'over4_under5_5'
+  | 'disabled';
+type M2RecoveryType = 
+  | 'odd_even_5' | 'odd_even_6' | 'odd_even_8' | 'odd_even_9' | 'odd_even_7'
+  | 'over4_under5_5' | 'over4_under5_6' | 'over4_under5_8' | 'over4_under5_9' | 'over4_under5_7'
+  | 'over3_under6_5' | 'over3_under6_7'
+  | 'disabled';
+
+type BotSelectionType = 'over6' | 'under3' | 'even' | 'odd' | 'none';
 
 interface LogEntry {
   id: number;
   time: string;
-  market: 'M1' | 'M2';
+  market: 'M1' | 'M2' | 'BOT';
   symbol: string;
   contract: string;
   stake: number;
@@ -83,9 +95,12 @@ export default function ProScannerBot() {
   const { isAuthorized, balance, activeAccount } = useAuth();
   const { recordLoss } = useLossRequirement();
 
+  /* ── Bot Selection ── */
+  const [selectedBot, setSelectedBot] = useState<BotSelectionType>('none');
+
   /* ── Market 1 config ── */
   const [m1Enabled, setM1Enabled] = useState(true);
-  const [m1StrategyType, setM1StrategyType] = useState<M1StrategyType>('over1_under8');
+  const [m1StrategyType, setM1StrategyType] = useState<M1StrategyType>('over1_under8_2');
 
   /* ── Market 2 config ── */
   const [m2Enabled, setM2Enabled] = useState(true);
@@ -129,6 +144,10 @@ export default function ProScannerBot() {
   const lastPatternDigitsRef = useRef<Map<string, string>>(new Map());
   // Track overall last trade time to prevent rapid successive trades
   const lastTradeOverallRef = useRef<number>(0);
+  
+  // Bot specific tracking
+  const botLossCountRef = useRef<number>(0);
+  const botActiveRef = useRef<boolean>(false);
 
   /* ── Tick data ── */
   const tickMapRef = useRef<Map<string, number[]>>(new Map());
@@ -144,7 +163,7 @@ export default function ProScannerBot() {
       const map = tickMapRef.current;
       const arr = map.get(sym) || [];
       arr.push(digit);
-      if (arr.length > 200) arr.shift();
+      if (arr.length > 1000) arr.shift();
       map.set(sym, arr);
     };
     const unsub = derivApi.onMessage(handler);
@@ -152,11 +171,115 @@ export default function ProScannerBot() {
     return () => { active = false; unsub(); };
   }, []);
 
+  // Bot Analysis Functions
+  const analyzeOver6Bot = useCallback((symbol: string): { shouldTrade: boolean; contractType?: string; barrier?: string } => {
+    const digits = tickMapRef.current.get(symbol) || [];
+    if (digits.length < 1000) return { shouldTrade: false };
+    
+    const last1000 = digits.slice(-1000);
+    const digitCounts = new Array(10).fill(0);
+    last1000.forEach(d => digitCounts[d]++);
+    
+    // Find most, second most, and least appearing digits
+    const sorted = digitCounts.map((count, digit) => ({ digit, count })).sort((a, b) => b.count - a.count);
+    const mostAppearing = sorted[0];
+    const secondMost = sorted[1];
+    const leastAppearing = sorted[9];
+    
+    const isMostAbove5 = mostAppearing.digit > 5;
+    const isSecondAbove5 = secondMost.digit > 5;
+    const isLeastAbove5 = leastAppearing.digit > 5;
+    
+    if (isMostAbove5 && isSecondAbove5 && isLeastAbove5) {
+      return { shouldTrade: true, contractType: 'DIGITOVER', barrier: '6' };
+    }
+    return { shouldTrade: false };
+  }, []);
+
+  const analyzeUnder3Bot = useCallback((symbol: string): { shouldTrade: boolean; contractType?: string; barrier?: string } => {
+    const digits = tickMapRef.current.get(symbol) || [];
+    if (digits.length < 1000) return { shouldTrade: false };
+    
+    const last1000 = digits.slice(-1000);
+    const digitCounts = new Array(10).fill(0);
+    last1000.forEach(d => digitCounts[d]++);
+    
+    const sorted = digitCounts.map((count, digit) => ({ digit, count })).sort((a, b) => b.count - a.count);
+    const mostAppearing = sorted[0];
+    const secondMost = sorted[1];
+    const leastAppearing = sorted[9];
+    
+    const isMostUnder4 = mostAppearing.digit < 4;
+    const isSecondUnder4 = secondMost.digit < 4;
+    const isLeastUnder4 = leastAppearing.digit < 4;
+    
+    if (isMostUnder4 && isSecondUnder4 && isLeastUnder4) {
+      return { shouldTrade: true, contractType: 'DIGITUNDER', barrier: '3' };
+    }
+    return { shouldTrade: false };
+  }, []);
+
+  const analyzeEvenBot = useCallback((symbol: string): { shouldTrade: boolean; contractType?: string; consecutiveOddCount?: number } => {
+    const digits = tickMapRef.current.get(symbol) || [];
+    if (digits.length < 500) return { shouldTrade: false };
+    
+    const last500 = digits.slice(-500);
+    const evenCount = last500.filter(d => d % 2 === 0).length;
+    const oddCount = last500.filter(d => d % 2 !== 0).length;
+    
+    // Check if even digits are most appearing
+    if (evenCount > oddCount) {
+      // Count consecutive odds
+      let consecutiveOdds = 0;
+      const recentDigits = digits.slice(-20);
+      for (let i = recentDigits.length - 1; i >= 0; i--) {
+        if (recentDigits[i] % 2 !== 0) {
+          consecutiveOdds++;
+        } else {
+          break;
+        }
+      }
+      
+      if (consecutiveOdds >= 4) {
+        return { shouldTrade: true, contractType: 'DIGITEVEN', consecutiveOddCount: consecutiveOdds };
+      }
+    }
+    return { shouldTrade: false };
+  }, []);
+
+  const analyzeOddBot = useCallback((symbol: string): { shouldTrade: boolean; contractType?: string; consecutiveEvenCount?: number } => {
+    const digits = tickMapRef.current.get(symbol) || [];
+    if (digits.length < 500) return { shouldTrade: false };
+    
+    const last500 = digits.slice(-500);
+    const evenCount = last500.filter(d => d % 2 === 0).length;
+    const oddCount = last500.filter(d => d % 2 !== 0).length;
+    
+    // Check if odd digits are most appearing
+    if (oddCount > evenCount) {
+      // Count consecutive evens
+      let consecutiveEvens = 0;
+      const recentDigits = digits.slice(-20);
+      for (let i = recentDigits.length - 1; i >= 0; i--) {
+        if (recentDigits[i] % 2 === 0) {
+          consecutiveEvens++;
+        } else {
+          break;
+        }
+      }
+      
+      if (consecutiveEvens >= 4) {
+        return { shouldTrade: true, contractType: 'DIGITODD', consecutiveEvenCount: consecutiveEvens };
+      }
+    }
+    return { shouldTrade: false };
+  }, []);
+
   const checkM1Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string; patternDigits?: string } => {
     const digits = tickMapRef.current.get(symbol) || [];
     
     switch (m1StrategyType) {
-      case 'over0_under9': {
+      case 'over0_under9_2': {
         if (digits.length < 2) return { matched: false };
         const last2 = digits.slice(-2);
         const patternKey = `${last2.join(',')}`;
@@ -170,7 +293,23 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
-      case 'over1_under8': {
+      case 'over0_under9_3': {
+        if (digits.length < 3) return { matched: false };
+        const last3 = digits.slice(-3);
+        const patternKey = `${last3.join(',')}`;
+        const allLessThan1 = last3.every(d => d < 1);
+        const allGreaterThan9 = last3.every(d => d > 9);
+        
+        if (allLessThan1) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '0', patternDigits: patternKey };
+        }
+        if (allGreaterThan9) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '9', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      case 'over1_under8_2': {
         if (digits.length < 2) return { matched: false };
         const last2 = digits.slice(-2);
         const patternKey = `${last2.join(',')}`;
@@ -184,7 +323,23 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
-      case 'over2_under7': {
+      case 'over1_under8_3': {
+        if (digits.length < 3) return { matched: false };
+        const last3 = digits.slice(-3);
+        const patternKey = `${last3.join(',')}`;
+        const allLessThan1 = last3.every(d => d < 1);
+        const allGreaterThan8 = last3.every(d => d > 8);
+        
+        if (allLessThan1) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '1', patternDigits: patternKey };
+        }
+        if (allGreaterThan8) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '8', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      case 'over2_under7_3': {
         if (digits.length < 3) return { matched: false };
         const last3 = digits.slice(-3);
         const patternKey = `${last3.join(',')}`;
@@ -200,12 +355,44 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
-      case 'over3_under6': {
+      case 'over2_under7_4': {
+        if (digits.length < 4) return { matched: false };
+        const last4 = digits.slice(-4);
+        const patternKey = `${last4.join(',')}`;
+        const allLessThan2 = last4.every(d => d < 2);
+        const allGreaterThan7 = last4.every(d => d > 7);
+        
+        if (allLessThan2) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '2', patternDigits: patternKey };
+        }
+        if (allGreaterThan7) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '7', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      case 'over3_under6_4': {
         if (digits.length < 4) return { matched: false };
         const last4 = digits.slice(-4);
         const patternKey = `${last4.join(',')}`;
         const allLessThan3 = last4.every(d => d < 3);
         const allGreaterThan6 = last4.every(d => d > 6);
+        
+        if (allLessThan3) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '3', patternDigits: patternKey };
+        }
+        if (allGreaterThan6) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '6', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      case 'over3_under6_5': {
+        if (digits.length < 5) return { matched: false };
+        const last5 = digits.slice(-5);
+        const patternKey = `${last5.join(',')}`;
+        const allLessThan3 = last5.every(d => d < 3);
+        const allGreaterThan6 = last5.every(d => d > 6);
         
         if (allLessThan3) {
           return { matched: true, contractType: 'DIGITOVER', barrier: '3', patternDigits: patternKey };
@@ -401,28 +588,78 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
+      case 'over3_under6_5': {
+        if (digits.length < 5) return { matched: false };
+        const last5 = digits.slice(-5);
+        const patternKey = `${last5.join(',')}`;
+        const allOver3 = last5.every(d => d >= 4);
+        const allUnder6 = last5.every(d => d <= 3);
+        
+        if (allOver3) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '3', patternDigits: patternKey };
+        }
+        if (allUnder6) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '6', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      case 'over3_under6_7': {
+        if (digits.length < 7) return { matched: false };
+        const last7 = digits.slice(-7);
+        const patternKey = `${last7.join(',')}`;
+        const allOver3 = last7.every(d => d >= 4);
+        const allUnder6 = last7.every(d => d <= 3);
+        
+        if (allOver3) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '3', patternDigits: patternKey };
+        }
+        if (allUnder6) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '6', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
       default:
         return { matched: false };
     }
   }, [m2RecoveryType]);
 
-  // Function to add detected pattern to display
-  const addDetectedPattern = useCallback((symbol: string, name: string, patternType: string, digits: number[]) => {
-    const newPattern = {
-      symbol,
-      name,
-      patternType,
-      timestamp: Date.now(),
-      digits: [...digits]
-    };
-    setDetectedPatterns(prev => [newPattern, ...prev].slice(0, 10));
-    setTimeout(() => {
-      setDetectedPatterns(prev => prev.filter(p => p.timestamp !== newPattern.timestamp));
-    }, 5000);
-  }, []);
+  const findBotTrade = useCallback((): { symbol: string; contractType: string; barrier?: string } | null => {
+    if (selectedBot === 'none') return null;
+    
+    for (const market of SCANNER_MARKETS) {
+      let result = null;
+      
+      switch (selectedBot) {
+        case 'over6':
+          result = analyzeOver6Bot(market.symbol);
+          break;
+        case 'under3':
+          result = analyzeUnder3Bot(market.symbol);
+          break;
+        case 'even':
+          result = analyzeEvenBot(market.symbol);
+          break;
+        case 'odd':
+          result = analyzeOddBot(market.symbol);
+          break;
+      }
+      
+      if (result && result.shouldTrade && result.contractType) {
+        const digits = tickMapRef.current.get(market.symbol) || [];
+        addDetectedPattern(market.symbol, market.name, `${selectedBot.toUpperCase()} BOT`, digits.slice(-10));
+        return {
+          symbol: market.symbol,
+          contractType: result.contractType,
+          barrier: result.barrier
+        };
+      }
+    }
+    return null;
+  }, [selectedBot, analyzeOver6Bot, analyzeUnder3Bot, analyzeEvenBot, analyzeOddBot, addDetectedPattern]);
 
   const findM1Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null => {
-    // Prevent rapid successive trades
     if (Date.now() - lastTradeOverallRef.current < 2000) return null;
     
     for (const market of SCANNER_MARKETS) {
@@ -453,7 +690,6 @@ export default function ProScannerBot() {
   }, [checkM1Pattern, m1StrategyType, addDetectedPattern]);
 
   const findM2Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null => {
-    // Prevent rapid successive trades
     if (Date.now() - lastTradeOverallRef.current < 2000) return null;
     
     for (const market of SCANNER_MARKETS) {
@@ -483,6 +719,20 @@ export default function ProScannerBot() {
     return null;
   }, [checkM2Pattern, m2RecoveryType, addDetectedPattern]);
 
+  const addDetectedPattern = useCallback((symbol: string, name: string, patternType: string, digits: number[]) => {
+    const newPattern = {
+      symbol,
+      name,
+      patternType,
+      timestamp: Date.now(),
+      digits: [...digits]
+    };
+    setDetectedPatterns(prev => [newPattern, ...prev].slice(0, 10));
+    setTimeout(() => {
+      setDetectedPatterns(prev => prev.filter(p => p.timestamp !== newPattern.timestamp));
+    }, 5000);
+  }, []);
+
   const addLog = useCallback((id: number, entry: Omit<LogEntry, 'id'>) => {
     setLogEntries(prev => [{ ...entry, id }, ...prev].slice(0, 100));
   }, []);
@@ -503,7 +753,7 @@ export default function ProScannerBot() {
     tradeSymbol: string,
     cStake: number,
     mStep: number,
-    mkt: 1 | 2,
+    mkt: 1 | 2 | 'BOT',
     localBalance: number,
     localPnl: number,
     baseStake: number,
@@ -519,7 +769,7 @@ export default function ProScannerBot() {
     lastTradeOverallRef.current = Date.now();
 
     addLog(logId, {
-      time: now, market: mkt === 1 ? 'M1' : 'M2', symbol: tradeSymbol,
+      time: now, market: mkt === 1 ? 'M1' : mkt === 2 ? 'M2' : 'BOT', symbol: tradeSymbol,
       contract: contractType, stake: cStake, martingaleStep: mStep,
       exitDigit: '...', result: 'Pending', pnl: 0, balance: localBalance,
       switchInfo: `Pattern: ${patternDigits}`,
@@ -566,8 +816,26 @@ export default function ProScannerBot() {
           switchInfo += ' ✓ WIN → Continue scanning';
           shouldResetMartingale = true;
         }
+        
+        // Reset bot loss count on win
+        if (mkt === 'BOT') {
+          botLossCountRef.current = 0;
+          botActiveRef.current = false;
+        }
       } else {
         setLosses(prev => prev + 1);
+        
+        // Track bot losses
+        if (mkt === 'BOT') {
+          botLossCountRef.current++;
+          if (botLossCountRef.current >= 8) {
+            botActiveRef.current = true;
+            switchInfo += ` ✗ Loss → Bot Active (${botLossCountRef.current}/8 losses)`;
+          } else {
+            switchInfo += ` ✗ Loss → Bot inactive (${botLossCountRef.current}/8 losses needed)`;
+          }
+        }
+        
         if (activeAccount?.is_virtual) {
           recordLoss(cStake, tradeSymbol, 6000);
         }
@@ -576,7 +844,7 @@ export default function ProScannerBot() {
           cStake = parseFloat((cStake * (parseFloat(martingaleMultiplier) || 2)).toFixed(2));
           mStep++;
           
-          if (!inRecovery && m2Enabled) {
+          if (!inRecovery && m2Enabled && mkt !== 'BOT') {
             inRecovery = true;
             switchInfo += ` ✗ Loss → Martingale (Step ${mStep}) → M2 Recovery`;
           } else if (!inRecovery && !m2Enabled) {
@@ -588,7 +856,7 @@ export default function ProScannerBot() {
           switchInfo += martingaleOn ? ` ✗ Loss → Max steps reached. Reset.` : ' ✗ Loss → Martingale disabled. Reset.';
           shouldResetMartingale = true;
           
-          if (!inRecovery && m2Enabled) {
+          if (!inRecovery && m2Enabled && mkt !== 'BOT') {
             inRecovery = true;
             switchInfo += ' → M2 Recovery';
           }
@@ -632,7 +900,7 @@ export default function ProScannerBot() {
     if (!isAuthorized || isRunning) return;
     const baseStake = parseFloat(stake);
     if (baseStake < 0.35) { toast.error('Min stake $0.35'); return; }
-    if (!m1Enabled && !m2Enabled) { toast.error('Enable at least one market'); return; }
+    if (!m1Enabled && !m2Enabled && selectedBot === 'none') { toast.error('Enable at least one market or bot'); return; }
 
     setIsRunning(true);
     runningRef.current = true;
@@ -644,6 +912,8 @@ export default function ProScannerBot() {
     lastTradeTimeRef.current.clear();
     lastPatternDigitsRef.current.clear();
     lastTradeOverallRef.current = 0;
+    botLossCountRef.current = 0;
+    botActiveRef.current = false;
 
     let cStake = baseStake;
     let mStep = 0;
@@ -656,6 +926,47 @@ export default function ProScannerBot() {
       const mkt: 1 | 2 = inRecovery ? 2 : 1;
       setCurrentMarket(mkt);
 
+      // Check if bot is active and should trade
+      if (selectedBot !== 'none' && botActiveRef.current) {
+        setBotStatus('waiting_pattern');
+        
+        let matched = false;
+        let matchData: { symbol: string; contractType: string; barrier?: string } | null = null;
+        let attempts = 0;
+        
+        while (runningRef.current && !matched && attempts < 300) {
+          matchData = findBotTrade();
+          if (matchData) {
+            matched = true;
+            toast.info(`🤖 Bot ${selectedBot.toUpperCase()} triggered on ${matchData.symbol}`);
+          }
+          if (!matched) {
+            await new Promise<void>(r => setTimeout(r, 100));
+            attempts++;
+          }
+        }
+        
+        if (runningRef.current && matched && matchData) {
+          setBotStatus('pattern_matched');
+          const result = await executeRealTrade(
+            matchData.contractType, matchData.barrier, matchData.symbol, 
+            cStake, mStep, 'BOT', localBalance, localPnl, baseStake, `BOT_${selectedBot}`
+          );
+          if (!result || !runningRef.current) break;
+          
+          localPnl = result.localPnl;
+          localBalance = result.localBalance;
+          cStake = result.cStake;
+          mStep = result.mStep;
+          inRecovery = false; // Bot trades don't use M2 recovery
+          
+          if (result.shouldBreak) break;
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
+        }
+      }
+
+      // Regular M1/M2 trading
       if (mkt === 1 && !m1Enabled) { if (m2Enabled) { inRecovery = true; continue; } else break; }
       if (mkt === 2 && !m2Enabled) { inRecovery = false; continue; }
 
@@ -760,7 +1071,7 @@ export default function ProScannerBot() {
   }, [isAuthorized, isRunning, balance, stake, m1Enabled, m2Enabled,
     martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss,
     strategyM1Enabled, strategyM2Enabled, m1StrategyType, m2RecoveryType,
-    findM1Match, findM2Match, addLog, updateLog, executeRealTrade]);
+    selectedBot, findM1Match, findM2Match, findBotTrade, addLog, updateLog, executeRealTrade]);
 
   const stopBot = useCallback(() => {
     runningRef.current = false;
@@ -779,7 +1090,6 @@ export default function ProScannerBot() {
   const status = statusConfig[botStatus];
   const winRate = wins + losses > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '0.0';
 
-  // Colors for dollar icons
   const dollarColors = ['text-emerald-400', 'text-cyan-400', 'text-amber-400', 'text-rose-400', 'text-purple-400', 'text-blue-400', 'text-indigo-400', 'text-pink-400'];
 
   return (
@@ -794,9 +1104,9 @@ export default function ProScannerBot() {
               </div>
               <div>
                 <h1 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
-                 Milliefx Ultimate 2026 Bot
+                  Ramzfx Ultimate 2026 Bot
                 </h1>
-                <p className="text-xs text-slate-400">Milliefx Advanced Market Scanning & Recovery System</p>
+                <p className="text-xs text-slate-400">Ramzfx Advanced Market Scanning & Recovery System</p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -816,7 +1126,95 @@ export default function ProScannerBot() {
             </div>
           </div>
         </div>
-     {/* Markets Row - Horizontal */}
+
+        {/* Bot Selection Container - 1000px width, 100px height */}
+        <div className="flex justify-center">
+          <div className="w-[1000px] bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
+            <div className="p-3 border-b border-slate-700/50">
+              <div className="flex items-center gap-2">
+                <div className="p-1 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg">
+                  <Bot className="w-3 h-3 text-white" />
+                </div>
+                <h3 className="text-xs font-bold text-slate-200">Bot Selection</h3>
+                {selectedBot !== 'none' && (
+                  <div className="flex items-center gap-1 ml-auto">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-purple-500"></span>
+                    </span>
+                    <span className="text-[8px] text-purple-400">Active Bot: {selectedBot.toUpperCase()}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="p-3">
+              <div className="grid grid-cols-4 gap-2">
+                <button
+                  onClick={() => setSelectedBot(selectedBot === 'over6' ? 'none' : 'over6')}
+                  disabled={isRunning}
+                  className={`relative py-2 px-3 rounded-lg transition-all duration-200 ${
+                    selectedBot === 'over6'
+                      ? 'bg-gradient-to-r from-emerald-600 to-emerald-500 text-white shadow-lg shadow-emerald-500/30'
+                      : 'bg-slate-800/50 text-slate-300 hover:bg-slate-700/50 border border-slate-700'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  <div className="flex flex-col items-center">
+                    <span className="text-sm font-bold">🎯 Over 6 Bot</span>
+                    <span className="text-[8px] mt-1 opacity-75">1000 ticks | Most >5</span>
+                  </div>
+                </button>
+                
+                <button
+                  onClick={() => setSelectedBot(selectedBot === 'under3' ? 'none' : 'under3')}
+                  disabled={isRunning}
+                  className={`relative py-2 px-3 rounded-lg transition-all duration-200 ${
+                    selectedBot === 'under3'
+                      ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow-lg shadow-blue-500/30'
+                      : 'bg-slate-800/50 text-slate-300 hover:bg-slate-700/50 border border-slate-700'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  <div className="flex flex-col items-center">
+                    <span className="text-sm font-bold">📉 Under 3 Bot</span>
+                    <span className="text-[8px] mt-1 opacity-75">1000 ticks | Most <4</span>
+                  </div>
+                </button>
+                
+                <button
+                  onClick={() => setSelectedBot(selectedBot === 'even' ? 'none' : 'even')}
+                  disabled={isRunning}
+                  className={`relative py-2 px-3 rounded-lg transition-all duration-200 ${
+                    selectedBot === 'even'
+                      ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-lg shadow-purple-500/30'
+                      : 'bg-slate-800/50 text-slate-300 hover:bg-slate-700/50 border border-slate-700'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  <div className="flex flex-col items-center">
+                    <span className="text-sm font-bold">🔢 Even Bot</span>
+                    <span className="text-[8px] mt-1 opacity-75">500 ticks | Wait 4 odd</span>
+                  </div>
+                </button>
+                
+                <button
+                  onClick={() => setSelectedBot(selectedBot === 'odd' ? 'none' : 'odd')}
+                  disabled={isRunning}
+                  className={`relative py-2 px-3 rounded-lg transition-all duration-200 ${
+                    selectedBot === 'odd'
+                      ? 'bg-gradient-to-r from-amber-600 to-amber-500 text-white shadow-lg shadow-amber-500/30'
+                      : 'bg-slate-800/50 text-slate-300 hover:bg-slate-700/50 border border-slate-700'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                >
+                  <div className="flex flex-col items-center">
+                    <span className="text-sm font-bold">🔢 Odd Bot</span>
+                    <span className="text-[8px] mt-1 opacity-75">500 ticks | Wait 4 even</span>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        {/* Markets Row - Horizontal */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {/* Market 1 */}
           <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-emerald-500/30 rounded-xl p-4 shadow-xl">
@@ -844,10 +1242,14 @@ export default function ProScannerBot() {
                     <SelectValue placeholder="Select strategy" />
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
-                    <SelectItem value="over0_under9">🎯 Over 0 / Under 9 (2 ticks)</SelectItem>
-                    <SelectItem value="over1_under8">🎯 Over 1 / Under 8 (2 ticks)</SelectItem>
-                    <SelectItem value="over2_under7">🎯 Over 2 / Under 7 (3 ticks)</SelectItem>
-                    <SelectItem value="over3_under6">🎯 Over 3 / Under 6 (4 ticks)</SelectItem>
+                    <SelectItem value="over0_under9_2">🎯 Over 0 / Under 9 (2 ticks)</SelectItem>
+                    <SelectItem value="over0_under9_3">🎯 Over 0 / Under 9 (3 ticks)</SelectItem>
+                    <SelectItem value="over1_under8_2">🎯 Over 1 / Under 8 (2 ticks)</SelectItem>
+                    <SelectItem value="over1_under8_3">🎯 Over 1 / Under 8 (3 ticks)</SelectItem>
+                    <SelectItem value="over2_under7_3">🎯 Over 2 / Under 7 (3 ticks)</SelectItem>
+                    <SelectItem value="over2_under7_4">🎯 Over 2 / Under 7 (4 ticks)</SelectItem>
+                    <SelectItem value="over3_under6_4">🎯 Over 3 / Under 6 (4 ticks)</SelectItem>
+                    <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                     <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                   </SelectContent>
                 </Select>
@@ -891,7 +1293,7 @@ export default function ProScannerBot() {
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
                     <SelectItem value="odd_even_5">🔄 Even / Odd (5 ticks)</SelectItem>
-                    <SelectItem value="odd_even_6">🔄  Even / Odd (6 ticks)</SelectItem>
+                    <SelectItem value="odd_even_6">🔄 Even / Odd (6 ticks)</SelectItem>
                     <SelectItem value="odd_even_7">🔄 Even / Odd (7 ticks)</SelectItem>
                     <SelectItem value="odd_even_8">🔄 Even / Odd (8 ticks)</SelectItem>
                     <SelectItem value="odd_even_9">🔄 Even / Odd (9 ticks)</SelectItem>
@@ -900,6 +1302,8 @@ export default function ProScannerBot() {
                     <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
                     <SelectItem value="over4_under5_8">🎯 Over 4 / Under 5 (8 ticks)</SelectItem>
                     <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
+                    <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
+                    <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
                   </SelectContent>
                 </Select>
                 {m2RecoveryType !== 'disabled' && (
@@ -1010,7 +1414,7 @@ export default function ProScannerBot() {
           </button>
         </div>
 
-        {/* Market Scanner Patterns Container - Reduced to 600px width, 100px height */}
+        {/* Market Scanner Patterns Container - Width 1000px */}
         <div className="flex justify-center">
           <div className="w-[1000px] bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
             <div className="p-3 border-b border-slate-700/50">
@@ -1031,7 +1435,7 @@ export default function ProScannerBot() {
               </div>
             </div>
             
-            {/* Animated Dollar Icons Row - Right to Left Movement with Different Colors */}
+            {/* Animated Dollar Icons Row */}
             <div className="py-2 bg-slate-800/30 overflow-hidden relative">
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10">SCANNING</span>
@@ -1063,10 +1467,10 @@ export default function ProScannerBot() {
             </div>
             
             {/* Detected Patterns Display - height 100px */}
-            <div className="h-[60px] overflow-y-auto">
+            <div className="h-[100px] overflow-y-auto">
               {detectedPatterns.length === 0 ? (
                 <div className="h-full flex items-center justify-center">
-                  {/* Empty - no message shown until patterns found */}
+                  <span className="text-[10px] text-slate-500">Waiting for patterns...</span>
                 </div>
               ) : (
                 <div className="p-2 space-y-1.5">
@@ -1117,12 +1521,13 @@ export default function ProScannerBot() {
                   <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
                   {SCANNER_MARKETS.length} markets
                 </span>
-                <span className="font-mono text-[7px]">M1: {m1StrategyType !== 'disabled' ? m1StrategyType.substring(0, 8) : 'OFF'} | M2: {m2RecoveryType !== 'disabled' ? m2RecoveryType.substring(0, 8) : 'OFF'}</span>
+                <span className="font-mono text-[7px]">M1: {m1StrategyType !== 'disabled' ? m1StrategyType.substring(0, 8) : 'OFF'} | M2: {m2RecoveryType !== 'disabled' ? m2RecoveryType.substring(0, 8) : 'OFF'} | Bot: {selectedBot !== 'none' ? selectedBot.toUpperCase() : 'OFF'}</span>
               </div>
             </div>
           </div>
         </div>
-         {/* Performance Stats Row */}
+        
+        {/* Performance Stats Row */}
         <div className="bg-gradient-to-br from-slate-900/80 to-slate-800/80 backdrop-blur-sm border border-slate-700/50 rounded-xl p-4 shadow-xl">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-semibold text-slate-200 flex items-center gap-2">
@@ -1131,7 +1536,7 @@ export default function ProScannerBot() {
             </span>
             <span className="font-mono text-xl font-bold text-cyan-400">${balance.toFixed(2)}</span>
           </div>
-          <div className="grid grid-cols-5 gap-3">
+          <div className="grid grid-cols-6 gap-3">
             <div className="text-center bg-slate-800/30 rounded-lg p-2">
               <div className="text-[9px] text-slate-400 mb-1">Total Trades</div>
               <div className="font-mono text-lg font-bold text-slate-200">{wins + losses}</div>
@@ -1149,6 +1554,12 @@ export default function ProScannerBot() {
               <div className="font-mono text-lg font-bold text-rose-400">{losses}</div>
             </div>
             <div className="text-center bg-slate-800/30 rounded-lg p-2">
+              <div className="text-[9px] text-slate-400 mb-1">Total Staked</div>
+              <div className="font-mono text-lg font-bold text-amber-400">
+                ${totalStaked.toFixed(2)}
+              </div>
+            </div>
+            <div className="text-center bg-slate-800/30 rounded-lg p-2">
               <div className="text-[9px] text-slate-400 mb-1">Net Profit</div>
               <div className={`font-mono text-lg font-bold ${netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                 {netProfit >= 0 ? '+' : ''}{netProfit.toFixed(2)}
@@ -1157,7 +1568,7 @@ export default function ProScannerBot() {
           </div>
         </div>
 
-        {/* Activity Log - Full Width */}
+        {/* Activity Log */}
         <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
           <div className="px-4 py-3 border-b border-slate-700/50 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
@@ -1194,11 +1605,15 @@ export default function ProScannerBot() {
                   </tr>
                 ) : logEntries.map(e => (
                   <tr key={e.id} className={`border-t border-slate-700/30 hover:bg-slate-800/30 transition-colors ${
-                    e.market === 'M1' ? 'border-l-2 border-l-emerald-500' : 'border-l-2 border-l-fuchsia-500'
+                    e.market === 'M1' ? 'border-l-2 border-l-emerald-500' : 
+                    e.market === 'M2' ? 'border-l-2 border-l-fuchsia-500' : 
+                    'border-l-2 border-l-purple-500'
                   }`}>
                     <td className="p-2 font-mono text-[9px] text-slate-400">{e.time}</td>
                     <td className={`p-2 font-bold text-xs ${
-                      e.market === 'M1' ? 'text-emerald-400' : 'text-fuchsia-400'
+                      e.market === 'M1' ? 'text-emerald-400' : 
+                      e.market === 'M2' ? 'text-fuchsia-400' : 
+                      'text-purple-400'
                     }`}>{e.market}</td>
                     <td className="p-2 font-mono text-[9px] text-slate-300">{e.symbol}</td>
                     <td className="p-2 text-[9px] text-slate-300">{e.contract.replace('DIGIT', '')}</td>
@@ -1230,6 +1645,37 @@ export default function ProScannerBot() {
           </div>
         </div>
       </div>
+      
+      {/* Add CSS animation for scrolling */}
+      <style>{`
+        @keyframes scrollRightToLeft {
+          0% {
+            transform: translateX(0);
+          }
+          100% {
+            transform: translateX(-100%);
+          }
+        }
+        
+        .animate-scroll-right-to-left {
+          animation: scrollRightToLeft 12s linear infinite;
+        }
+        
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateY(-10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        
+        .animate-slideIn {
+          animation: slideIn 0.3s ease-out;
+        }
+      `}</style>
     </div>
   );
 }
