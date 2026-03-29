@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react'; 
 import { useLocation } from 'react-router-dom';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { copyTradingService } from '@/services/copy-trading-service';
@@ -13,8 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import {
   Play, StopCircle, Trash2, Scan,
-  Home, RefreshCw, Shield, TrendingUp, DollarSign,
-  History, BookOpen, BarChart3, Download, X
+  Home, RefreshCw, Shield, TrendingUp, DollarSign
 } from 'lucide-react';
 
 const SCANNER_MARKETS: { symbol: string; name: string }[] = [
@@ -62,43 +61,6 @@ interface DetectedPattern {
   patternType: string;
   timestamp: number;
   digits: number[];
-}
-
-// NEW: Analytics Types
-interface TransactionRecord {
-  id: number;
-  time: string;
-  symbol: string;
-  contractType: string;
-  stake: number;
-  profitLoss: number;
-  result: 'Win' | 'Loss';
-  balance: number;
-}
-
-interface JournalRecord {
-  id: number;
-  timestamp: string;
-  type: 'INFO' | 'TRADE' | 'PROFIT' | 'LOSS' | 'ERROR';
-  message: string;
-  details?: any;
-}
-
-interface SummaryStats {
-  totalTrades: number;
-  wins: number;
-  losses: number;
-  totalProfitLoss: number;
-  totalStake: number;
-  winRate: number;
-  avgWin: number;
-  avgLoss: number;
-  largestWin: number;
-  largestLoss: number;
-  currentStreak: number;
-  currentStreakType: 'win' | 'loss' | null;
-  bestStreak: number;
-  worstStreak: number;
 }
 
 function waitForNextTick(symbol: string): Promise<{ quote: number }> {
@@ -168,33 +130,6 @@ export default function ProScannerBot() {
   // Track overall last trade time to prevent rapid successive trades
   const lastTradeOverallRef = useRef<number>(0);
 
-  /* ── NEW: Analytics State ── */
-  const [transactions, setTransactions] = useState<TransactionRecord[]>([]);
-  const [journalEntries, setJournalEntries] = useState<JournalRecord[]>([]);
-  const [summaryStats, setSummaryStats] = useState<SummaryStats>({
-    totalTrades: 0,
-    wins: 0,
-    losses: 0,
-    totalProfitLoss: 0,
-    totalStake: 0,
-    winRate: 0,
-    avgWin: 0,
-    avgLoss: 0,
-    largestWin: 0,
-    largestLoss: 0,
-    currentStreak: 0,
-    currentStreakType: null,
-    bestStreak: 0,
-    worstStreak: 0,
-  });
-  const [activeAnalyticsTab, setActiveAnalyticsTab] = useState<'summary' | 'transactions' | 'journal'>('summary');
-
-  // Streak tracking refs
-  const currentStreakRef = useRef(0);
-  const currentStreakTypeRef = useRef<'win' | 'loss' | null>(null);
-  const bestStreakRef = useRef(0);
-  const worstStreakRef = useRef(0);
-
   /* ── Tick data ── */
   const tickMapRef = useRef<Map<string, number[]>>(new Map());
 
@@ -216,188 +151,6 @@ export default function ProScannerBot() {
     SCANNER_MARKETS.forEach(m => { derivApi.subscribeTicks(m.symbol as MarketSymbol, () => {}).catch(() => {}); });
     return () => { active = false; unsub(); };
   }, []);
-
-  /* ── NEW: Analytics Helper Functions ── */
-  const addJournalEntry = useCallback((type: JournalRecord['type'], message: string, details?: any) => {
-    const entry: JournalRecord = {
-      id: Date.now(),
-      timestamp: new Date().toLocaleTimeString(),
-      type,
-      message,
-      details,
-    };
-    setJournalEntries(prev => [entry, ...prev].slice(0, 200));
-    
-    // Also log to console
-    console.log(`[${type}]`, message, details || '');
-  }, []);
-
-  const updateSummaryFromTrade = useCallback((won: boolean, profitLoss: number, stakeAmount: number) => {
-    setSummaryStats(prev => {
-      const newTotalTrades = prev.totalTrades + 1;
-      const newWins = prev.wins + (won ? 1 : 0);
-      const newLosses = prev.losses + (won ? 0 : 1);
-      const newTotalProfitLoss = prev.totalProfitLoss + profitLoss;
-      const newTotalStake = prev.totalStake + stakeAmount;
-      const newWinRate = newTotalTrades > 0 ? (newWins / newTotalTrades) * 100 : 0;
-      
-      // Update streaks
-      let newCurrentStreak = prev.currentStreak;
-      let newCurrentStreakType = prev.currentStreakType;
-      
-      if (won) {
-        if (currentStreakTypeRef.current === 'win') {
-          currentStreakRef.current++;
-        } else {
-          currentStreakRef.current = 1;
-          currentStreakTypeRef.current = 'win';
-        }
-        newCurrentStreak = currentStreakRef.current;
-        newCurrentStreakType = 'win';
-        bestStreakRef.current = Math.max(bestStreakRef.current, currentStreakRef.current);
-      } else {
-        if (currentStreakTypeRef.current === 'loss') {
-          currentStreakRef.current++;
-        } else {
-          currentStreakRef.current = 1;
-          currentStreakTypeRef.current = 'loss';
-        }
-        newCurrentStreak = currentStreakRef.current;
-        newCurrentStreakType = 'loss';
-        worstStreakRef.current = Math.max(worstStreakRef.current, currentStreakRef.current);
-      }
-      
-      // Update averages
-      const newAvgWin = newWins > 0 
-        ? ((prev.avgWin * (prev.wins)) + (won ? profitLoss : 0)) / newWins
-        : prev.avgWin;
-      
-      const newAvgLoss = newLosses > 0
-        ? ((prev.avgLoss * (prev.losses)) + (!won ? Math.abs(profitLoss) : 0)) / newLosses
-        : prev.avgLoss;
-      
-      return {
-        ...prev,
-        totalTrades: newTotalTrades,
-        wins: newWins,
-        losses: newLosses,
-        totalProfitLoss: newTotalProfitLoss,
-        totalStake: newTotalStake,
-        winRate: newWinRate,
-        avgWin: newAvgWin,
-        avgLoss: newAvgLoss,
-        largestWin: won ? Math.max(prev.largestWin, profitLoss) : prev.largestWin,
-        largestLoss: !won ? Math.min(prev.largestLoss, profitLoss) : prev.largestLoss,
-        currentStreak: newCurrentStreak,
-        currentStreakType: newCurrentStreakType,
-        bestStreak: bestStreakRef.current,
-        worstStreak: worstStreakRef.current,
-      };
-    });
-  }, []);
-
-  const addTransaction = useCallback((symbol: string, contractType: string, stakeAmount: number, profitLoss: number, result: 'Win' | 'Loss', balanceAfter: number) => {
-    const transaction: TransactionRecord = {
-      id: Date.now(),
-      time: new Date().toLocaleTimeString(),
-      symbol,
-      contractType,
-      stake: stakeAmount,
-      profitLoss,
-      result,
-      balance: balanceAfter,
-    };
-    setTransactions(prev => [transaction, ...prev].slice(0, 200));
-    
-    // Update summary
-    updateSummaryFromTrade(result === 'Win', profitLoss, stakeAmount);
-    
-    // Add journal entry
-    addJournalEntry(
-      result === 'Win' ? 'PROFIT' : 'LOSS',
-      `${result === 'Win' ? 'Won' : 'Lost'} ${Math.abs(profitLoss).toFixed(2)} on ${symbol}`,
-      { stake: stakeAmount, profitLoss, contractType }
-    );
-  }, [updateSummaryFromTrade, addJournalEntry]);
-
-  const exportTransactionsToCSV = useCallback(() => {
-    if (transactions.length === 0) {
-      toast.error('No transactions to export');
-      return;
-    }
-    
-    const headers = ['Time', 'Symbol', 'Contract', 'Stake', 'Profit/Loss', 'Result', 'Balance'];
-    const rows = transactions.map(t => [
-      t.time,
-      t.symbol,
-      t.contractType,
-      t.stake.toFixed(2),
-      t.profitLoss.toFixed(2),
-      t.result,
-      t.balance.toFixed(2),
-    ]);
-    
-    const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `transactions_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    
-    toast.success('Transactions exported successfully');
-  }, [transactions]);
-
-  const clearAnalytics = useCallback(() => {
-    if (confirm('Are you sure you want to clear all transaction and journal data?')) {
-      setTransactions([]);
-      setJournalEntries([]);
-      setSummaryStats({
-        totalTrades: 0,
-        wins: 0,
-        losses: 0,
-        totalProfitLoss: 0,
-        totalStake: 0,
-        winRate: 0,
-        avgWin: 0,
-        avgLoss: 0,
-        largestWin: 0,
-        largestLoss: 0,
-        currentStreak: 0,
-        currentStreakType: null,
-        bestStreak: 0,
-        worstStreak: 0,
-      });
-      currentStreakRef.current = 0;
-      currentStreakTypeRef.current = null;
-      bestStreakRef.current = 0;
-      worstStreakRef.current = 0;
-      toast.success('Analytics cleared');
-    }
-  }, []);
-
-  // Load saved data from localStorage on mount
-  useEffect(() => {
-    try {
-      const savedTransactions = localStorage.getItem('bot_transactions');
-      const savedJournal = localStorage.getItem('bot_journal');
-      const savedSummary = localStorage.getItem('bot_summary');
-      
-      if (savedTransactions) setTransactions(JSON.parse(savedTransactions));
-      if (savedJournal) setJournalEntries(JSON.parse(savedJournal));
-      if (savedSummary) setSummaryStats(JSON.parse(savedSummary));
-    } catch (e) {
-      console.error('Failed to load saved data:', e);
-    }
-  }, []);
-
-  // Save data to localStorage when changed
-  useEffect(() => {
-    localStorage.setItem('bot_transactions', JSON.stringify(transactions.slice(0, 100)));
-    localStorage.setItem('bot_journal', JSON.stringify(journalEntries.slice(0, 100)));
-    localStorage.setItem('bot_summary', JSON.stringify(summaryStats));
-  }, [transactions, journalEntries, summaryStats]);
 
   const checkM1Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string; patternDigits?: string } => {
     const digits = tickMapRef.current.get(symbol) || [];
@@ -653,6 +406,7 @@ export default function ProScannerBot() {
     }
   }, [m2RecoveryType]);
 
+  // Function to add detected pattern to display
   const addDetectedPattern = useCallback((symbol: string, name: string, patternType: string, digits: number[]) => {
     const newPattern = {
       symbol,
@@ -668,6 +422,7 @@ export default function ProScannerBot() {
   }, []);
 
   const findM1Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null => {
+    // Prevent rapid successive trades
     if (Date.now() - lastTradeOverallRef.current < 2000) return null;
     
     for (const market of SCANNER_MARKETS) {
@@ -698,6 +453,7 @@ export default function ProScannerBot() {
   }, [checkM1Pattern, m1StrategyType, addDetectedPattern]);
 
   const findM2Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null => {
+    // Prevent rapid successive trades
     if (Date.now() - lastTradeOverallRef.current < 2000) return null;
     
     for (const market of SCANNER_MARKETS) {
@@ -795,17 +551,6 @@ export default function ProScannerBot() {
       localPnl += pnl;
       localBalance += pnl;
 
-      // NEW: Add transaction record
-      addTransaction(tradeSymbol, contractType, cStake, pnl, won ? 'Win' : 'Loss', localBalance);
-      
-      // Add journal entry for trade
-      addJournalEntry('TRADE', `${won ? 'Win' : 'Loss'} on ${tradeSymbol}`, {
-        contractType,
-        stake: cStake,
-        profitLoss: pnl,
-        balance: localBalance,
-      });
-
       const exitDigit = String(getLastDigit(result.sellPrice || 0));
 
       let switchInfo = `Pattern: ${patternDigits} | Exit: ${exitDigit}`;
@@ -864,28 +609,24 @@ export default function ProScannerBot() {
       let shouldBreak = false;
       if (localPnl >= parseFloat(takeProfit)) {
         toast.success(`🎯 Take Profit! +$${localPnl.toFixed(2)}`);
-        addJournalEntry('PROFIT', `Take profit reached: $${localPnl.toFixed(2)}`, { profitLoss: localPnl });
         shouldBreak = true;
       }
       if (localPnl <= -parseFloat(stopLoss)) {
         toast.error(`🛑 Stop Loss! $${localPnl.toFixed(2)}`);
-        addJournalEntry('LOSS', `Stop loss reached: $${localPnl.toFixed(2)}`, { profitLoss: localPnl });
         shouldBreak = true;
       }
       if (localBalance < cStake) {
         toast.error('Insufficient balance');
-        addJournalEntry('ERROR', 'Insufficient balance for next trade');
         shouldBreak = true;
       }
 
       return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak };
     } catch (err: any) {
       updateLog(logId, { result: 'Loss', pnl: 0, exitDigit: '-', switchInfo: `Error: ${err.message}` });
-      addJournalEntry('ERROR', `Trade failed: ${err.message}`, { error: err.message });
       await new Promise(r => setTimeout(r, 2000));
       return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak: false };
     }
-  }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, activeAccount, recordLoss, addTransaction, addJournalEntry]);
+  }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, activeAccount, recordLoss]);
 
   const startBot = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
@@ -899,12 +640,6 @@ export default function ProScannerBot() {
     setBotStatus('trading_m1');
     setCurrentStakeState(baseStake);
     setMartingaleStepState(0);
-    
-    // Reset streak refs for new session
-    currentStreakRef.current = 0;
-    currentStreakTypeRef.current = null;
-    
-    addJournalEntry('INFO', 'Bot started', { stake: baseStake, takeProfit, stopLoss });
     
     lastTradeTimeRef.current.clear();
     lastPatternDigitsRef.current.clear();
@@ -1022,18 +757,16 @@ export default function ProScannerBot() {
     setIsRunning(false);
     runningRef.current = false;
     setBotStatus('idle');
-    addJournalEntry('INFO', 'Bot stopped', { totalProfitLoss: netProfit, totalTrades: wins + losses });
   }, [isAuthorized, isRunning, balance, stake, m1Enabled, m2Enabled,
     martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss,
     strategyM1Enabled, strategyM2Enabled, m1StrategyType, m2RecoveryType,
-    findM1Match, findM2Match, addLog, updateLog, executeRealTrade, addJournalEntry, netProfit, wins, losses]);
+    findM1Match, findM2Match, addLog, updateLog, executeRealTrade]);
 
   const stopBot = useCallback(() => {
     runningRef.current = false;
     setIsRunning(false);
     setBotStatus('idle');
-    addJournalEntry('INFO', 'Bot stopped by user');
-  }, [addJournalEntry]);
+  }, []);
 
   const statusConfig: Record<BotStatus, { icon: string; label: string; color: string }> = {
     idle: { icon: '⚪', label: 'IDLE', color: 'text-slate-400' },
@@ -1046,6 +779,7 @@ export default function ProScannerBot() {
   const status = statusConfig[botStatus];
   const winRate = wins + losses > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : '0.0';
 
+  // Colors for dollar icons
   const dollarColors = ['text-emerald-400', 'text-cyan-400', 'text-amber-400', 'text-rose-400', 'text-purple-400', 'text-blue-400', 'text-indigo-400', 'text-pink-400'];
 
   return (
@@ -1060,7 +794,7 @@ export default function ProScannerBot() {
               </div>
               <div>
                 <h1 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
-                  Milliefx Ultimate 2026 Bot
+                 Milliefx Ultimate 2026 Bot
                 </h1>
                 <p className="text-xs text-slate-400">Milliefx Advanced Market Scanning & Recovery System</p>
               </div>
@@ -1082,8 +816,7 @@ export default function ProScannerBot() {
             </div>
           </div>
         </div>
-
-        {/* Markets Row */}
+     {/* Markets Row - Horizontal */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {/* Market 1 */}
           <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-emerald-500/30 rounded-xl p-4 shadow-xl">
@@ -1157,11 +890,11 @@ export default function ProScannerBot() {
                     <SelectValue placeholder="Select strategy" />
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
-                    <SelectItem value="odd_even_5">🔄 Odd / Even (5 ticks)</SelectItem>
-                    <SelectItem value="odd_even_6">🔄 Odd / Even (6 ticks)</SelectItem>
-                    <SelectItem value="odd_even_7">🔄 Odd / Even (7 ticks)</SelectItem>
-                    <SelectItem value="odd_even_8">🔄 Odd / Even (8 ticks)</SelectItem>
-                    <SelectItem value="odd_even_9">🔄 Odd / Even (9 ticks)</SelectItem>
+                    <SelectItem value="odd_even_5">🔄 Even / Odd (5 ticks)</SelectItem>
+                    <SelectItem value="odd_even_6">🔄  Even / Odd (6 ticks)</SelectItem>
+                    <SelectItem value="odd_even_7">🔄 Even / Odd (7 ticks)</SelectItem>
+                    <SelectItem value="odd_even_8">🔄 Even / Odd (8 ticks)</SelectItem>
+                    <SelectItem value="odd_even_9">🔄 Even / Odd (9 ticks)</SelectItem>
                     <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                     <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
                     <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
@@ -1220,7 +953,7 @@ export default function ProScannerBot() {
           )}
         </div>
 
-        {/* Start/Stop Button */}
+        {/* Single Start/Stop Button - Width 600px */}
         <div className="flex justify-center">
           <button
             onClick={isRunning ? stopBot : startBot}
@@ -1277,7 +1010,7 @@ export default function ProScannerBot() {
           </button>
         </div>
 
-        {/* Market Scanner Patterns Container */}
+        {/* Market Scanner Patterns Container - Reduced to 600px width, 100px height */}
         <div className="flex justify-center">
           <div className="w-[1000px] bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
             <div className="p-3 border-b border-slate-700/50">
@@ -1298,7 +1031,7 @@ export default function ProScannerBot() {
               </div>
             </div>
             
-            {/* Animated Dollar Icons Row */}
+            {/* Animated Dollar Icons Row - Right to Left Movement with Different Colors */}
             <div className="py-2 bg-slate-800/30 overflow-hidden relative">
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10">SCANNING</span>
@@ -1329,11 +1062,11 @@ export default function ProScannerBot() {
               </div>
             </div>
             
-            {/* Detected Patterns Display */}
+            {/* Detected Patterns Display - height 100px */}
             <div className="h-[60px] overflow-y-auto">
               {detectedPatterns.length === 0 ? (
                 <div className="h-full flex items-center justify-center">
-                  {/* Empty state */}
+                  {/* Empty - no message shown until patterns found */}
                 </div>
               ) : (
                 <div className="p-2 space-y-1.5">
@@ -1377,6 +1110,7 @@ export default function ProScannerBot() {
               )}
             </div>
             
+            {/* Scanning Animation Text */}
             <div className="p-2 border-t border-slate-700/30">
               <div className="flex items-center justify-between text-[8px] text-slate-500">
                 <span className="flex items-center gap-1">
@@ -1388,8 +1122,7 @@ export default function ProScannerBot() {
             </div>
           </div>
         </div>
-
-        {/* Performance Stats Row */}
+         {/* Performance Stats Row */}
         <div className="bg-gradient-to-br from-slate-900/80 to-slate-800/80 backdrop-blur-sm border border-slate-700/50 rounded-xl p-4 shadow-xl">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-semibold text-slate-200 flex items-center gap-2">
@@ -1424,7 +1157,7 @@ export default function ProScannerBot() {
           </div>
         </div>
 
-        {/* Activity Log */}
+        {/* Activity Log - Full Width */}
         <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
           <div className="px-4 py-3 border-b border-slate-700/50 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
@@ -1438,7 +1171,7 @@ export default function ProScannerBot() {
               <Trash2 className="w-3.5 h-3.5" />
             </Button>
           </div>
-          <div className="max-h-[300px] overflow-auto">
+          <div className="max-h-[500px] overflow-auto">
             <table className="w-full text-[11px]">
               <thead className="text-[10px] text-slate-400 bg-slate-800/50 sticky top-0">
                 <tr>
@@ -1496,263 +1229,7 @@ export default function ProScannerBot() {
             </table>
           </div>
         </div>
-
-        {/* ===== NEW: ANALYTICS SECTION ===== */}
-        <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
-          {/* Analytics Tabs */}
-          <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700/50 bg-slate-800/30">
-            <div className="flex gap-1">
-              <button
-                onClick={() => setActiveAnalyticsTab('summary')}
-                className={`px-3 py-1.5 text-xs rounded-lg transition-all flex items-center gap-1.5 ${
-                  activeAnalyticsTab === 'summary'
-                    ? 'bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-400 border border-emerald-500/30'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
-                }`}
-              >
-                <BarChart3 className="w-3.5 h-3.5" />
-                Summary
-              </button>
-              <button
-                onClick={() => setActiveAnalyticsTab('transactions')}
-                className={`px-3 py-1.5 text-xs rounded-lg transition-all flex items-center gap-1.5 ${
-                  activeAnalyticsTab === 'transactions'
-                    ? 'bg-gradient-to-r from-blue-500/20 to-indigo-500/20 text-blue-400 border border-blue-500/30'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
-                }`}
-              >
-                <History className="w-3.5 h-3.5" />
-                Transactions ({transactions.length})
-              </button>
-              <button
-                onClick={() => setActiveAnalyticsTab('journal')}
-                className={`px-3 py-1.5 text-xs rounded-lg transition-all flex items-center gap-1.5 ${
-                  activeAnalyticsTab === 'journal'
-                    ? 'bg-gradient-to-r from-purple-500/20 to-pink-500/20 text-purple-400 border border-purple-500/30'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
-                }`}
-              >
-                <BookOpen className="w-3.5 h-3.5" />
-                Journal ({journalEntries.length})
-              </button>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearAnalytics}
-              className="h-7 px-2 text-slate-400 hover:text-rose-400 text-xs"
-            >
-              <Trash2 className="w-3.5 h-3.5 mr-1" />
-              Clear
-            </Button>
-          </div>
-
-          {/* Summary Tab Content */}
-          {activeAnalyticsTab === 'summary' && (
-            <div className="p-4">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                  <div className="text-[10px] text-slate-400 mb-1">Total Trades</div>
-                  <div className="text-2xl font-bold text-slate-200">{summaryStats.totalTrades}</div>
-                </div>
-                <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                  <div className="text-[10px] text-slate-400 mb-1">Win Rate</div>
-                  <div className={`text-2xl font-bold ${summaryStats.winRate >= 50 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {summaryStats.winRate.toFixed(1)}%
-                  </div>
-                </div>
-                <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                  <div className="text-[10px] text-slate-400 mb-1">Total P/L</div>
-                  <div className={`text-2xl font-bold ${summaryStats.totalProfitLoss >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    ${summaryStats.totalProfitLoss.toFixed(2)}
-                  </div>
-                </div>
-                <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                  <div className="text-[10px] text-slate-400 mb-1">Total Stake</div>
-                  <div className="text-2xl font-bold text-slate-200">${summaryStats.totalStake.toFixed(2)}</div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <div className="bg-slate-800/30 rounded-lg p-2">
-                  <div className="text-[9px] text-slate-400">Wins / Losses</div>
-                  <div className="text-sm font-mono font-bold">
-                    <span className="text-emerald-400">{summaryStats.wins}</span>
-                    <span className="text-slate-500"> / </span>
-                    <span className="text-rose-400">{summaryStats.losses}</span>
-                  </div>
-                </div>
-                <div className="bg-slate-800/30 rounded-lg p-2">
-                  <div className="text-[9px] text-slate-400">Avg Win / Loss</div>
-                  <div className="text-sm font-mono font-bold">
-                    <span className="text-emerald-400">+${summaryStats.avgWin.toFixed(2)}</span>
-                    <span className="text-slate-500"> / </span>
-                    <span className="text-rose-400">-${summaryStats.avgLoss.toFixed(2)}</span>
-                  </div>
-                </div>
-                <div className="bg-slate-800/30 rounded-lg p-2">
-                  <div className="text-[9px] text-slate-400">Best / Worst Streak</div>
-                  <div className="text-sm font-mono font-bold">
-                    <span className="text-emerald-400">{summaryStats.bestStreak}W</span>
-                    <span className="text-slate-500"> / </span>
-                    <span className="text-rose-400">{summaryStats.worstStreak}L</span>
-                  </div>
-                </div>
-                <div className="bg-slate-800/30 rounded-lg p-2">
-                  <div className="text-[9px] text-slate-400">Current Streak</div>
-                  <div className={`text-sm font-mono font-bold ${
-                    summaryStats.currentStreakType === 'win' ? 'text-emerald-400' : 'text-rose-400'
-                  }`}>
-                    {summaryStats.currentStreak} {summaryStats.currentStreakType?.toUpperCase() || '-'}
-                  </div>
-                </div>
-                <div className="bg-slate-800/30 rounded-lg p-2">
-                  <div className="text-[9px] text-slate-400">Largest Win</div>
-                  <div className="text-sm font-mono font-bold text-emerald-400">
-                    +${summaryStats.largestWin.toFixed(2)}
-                  </div>
-                </div>
-                <div className="bg-slate-800/30 rounded-lg p-2">
-                  <div className="text-[9px] text-slate-400">Largest Loss</div>
-                  <div className="text-sm font-mono font-bold text-rose-400">
-                    ${Math.abs(summaryStats.largestLoss).toFixed(2)}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Transactions Tab Content */}
-          {activeAnalyticsTab === 'transactions' && (
-            <div className="p-4">
-              <div className="flex justify-between items-center mb-3">
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    onClick={exportTransactionsToCSV}
-                    className="h-7 px-2 text-xs bg-blue-600 hover:bg-blue-700"
-                  >
-                    <Download className="w-3 h-3 mr-1" />
-                    Export CSV
-                  </Button>
-                </div>
-                <span className="text-[10px] text-slate-500">{transactions.length} total transactions</span>
-              </div>
-              
-              {transactions.length === 0 ? (
-                <div className="text-center text-slate-500 py-8 text-sm">
-                  No transactions yet. Start the bot to see trading activity.
-                </div>
-              ) : (
-                <div className="max-h-[300px] overflow-auto">
-                  <table className="w-full text-[11px]">
-                    <thead className="text-[10px] text-slate-400 bg-slate-800/50 sticky top-0">
-                      <tr>
-                        <th className="text-left p-2">Time</th>
-                        <th className="text-left p-2">Symbol</th>
-                        <th className="text-left p-2">Contract</th>
-                        <th className="text-right p-2">Stake</th>
-                        <th className="text-right p-2">P/L</th>
-                        <th className="text-center p-2">Result</th>
-                        <th className="text-right p-2">Balance</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {transactions.map((tx) => (
-                        <tr key={tx.id} className="border-t border-slate-700/30 hover:bg-slate-800/30">
-                          <td className="p-2 font-mono text-[9px] text-slate-400">{tx.time}</td>
-                          <td className="p-2 text-[10px] font-mono text-slate-300">{tx.symbol}</td>
-                          <td className="p-2 text-[9px] text-slate-400">{tx.contractType}</td>
-                          <td className="p-2 text-right font-mono text-[10px] text-amber-400">${tx.stake.toFixed(2)}</td>
-                          <td className={`p-2 text-right font-mono text-[10px] font-bold ${tx.profitLoss >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {tx.profitLoss >= 0 ? '+' : ''}{tx.profitLoss.toFixed(2)}
-                          </td>
-                          <td className="p-2 text-center">
-                            <Badge className={`text-[8px] ${tx.result === 'Win' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
-                              {tx.result}
-                            </Badge>
-                          </td>
-                          <td className="p-2 text-right font-mono text-[9px] text-slate-400">${tx.balance.toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Journal Tab Content */}
-          {activeAnalyticsTab === 'journal' && (
-            <div className="p-4 max-h-[300px] overflow-y-auto">
-              {journalEntries.length === 0 ? (
-                <div className="text-center text-slate-500 py-8 text-sm">
-                  No journal entries yet. Bot activity will appear here.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {journalEntries.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className={`p-2 rounded-lg border-l-3 ${
-                        entry.type === 'PROFIT' ? 'border-l-emerald-500 bg-emerald-500/5' :
-                        entry.type === 'LOSS' ? 'border-l-rose-500 bg-rose-500/5' :
-                        entry.type === 'TRADE' ? 'border-l-blue-500 bg-blue-500/5' :
-                        entry.type === 'ERROR' ? 'border-l-red-500 bg-red-500/5' :
-                        'border-l-slate-500 bg-slate-500/5'
-                      }`}
-                    >
-                      <div className="flex items-start gap-2">
-                        <Badge className={`text-[8px] shrink-0 ${
-                          entry.type === 'PROFIT' ? 'bg-emerald-500/20 text-emerald-400' :
-                          entry.type === 'LOSS' ? 'bg-rose-500/20 text-rose-400' :
-                          entry.type === 'TRADE' ? 'bg-blue-500/20 text-blue-400' :
-                          entry.type === 'ERROR' ? 'bg-red-500/20 text-red-400' :
-                          'bg-slate-500/20 text-slate-400'
-                        }`}>
-                          {entry.type}
-                        </Badge>
-                        <span className="text-[9px] font-mono text-slate-500 shrink-0">{entry.timestamp}</span>
-                        <span className="text-[10px] text-slate-300 flex-1">{entry.message}</span>
-                      </div>
-                      {entry.details && (
-                        <div className="text-[8px] text-slate-500 mt-1 ml-14">
-                          {JSON.stringify(entry.details).slice(0, 100)}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
       </div>
-
-      {/* CSS Animations */}
-      <style>{`
-        @keyframes scrollRightToLeft {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-100%); }
-        }
-        @keyframes slideIn {
-          from { opacity: 0; transform: translateX(20px); }
-          to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes shimmer {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(100%); }
-        }
-        .animate-scroll-right-to-left {
-          animation: scrollRightToLeft 12s linear infinite;
-        }
-        .animate-slideIn {
-          animation: slideIn 0.3s ease-out;
-        }
-        .animate-shimmer {
-          animation: shimmer 2s infinite;
-        }
-      `}</style>
     </div>
   );
 }
