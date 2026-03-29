@@ -657,7 +657,7 @@ export default function ProScannerBot() {
       }
     }
     return null;
-  }, [selectedBot, analyzeOver6Bot, analyzeUnder3Bot, analyzeEvenBot, analyzeOddBot, addDetectedPattern]);
+  }, [selectedBot, analyzeOver6Bot, analyzeUnder3Bot, analyzeEvenBot, analyzeOddBot]);
 
   const findM1Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null => {
     if (Date.now() - lastTradeOverallRef.current < 2000) return null;
@@ -687,7 +687,7 @@ export default function ProScannerBot() {
       }
     }
     return null;
-  }, [checkM1Pattern, m1StrategyType, addDetectedPattern]);
+  }, [checkM1Pattern, m1StrategyType]);
 
   const findM2Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null => {
     if (Date.now() - lastTradeOverallRef.current < 2000) return null;
@@ -717,7 +717,7 @@ export default function ProScannerBot() {
       }
     }
     return null;
-  }, [checkM2Pattern, m2RecoveryType, addDetectedPattern]);
+  }, [checkM2Pattern, m2RecoveryType]);
 
   const addDetectedPattern = useCallback((symbol: string, name: string, patternType: string, digits: number[]) => {
     const newPattern = {
@@ -1440,7 +1440,7 @@ export default function ProScannerBot() {
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10">SCANNING</span>
               </div>
-              <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite' }}>
+              <div className="flex items-center gap-2" style={{ animation: 'scrollRightToLeft 12s linear infinite' }}>
                 {[...Array(15)].map((_, i) => (
                   <DollarSign 
                     key={i}
@@ -1452,7 +1452,7 @@ export default function ProScannerBot() {
                   />
                 ))}
               </div>
-              <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite', position: 'absolute', top: 0, left: '100%' }}>
+              <div className="flex items-center gap-2" style={{ animation: 'scrollRightToLeft 12s linear infinite', position: 'absolute', top: 0, left: '100%' }}>
                 {[...Array(15)].map((_, i) => (
                   <DollarSign 
                     key={`dup-${i}`}
@@ -1477,7 +1477,7 @@ export default function ProScannerBot() {
                   {detectedPatterns.map((pattern) => (
                     <div 
                       key={pattern.timestamp}
-                      className="bg-slate-800/50 rounded-lg p-2 border border-slate-700/50 animate-slideIn"
+                      className="bg-slate-800/50 rounded-lg p-2 border border-slate-700/50"
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
@@ -1646,7 +1646,7 @@ export default function ProScannerBot() {
         </div>
       </div>
       
-      {/* Add CSS animation for scrolling */}
+      {/* CSS animations for scrolling and slide effects */}
       <style>{`
         @keyframes scrollRightToLeft {
           0% {
@@ -1655,10 +1655,6 @@ export default function ProScannerBot() {
           100% {
             transform: translateX(-100%);
           }
-        }
-        
-        .animate-scroll-right-to-left {
-          animation: scrollRightToLeft 12s linear infinite;
         }
         
         @keyframes slideIn {
@@ -1670,10 +1666,6 @@ export default function ProScannerBot() {
             opacity: 1;
             transform: translateY(0);
           }
-        }
-        
-        .animate-slideIn {
-          animation: slideIn 0.3s ease-out;
         }
       `}</style>
     </div>
