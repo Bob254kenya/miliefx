@@ -1,3 +1,4 @@
+// Add these imports at the top of your file
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
@@ -16,12 +17,12 @@ import { toast } from 'sonner';
 import {
   Play, StopCircle, Trash2, Scan,
   Home, RefreshCw, Shield, TrendingUp, DollarSign,
-  History, BookOpen, BarChart3, Download, Filter
+  History, BookOpen, BarChart3, Download, Filter, X
 } from 'lucide-react';
 
-// ... (keep your existing SCANNER_MARKETS, BotStatus, M1StrategyType, M2RecoveryType, LogEntry, DetectedPattern definitions)
+// ... keep all your existing type definitions (SCANNER_MARKETS, BotStatus, M1StrategyType, M2RecoveryType, LogEntry, DetectedPattern)
 
-// NEW: Transaction and Journal Types
+// NEW: Types for Summary, Transactions, and Journal
 interface Transaction {
   transaction_id: string;
   action: string;
@@ -32,8 +33,6 @@ interface Transaction {
   contract_id: number;
   description: string;
   profit_loss: number;
-  purchase_time: string;
-  sell_time: string;
   status: 'pending' | 'completed' | 'failed';
 }
 
@@ -48,7 +47,7 @@ interface JournalEntry {
   balance_after?: number;
 }
 
-interface SummaryData {
+interface SummaryStats {
   total_trades: number;
   winning_trades: number;
   losing_trades: number;
@@ -56,27 +55,25 @@ interface SummaryData {
   total_stake: number;
   total_payout: number;
   win_rate: number;
-  avg_profit_per_trade: number;
-  avg_loss_per_trade: number;
+  avg_profit: number;
+  avg_loss: number;
   largest_win: number;
   largest_loss: number;
-  longest_winning_streak: number;
-  longest_losing_streak: number;
+  best_streak: number;
+  worst_streak: number;
   current_streak: number;
   current_streak_type: 'win' | 'loss' | null;
-  total_duration_seconds: number;
-  start_time: string | null;
-  end_time: string | null;
 }
 
 export default function ProScannerBot() {
   const { isAuthorized, balance, activeAccount } = useAuth();
   const { recordLoss } = useLossRequirement();
 
-  // ... (keep all your existing state declarations)
-
+  // ... KEEP ALL YOUR EXISTING STATE DECLARATIONS (m1Enabled, m2Enabled, stake, etc.)
+  
   // NEW: Summary, Transactions, and Journal State
-  const [summaryData, setSummaryData] = useState<SummaryData>({
+  const [activeTab, setActiveTab] = useState('bot');
+  const [summaryStats, setSummaryStats] = useState<SummaryStats>({
     total_trades: 0,
     winning_trades: 0,
     losing_trades: 0,
@@ -84,237 +81,89 @@ export default function ProScannerBot() {
     total_stake: 0,
     total_payout: 0,
     win_rate: 0,
-    avg_profit_per_trade: 0,
-    avg_loss_per_trade: 0,
+    avg_profit: 0,
+    avg_loss: 0,
     largest_win: 0,
     largest_loss: 0,
-    longest_winning_streak: 0,
-    longest_losing_streak: 0,
+    best_streak: 0,
+    worst_streak: 0,
     current_streak: 0,
     current_streak_type: null,
-    total_duration_seconds: 0,
-    start_time: null,
-    end_time: null,
   });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
-  const [isLoadingSummary, setIsLoadingSummary] = useState(false);
-  const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
+  const [isLoadingData, setIsLoadingData] = useState(false);
   const [transactionFilter, setTransactionFilter] = useState<'all' | 'wins' | 'losses'>('all');
-  const [dateRange, setDateRange] = useState<{ from: Date | null; to: Date | null }>({ from: null, to: null });
-  const botStartTimeRef = useRef<Date | null>(null);
-  const winningStreakRef = useRef(0);
-  const losingStreakRef = useRef(0);
+  const [showTransactionDetails, setShowTransactionDetails] = useState<string | null>(null);
+  
+  // Refs for tracking streaks
   const currentStreakRef = useRef(0);
   const currentStreakTypeRef = useRef<'win' | 'loss' | null>(null);
+  const bestStreakRef = useRef(0);
+  const worstStreakRef = useRef(0);
 
-  // ... (keep all your existing refs and existing useEffect hooks)
-
-  // NEW: Fetch Reality Check Summary from Deriv API
-  const fetchRealityCheckSummary = useCallback(async () => {
-    if (!derivApi.isConnected) return;
-    
-    setIsLoadingSummary(true);
-    try {
-      const response = await new Promise((resolve, reject) => {
-        const requestId = Date.now();
-        const timeout = setTimeout(() => reject(new Error('Timeout')), 10000);
-        
-        const unsubscribe = derivApi.onMessage((data: any) => {
-          if (data.msg_type === 'reality_check' && data.req_id === requestId) {
-            clearTimeout(timeout);
-            unsubscribe();
-            resolve(data);
-          }
-        });
-        
-        derivApi.sendMessage({ reality_check: 1, req_id: requestId });
-      });
-      
-      const realityData: any = response;
-      if (realityData.error) {
-        console.error('Reality check error:', realityData.error);
-        return;
-      }
-      
-      // Update summary with reality check data
-      setSummaryData(prev => ({
-        ...prev,
-        total_duration_seconds: realityData.reality_check?.elapsed_time || 0,
-        start_time: realityData.reality_check?.start_time || prev.start_time,
-      }));
-      
-    } catch (error) {
-      console.error('Failed to fetch reality check:', error);
-    } finally {
-      setIsLoadingSummary(false);
-    }
-  }, []);
-
-  // NEW: Fetch Transaction Statement from Deriv API
-  const fetchStatement = useCallback(async (limit: number = 100, offset: number = 0) => {
-    if (!derivApi.isConnected) return;
-    
-    setIsLoadingTransactions(true);
-    try {
-      const response = await new Promise((resolve, reject) => {
-        const requestId = Date.now();
-        const timeout = setTimeout(() => reject(new Error('Timeout')), 10000);
-        
-        const unsubscribe = derivApi.onMessage((data: any) => {
-          if (data.msg_type === 'statement' && data.req_id === requestId) {
-            clearTimeout(timeout);
-            unsubscribe();
-            resolve(data);
-          }
-        });
-        
-        derivApi.sendMessage({ 
-          statement: 1, 
-          limit, 
-          offset, 
-          req_id: requestId 
-        });
-      });
-      
-      const statementData: any = response;
-      if (statementData.error) {
-        console.error('Statement error:', statementData.error);
-        return;
-      }
-      
-      const fetchedTransactions: Transaction[] = statementData.statement?.transactions?.map((tx: any) => ({
-        transaction_id: tx.transaction_id,
-        action: tx.action,
-        amount: tx.amount,
-        balance_after: tx.balance_after,
-        currency: tx.currency,
-        transaction_time: tx.transaction_time,
-        contract_id: tx.contract_id,
-        description: tx.longcode || tx.action,
-        profit_loss: tx.profit_loss || 0,
-        purchase_time: tx.purchase_time,
-        sell_time: tx.sell_time,
-        status: tx.sell_time ? 'completed' : 'pending',
-      })) || [];
-      
-      setTransactions(prev => {
-        // Merge new transactions with existing, avoiding duplicates
-        const existingIds = new Set(prev.map(t => t.transaction_id));
-        const newTransactions = fetchedTransactions.filter(t => !existingIds.has(t.transaction_id));
-        return [...newTransactions, ...prev].slice(0, 500); // Keep last 500
-      });
-      
-    } catch (error) {
-      console.error('Failed to fetch statement:', error);
-    } finally {
-      setIsLoadingTransactions(false);
-    }
-  }, []);
-
-  // NEW: Subscribe to Real-time Transaction Stream (Journal)
-  const subscribeToTransactionStream = useCallback(() => {
-    if (!derivApi.isConnected) return () => {};
-    
-    let isSubscribed = true;
-    
-    const handleTransaction = (data: any) => {
-      if (!isSubscribed) return;
-      
-      if (data.msg_type === 'transaction' && data.transaction) {
-        const tx = data.transaction;
-        const journalEntry: JournalEntry = {
-          id: `${tx.transaction_id || Date.now()}`,
-          timestamp: new Date().toISOString(),
-          type: tx.profit_loss > 0 ? 'PROFIT' : tx.profit_loss < 0 ? 'LOSS' : 'INFO',
-          message: tx.longcode || `${tx.action} of ${tx.amount} ${tx.currency}`,
-          contract_id: tx.contract_id,
-          amount: tx.amount,
-          profit_loss: tx.profit_loss,
-          balance_after: tx.balance_after,
-        };
-        
-        setJournalEntries(prev => [journalEntry, ...prev].slice(0, 200));
-        
-        // Update transaction list
-        const newTransaction: Transaction = {
-          transaction_id: tx.transaction_id,
-          action: tx.action,
-          amount: tx.amount,
-          balance_after: tx.balance_after,
-          currency: tx.currency,
-          transaction_time: tx.transaction_time,
-          contract_id: tx.contract_id,
-          description: tx.longcode || tx.action,
-          profit_loss: tx.profit_loss || 0,
-          purchase_time: tx.purchase_time,
-          sell_time: tx.sell_time,
-          status: tx.sell_time ? 'completed' : 'pending',
-        };
-        
-        setTransactions(prev => [newTransaction, ...prev].slice(0, 500));
-        
-        // Update summary statistics in real-time
-        updateSummaryFromTransaction(newTransaction);
-      }
+  // NEW: Add journal entry
+  const addJournalEntry = useCallback((type: JournalEntry['type'], message: string, data?: Partial<JournalEntry>) => {
+    const entry: JournalEntry = {
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: new Date().toISOString(),
+      type,
+      message,
+      ...data,
     };
+    setJournalEntries(prev => [entry, ...prev].slice(0, 200));
     
-    const unsubscribe = derivApi.onMessage(handleTransaction);
-    
-    // Subscribe to transaction stream
-    derivApi.sendMessage({ transaction_stream: 1, subscribe: 1 });
-    
-    return () => {
-      isSubscribed = false;
-      unsubscribe();
-      derivApi.sendMessage({ transaction_stream: 0, unsubscribe: 1 });
-    };
+    // Also log to console for debugging
+    console.log(`[JOURNAL][${type}]`, message, data);
   }, []);
 
-  // NEW: Update summary statistics from a transaction
-  const updateSummaryFromTransaction = useCallback((transaction: Transaction) => {
-    setSummaryData(prev => {
-      const isWin = transaction.profit_loss > 0;
-      const isLoss = transaction.profit_loss < 0;
+  // NEW: Update summary from trade result
+  const updateSummaryFromTrade = useCallback((won: boolean, profit: number, stakeAmount: number) => {
+    setSummaryStats(prev => {
+      const newTotalTrades = prev.total_trades + 1;
+      const newWinningTrades = prev.winning_trades + (won ? 1 : 0);
+      const newLosingTrades = prev.losing_trades + (won ? 0 : 1);
+      const newTotalProfitLoss = prev.total_profit_loss + profit;
+      const newTotalStake = prev.total_stake + stakeAmount;
+      const newTotalPayout = prev.total_payout + (won ? stakeAmount + profit : 0);
+      const newWinRate = newTotalTrades > 0 ? (newWinningTrades / newTotalTrades) * 100 : 0;
       
       // Update streaks
-      if (isWin) {
-        if (currentStreakTypeRef.current === 'win') {
-          currentStreakRef.current++;
+      let newCurrentStreak = prev.current_streak;
+      let newCurrentStreakType = prev.current_streak_type;
+      let newBestStreak = prev.best_streak;
+      let newWorstStreak = prev.worst_streak;
+      
+      if (won) {
+        if (newCurrentStreakType === 'win') {
+          newCurrentStreak++;
         } else {
-          currentStreakRef.current = 1;
-          currentStreakTypeRef.current = 'win';
+          newCurrentStreak = 1;
+          newCurrentStreakType = 'win';
         }
-        winningStreakRef.current = Math.max(winningStreakRef.current, currentStreakRef.current);
-      } else if (isLoss) {
-        if (currentStreakTypeRef.current === 'loss') {
-          currentStreakRef.current++;
+        newBestStreak = Math.max(newBestStreak, newCurrentStreak);
+      } else {
+        if (newCurrentStreakType === 'loss') {
+          newCurrentStreak++;
         } else {
-          currentStreakRef.current = 1;
-          currentStreakTypeRef.current = 'loss';
+          newCurrentStreak = 1;
+          newCurrentStreakType = 'loss';
         }
-        losingStreakRef.current = Math.max(losingStreakRef.current, currentStreakRef.current);
+        newWorstStreak = Math.max(newWorstStreak, newCurrentStreak);
       }
       
-      const newTotalTrades = prev.total_trades + 1;
-      const newWinningTrades = prev.winning_trades + (isWin ? 1 : 0);
-      const newLosingTrades = prev.losing_trades + (isLoss ? 1 : 0);
-      const newTotalProfitLoss = prev.total_profit_loss + transaction.profit_loss;
-      const newTotalStake = prev.total_stake + (transaction.action === 'buy' ? Math.abs(transaction.amount) : 0);
-      const newTotalPayout = prev.total_payout + (transaction.action === 'sell' ? Math.abs(transaction.amount) : 0);
+      // Update averages
+      const newAvgProfit = newWinningTrades > 0 
+        ? ((prev.avg_profit * prev.winning_trades) + (won ? profit : 0)) / newWinningTrades
+        : prev.avg_profit;
+      
+      const newAvgLoss = newLosingTrades > 0
+        ? ((prev.avg_loss * prev.losing_trades) + (!won ? Math.abs(profit) : 0)) / newLosingTrades
+        : prev.avg_loss;
       
       // Update largest win/loss
-      const newLargestWin = isWin ? Math.max(prev.largest_win, transaction.profit_loss) : prev.largest_win;
-      const newLargestLoss = isLoss ? Math.min(prev.largest_loss, transaction.profit_loss) : prev.largest_loss;
-      
-      // Update averages
-      const avgProfitPerTrade = newWinningTrades > 0 
-        ? (prev.avg_profit_per_trade * prev.winning_trades + (isWin ? transaction.profit_loss : 0)) / newWinningTrades 
-        : prev.avg_profit_per_trade;
-      
-      const avgLossPerTrade = newLosingTrades > 0 
-        ? (prev.avg_loss_per_trade * prev.losing_trades + (isLoss ? Math.abs(transaction.profit_loss) : 0)) / newLosingTrades 
-        : prev.avg_loss_per_trade;
+      const newLargestWin = won ? Math.max(prev.largest_win, profit) : prev.largest_win;
+      const newLargestLoss = !won ? Math.min(prev.largest_loss, profit) : prev.largest_loss;
       
       return {
         ...prev,
@@ -324,536 +173,610 @@ export default function ProScannerBot() {
         total_profit_loss: newTotalProfitLoss,
         total_stake: newTotalStake,
         total_payout: newTotalPayout,
-        win_rate: newTotalTrades > 0 ? (newWinningTrades / newTotalTrades) * 100 : 0,
-        avg_profit_per_trade: avgProfitPerTrade,
-        avg_loss_per_trade: avgLossPerTrade,
+        win_rate: newWinRate,
+        avg_profit: newAvgProfit,
+        avg_loss: newAvgLoss,
         largest_win: newLargestWin,
         largest_loss: newLargestLoss,
-        longest_winning_streak: winningStreakRef.current,
-        longest_losing_streak: losingStreakRef.current,
-        current_streak: currentStreakRef.current,
-        current_streak_type: currentStreakTypeRef.current,
+        best_streak: newBestStreak,
+        worst_streak: newWorstStreak,
+        current_streak: newCurrentStreak,
+        current_streak_type: newCurrentStreakType,
       };
     });
   }, []);
 
+  // NEW: Add transaction record
+  const addTransaction = useCallback((tradeData: {
+    action: string;
+    amount: number;
+    balance_after: number;
+    contract_id: number;
+    profit_loss: number;
+    description: string;
+  }) => {
+    const transaction: Transaction = {
+      transaction_id: `${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      action: tradeData.action,
+      amount: tradeData.amount,
+      balance_after: tradeData.balance_after,
+      currency: 'USD',
+      transaction_time: new Date().toISOString(),
+      contract_id: tradeData.contract_id,
+      description: tradeData.description,
+      profit_loss: tradeData.profit_loss,
+      status: 'completed',
+    };
+    
+    setTransactions(prev => [transaction, ...prev].slice(0, 500));
+    
+    // Add journal entry for this transaction
+    if (tradeData.action === 'buy') {
+      addJournalEntry('BUY', `Bought contract ${tradeData.contract_id} for $${tradeData.amount}`, {
+        contract_id: tradeData.contract_id,
+        amount: tradeData.amount,
+      });
+    } else if (tradeData.action === 'sell') {
+      const resultType = tradeData.profit_loss > 0 ? 'PROFIT' : 'LOSS';
+      addJournalEntry(resultType, `Sold contract ${tradeData.contract_id}: ${tradeData.profit_loss > 0 ? 'Win' : 'Loss'} of $${Math.abs(tradeData.profit_loss).toFixed(2)}`, {
+        contract_id: tradeData.contract_id,
+        profit_loss: tradeData.profit_loss,
+        balance_after: tradeData.balance_after,
+      });
+    }
+    
+    // Update summary stats
+    if (tradeData.action === 'sell') {
+      updateSummaryFromTrade(
+        tradeData.profit_loss > 0,
+        tradeData.profit_loss,
+        tradeData.amount
+      );
+    }
+  }, [addJournalEntry, updateSummaryFromTrade]);
+
+  // NEW: Fetch historical transactions (using localStorage as fallback since Deriv API might need special setup)
+  const fetchHistoricalData = useCallback(async () => {
+    setIsLoadingData(true);
+    
+    try {
+      // Try to load from localStorage first
+      const savedTransactions = localStorage.getItem('bot_transactions');
+      const savedJournal = localStorage.getItem('bot_journal');
+      const savedSummary = localStorage.getItem('bot_summary');
+      
+      if (savedTransactions) {
+        setTransactions(JSON.parse(savedTransactions));
+      }
+      if (savedJournal) {
+        setJournalEntries(JSON.parse(savedJournal));
+      }
+      if (savedSummary) {
+        setSummaryStats(JSON.parse(savedSummary));
+      }
+      
+      // If Deriv API has statement method, try to fetch real data
+      if (derivApi && typeof (derivApi as any).getStatement === 'function') {
+        const statement = await (derivApi as any).getStatement({ limit: 50 });
+        if (statement && statement.transactions) {
+          const formattedTransactions = statement.transactions.map((tx: any) => ({
+            transaction_id: tx.transaction_id,
+            action: tx.action,
+            amount: Math.abs(tx.amount),
+            balance_after: tx.balance_after,
+            currency: tx.currency || 'USD',
+            transaction_time: tx.transaction_time,
+            contract_id: tx.contract_id,
+            description: tx.longcode || tx.action,
+            profit_loss: tx.profit_loss || 0,
+            status: 'completed',
+          }));
+          setTransactions(formattedTransactions);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Failed to load historical data:', error);
+    } finally {
+      setIsLoadingData(false);
+    }
+  }, []);
+
+  // NEW: Save data to localStorage
+  const saveDataToStorage = useCallback(() => {
+    localStorage.setItem('bot_transactions', JSON.stringify(transactions.slice(0, 100)));
+    localStorage.setItem('bot_journal', JSON.stringify(journalEntries.slice(0, 100)));
+    localStorage.setItem('bot_summary', JSON.stringify(summaryStats));
+  }, [transactions, journalEntries, summaryStats]);
+
+  // Save data when it changes
+  useEffect(() => {
+    saveDataToStorage();
+  }, [transactions, journalEntries, summaryStats, saveDataToStorage]);
+
+  // Load data on mount
+  useEffect(() => {
+    fetchHistoricalData();
+  }, [fetchHistoricalData]);
+
   // NEW: Export transactions to CSV
-  const exportTransactionsToCSV = useCallback(() => {
-    const filteredTransactions = getFilteredTransactions();
-    const headers = ['Transaction ID', 'Action', 'Amount', 'Balance After', 'Currency', 'Time', 'Profit/Loss', 'Status'];
-    const csvData = filteredTransactions.map(t => [
-      t.transaction_id,
-      t.action,
-      t.amount,
-      t.balance_after,
-      t.currency,
+  const exportToCSV = useCallback(() => {
+    const filtered = getFilteredTransactions();
+    const headers = ['Date', 'Action', 'Amount', 'Balance', 'Profit/Loss', 'Contract ID', 'Description'];
+    const rows = filtered.map(t => [
       new Date(t.transaction_time).toLocaleString(),
-      t.profit_loss,
-      t.status,
+      t.action,
+      t.amount.toFixed(2),
+      t.balance_after.toFixed(2),
+      t.profit_loss.toFixed(2),
+      t.contract_id,
+      t.description,
     ]);
     
-    const csvContent = [headers, ...csvData].map(row => row.join(',')).join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `transactions_${new Date().toISOString()}.csv`;
+    a.download = `trading_history_${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success('Transactions exported successfully');
-  }, [transactions, transactionFilter, dateRange]);
+    toast.success('Exported successfully');
+  }, [transactions, transactionFilter]);
 
-  // NEW: Get filtered transactions based on filter and date range
+  // NEW: Get filtered transactions
   const getFilteredTransactions = useCallback(() => {
     let filtered = [...transactions];
-    
-    // Filter by win/loss
     if (transactionFilter === 'wins') {
       filtered = filtered.filter(t => t.profit_loss > 0);
     } else if (transactionFilter === 'losses') {
       filtered = filtered.filter(t => t.profit_loss < 0);
     }
-    
-    // Filter by date range
-    if (dateRange.from) {
-      filtered = filtered.filter(t => new Date(t.transaction_time) >= dateRange.from!);
-    }
-    if (dateRange.to) {
-      filtered = filtered.filter(t => new Date(t.transaction_time) <= dateRange.to!);
-    }
-    
     return filtered;
-  }, [transactions, transactionFilter, dateRange]);
+  }, [transactions, transactionFilter]);
 
-  // NEW: Add journal entry for bot actions
-  const addJournalEntry = useCallback((type: JournalEntry['type'], message: string, data?: Partial<JournalEntry>) => {
-    const entry: JournalEntry = {
-      id: `${Date.now()}-${Math.random()}`,
-      timestamp: new Date().toISOString(),
-      type,
-      message,
-      ...data,
-    };
-    setJournalEntries(prev => [entry, ...prev].slice(0, 200));
+  // NEW: Clear all data
+  const clearAllData = useCallback(() => {
+    if (confirm('Are you sure you want to clear all transaction and journal data?')) {
+      setTransactions([]);
+      setJournalEntries([]);
+      setSummaryStats({
+        total_trades: 0,
+        winning_trades: 0,
+        losing_trades: 0,
+        total_profit_loss: 0,
+        total_stake: 0,
+        total_payout: 0,
+        win_rate: 0,
+        avg_profit: 0,
+        avg_loss: 0,
+        largest_win: 0,
+        largest_loss: 0,
+        best_streak: 0,
+        worst_streak: 0,
+        current_streak: 0,
+        current_streak_type: null,
+      });
+      localStorage.removeItem('bot_transactions');
+      localStorage.removeItem('bot_journal');
+      localStorage.removeItem('bot_summary');
+      toast.success('All data cleared');
+    }
   }, []);
 
-  // NEW: Reset summary data when bot starts
-  const resetSummaryData = useCallback(() => {
-    setSummaryData({
-      total_trades: 0,
-      winning_trades: 0,
-      losing_trades: 0,
-      total_profit_loss: 0,
-      total_stake: 0,
-      total_payout: 0,
-      win_rate: 0,
-      avg_profit_per_trade: 0,
-      avg_loss_per_trade: 0,
-      largest_win: 0,
-      largest_loss: 0,
-      longest_winning_streak: 0,
-      longest_losing_streak: 0,
-      current_streak: 0,
-      current_streak_type: null,
-      total_duration_seconds: 0,
-      start_time: new Date().toISOString(),
-      end_time: null,
+  // MODIFY your existing executeRealTrade function to record transactions
+  // Find this function in your code and add the transaction recording
+  // Here's the modified version - replace your existing executeRealTrade with this:
+  
+  const originalExecuteRealTrade = useCallback(async (
+    contractType: string,
+    barrier: string | undefined,
+    tradeSymbol: string,
+    cStake: number,
+    mStep: number,
+    mkt: 1 | 2,
+    localBalance: number,
+    localPnl: number,
+    baseStake: number,
+    patternDigits: string
+  ) => {
+    const logId = ++logIdRef.current;
+    const now = new Date().toLocaleTimeString();
+    setTotalStaked(prev => prev + cStake);
+    setCurrentStakeState(cStake);
+
+    lastPatternDigitsRef.current.set(tradeSymbol, patternDigits);
+    lastTradeTimeRef.current.set(tradeSymbol, Date.now());
+    lastTradeOverallRef.current = Date.now();
+
+    // Record buy transaction
+    addTransaction({
+      action: 'buy',
+      amount: cStake,
+      balance_after: localBalance - cStake,
+      contract_id: 0, // Will be updated after purchase
+      profit_loss: 0,
+      description: `${contractType} on ${tradeSymbol}`,
     });
-    
-    winningStreakRef.current = 0;
-    losingStreakRef.current = 0;
-    currentStreakRef.current = 0;
-    currentStreakTypeRef.current = null;
-    botStartTimeRef.current = new Date();
-    
-    addJournalEntry('INFO', 'Bot session started');
-  }, [addJournalEntry]);
 
-  // NEW: Update end time when bot stops
-  const updateEndTime = useCallback(() => {
-    setSummaryData(prev => ({
-      ...prev,
-      end_time: new Date().toISOString(),
-    }));
-    addJournalEntry('INFO', 'Bot session ended');
-  }, [addJournalEntry]);
+    addLog(logId, {
+      time: now, market: mkt === 1 ? 'M1' : 'M2', symbol: tradeSymbol,
+      contract: contractType, stake: cStake, martingaleStep: mStep,
+      exitDigit: '...', result: 'Pending', pnl: 0, balance: localBalance,
+      switchInfo: `Pattern: ${patternDigits}`,
+    });
 
-  // Modified startBot to include summary reset and journal
-  const originalStartBot = useCallback(async () => {
-    if (!isAuthorized || isRunning) return;
-    const baseStake = parseFloat(stake);
-    if (baseStake < 0.35) { toast.error('Min stake $0.35'); return; }
-    if (!m1Enabled && !m2Enabled) { toast.error('Enable at least one market'); return; }
+    let inRecovery = mkt === 2;
 
-    setIsRunning(true);
-    runningRef.current = true;
-    setCurrentMarket(1);
-    setBotStatus('trading_m1');
-    setCurrentStakeState(baseStake);
-    setMartingaleStepState(0);
-    
-    // Reset summary and add journal entry
-    resetSummaryData();
-    
-    lastTradeTimeRef.current.clear();
-    lastPatternDigitsRef.current.clear();
-    lastTradeOverallRef.current = 0;
+    try {
+      await waitForNextTick(tradeSymbol as MarketSymbol);
 
-    let cStake = baseStake;
-    let mStep = 0;
-    let inRecovery = false;
-    let localPnl = 0;
-    let localBalance = balance;
-    let waitingForPatternAfterLoss = false;
-
-    while (runningRef.current) {
-      // ... (rest of your existing bot logic)
-      
-      // Add journal entries for trades
-      addJournalEntry('INFO', `${inRecovery ? 'Recovery' : 'M1'} trade on ${tradeSymbol}`, {
-        contract_id: parseInt(result.contractId),
-        amount: cStake,
-      });
-    }
-
-    setIsRunning(false);
-    runningRef.current = false;
-    setBotStatus('idle');
-    updateEndTime();
-  }, [isAuthorized, isRunning, balance, stake, m1Enabled, m2Enabled,
-    martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss,
-    strategyM1Enabled, strategyM2Enabled, m1StrategyType, m2RecoveryType,
-    findM1Match, findM2Match, addLog, updateLog, executeRealTrade, resetSummaryData, updateEndTime, addJournalEntry]);
-
-  // Modified stopBot to update end time
-  const originalStopBot = useCallback(() => {
-    runningRef.current = false;
-    setIsRunning(false);
-    setBotStatus('idle');
-    updateEndTime();
-  }, [updateEndTime]);
-
-  // Override startBot and stopBot
-  const startBot = originalStartBot;
-  const stopBot = originalStopBot;
-
-  // Initialize data fetching on component mount
-  useEffect(() => {
-    if (derivApi.isConnected && isAuthorized) {
-      fetchRealityCheckSummary();
-      fetchStatement(100, 0);
-      const unsubscribe = subscribeToTransactionStream();
-      
-      // Fetch statement periodically (every 30 seconds)
-      const interval = setInterval(() => {
-        fetchStatement(50, 0);
-      }, 30000);
-      
-      return () => {
-        unsubscribe();
-        clearInterval(interval);
+      const buyParams: any = {
+        contract_type: contractType, symbol: tradeSymbol,
+        duration: 1, duration_unit: 't', basis: 'stake', amount: cStake,
       };
-    }
-  }, [derivApi.isConnected, isAuthorized, fetchRealityCheckSummary, fetchStatement, subscribeToTransactionStream]);
+      if (barrier) buyParams.barrier = barrier;
 
-  // ... (keep all your existing render code)
+      const { contractId } = await derivApi.buyContract(buyParams);
+      
+      // Update transaction with contract ID
+      setTransactions(prev => prev.map((t, idx) => 
+        idx === 0 && t.action === 'buy' && t.contract_id === 0 
+          ? { ...t, contract_id: contractId }
+          : t
+      ));
+      
+      if (copyTradingService.enabled) {
+        copyTradingService.copyTrade({
+          ...buyParams,
+          masterTradeId: contractId,
+        }).catch(err => console.error('Copy trading error:', err));
+      }
+      
+      const result = await derivApi.waitForContractResult(contractId);
+      const won = result.status === 'won';
+      const pnl = result.profit;
+      localPnl += pnl;
+      localBalance += pnl;
+
+      const exitDigit = String(getLastDigit(result.sellPrice || 0));
+
+      // Record sell transaction
+      addTransaction({
+        action: 'sell',
+        amount: cStake,
+        balance_after: localBalance,
+        contract_id: contractId,
+        profit_loss: pnl,
+        description: `${won ? 'Win' : 'Loss'} on ${tradeSymbol} - ${contractType}`,
+      });
+
+      let switchInfo = `Pattern: ${patternDigits} | Exit: ${exitDigit}`;
+      let shouldResetMartingale = false;
+      
+      if (won) {
+        setWins(prev => prev + 1);
+        if (inRecovery) {
+          switchInfo += ' ✓ Recovery WIN → Back to M1';
+          inRecovery = false;
+          shouldResetMartingale = true;
+        } else {
+          switchInfo += ' ✓ WIN → Continue scanning';
+          shouldResetMartingale = true;
+        }
+      } else {
+        setLosses(prev => prev + 1);
+        if (activeAccount?.is_virtual) {
+          recordLoss(cStake, tradeSymbol, 6000);
+        }
+        
+        if (martingaleOn && mStep < parseInt(martingaleMaxSteps)) {
+          cStake = parseFloat((cStake * (parseFloat(martingaleMultiplier) || 2)).toFixed(2));
+          mStep++;
+          
+          if (!inRecovery && m2Enabled) {
+            inRecovery = true;
+            switchInfo += ` ✗ Loss → Martingale (Step ${mStep}) → M2 Recovery`;
+          } else if (!inRecovery && !m2Enabled) {
+            switchInfo += ` ✗ Loss → Martingale (Step ${mStep}) → Continue M1`;
+          } else if (inRecovery) {
+            switchInfo += ` ✗ Loss → Martingale (Step ${mStep}) → Stay M2`;
+          }
+        } else {
+          switchInfo += martingaleOn ? ` ✗ Loss → Max steps reached. Reset.` : ' ✗ Loss → Martingale disabled. Reset.';
+          shouldResetMartingale = true;
+          
+          if (!inRecovery && m2Enabled) {
+            inRecovery = true;
+            switchInfo += ' → M2 Recovery';
+          }
+        }
+      }
+      
+      if (shouldResetMartingale) {
+        mStep = 0;
+        cStake = baseStake;
+      }
+
+      setNetProfit(prev => prev + pnl);
+      setMartingaleStepState(mStep);
+      setCurrentStakeState(cStake);
+
+      updateLog(logId, { exitDigit, result: won ? 'Win' : 'Loss', pnl, balance: localBalance, switchInfo });
+
+      let shouldBreak = false;
+      if (localPnl >= parseFloat(takeProfit)) {
+        toast.success(`🎯 Take Profit! +$${localPnl.toFixed(2)}`);
+        addJournalEntry('PROFIT', `Take profit reached: $${localPnl.toFixed(2)}`, { profit_loss: localPnl });
+        shouldBreak = true;
+      }
+      if (localPnl <= -parseFloat(stopLoss)) {
+        toast.error(`🛑 Stop Loss! $${localPnl.toFixed(2)}`);
+        addJournalEntry('LOSS', `Stop loss reached: $${localPnl.toFixed(2)}`, { profit_loss: localPnl });
+        shouldBreak = true;
+      }
+      if (localBalance < cStake) {
+        toast.error('Insufficient balance');
+        addJournalEntry('ERROR', 'Insufficient balance for next trade');
+        shouldBreak = true;
+      }
+
+      return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak };
+    } catch (err: any) {
+      updateLog(logId, { result: 'Loss', pnl: 0, exitDigit: '-', switchInfo: `Error: ${err.message}` });
+      addJournalEntry('ERROR', `Trade failed: ${err.message}`, { contract_id: 0 });
+      await new Promise(r => setTimeout(r, 2000));
+      return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak: false };
+    }
+  }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, activeAccount, recordLoss, addTransaction, addJournalEntry]);
+
+  // Use the modified function
+  const executeRealTrade = originalExecuteRealTrade;
+
+  // ... KEEP ALL YOUR OTHER EXISTING FUNCTIONS (checkM1Pattern, checkM2Pattern, findM1Match, findM2Match, startBot, stopBot, etc.)
+  // ... BUT make sure to use executeRealTrade as defined above
+
+  // Now add the Tab UI at the bottom of your return statement, right before the closing div
+  
+  // ... Your existing return statement with all the bot UI, then add this:
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-4">
       <div className="space-y-3 max-w-7xl mx-auto">
-        {/* Header - keep your existing header */}
         
-        {/* NEW: Tabs for Summary, Transactions, and Journal */}
-        <Tabs defaultValue="bot" className="w-full">
+        {/* TABS */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-4 bg-slate-800/50 border border-slate-700/50 rounded-xl p-1">
-            <TabsTrigger value="bot" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-cyan-500 data-[state=active]:to-blue-600 data-[state=active]:text-white">
-              <Play className="w-4 h-4 mr-2" /> Bot Control
+            <TabsTrigger value="bot" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-cyan-500 data-[state=active]:to-blue-600">
+              <Play className="w-4 h-4 mr-2" /> Bot
             </TabsTrigger>
-            <TabsTrigger value="summary" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-teal-600 data-[state=active]:text-white">
+            <TabsTrigger value="summary" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-emerald-500 data-[state=active]:to-teal-600">
               <BarChart3 className="w-4 h-4 mr-2" /> Summary
             </TabsTrigger>
-            <TabsTrigger value="transactions" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-indigo-600 data-[state=active]:text-white">
+            <TabsTrigger value="transactions" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-indigo-600">
               <History className="w-4 h-4 mr-2" /> Transactions
             </TabsTrigger>
-            <TabsTrigger value="journal" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-pink-600 data-[state=active]:text-white">
+            <TabsTrigger value="journal" className="data-[state=active]:bg-gradient-to-r data-[state=active]:from-purple-500 data-[state=active]:to-pink-600">
               <BookOpen className="w-4 h-4 mr-2" /> Journal
             </TabsTrigger>
           </TabsList>
 
-          {/* Bot Control Tab - Keep all your existing bot UI */}
+          {/* BOT TAB - Your existing UI */}
           <TabsContent value="bot" className="space-y-3 mt-3">
-            {/* Your existing bot UI goes here */}
-            {/* Markets Row, Risk Management, Start/Stop Button, etc. */}
+            {/* Copy all your existing bot UI here - Markets, Risk, Start/Stop button, etc. */}
+            {/* ... existing bot UI code ... */}
           </TabsContent>
 
           {/* SUMMARY TAB */}
           <TabsContent value="summary" className="mt-3">
-            <Card className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-slate-700/50 shadow-xl">
+            <Card className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 border-slate-700/50">
               <CardHeader>
-                <CardTitle className="text-slate-200 flex items-center gap-2">
-                  <BarChart3 className="w-5 h-5 text-emerald-400" />
-                  Trading Summary
-                </CardTitle>
-                <CardDescription className="text-slate-400">
-                  Overall performance statistics for this bot session
-                </CardDescription>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-slate-200">Trading Summary</CardTitle>
+                  <Button variant="ghost" size="sm" onClick={clearAllData} className="text-slate-400 hover:text-rose-400">
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+                <CardDescription>Performance statistics for this session</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Key Metrics Grid */}
+                {/* Main Stats */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                    <div className="text-[10px] text-slate-400 mb-1">Total Trades</div>
-                    <div className="text-2xl font-bold text-slate-200">{summaryData.total_trades}</div>
+                    <div className="text-xs text-slate-400">Total Trades</div>
+                    <div className="text-2xl font-bold text-slate-200">{summaryStats.total_trades}</div>
                   </div>
                   <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                    <div className="text-[10px] text-slate-400 mb-1">Win Rate</div>
-                    <div className={`text-2xl font-bold ${summaryData.win_rate >= 50 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {summaryData.win_rate.toFixed(1)}%
+                    <div className="text-xs text-slate-400">Win Rate</div>
+                    <div className={`text-2xl font-bold ${summaryStats.win_rate >= 50 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {summaryStats.win_rate.toFixed(1)}%
                     </div>
                   </div>
                   <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                    <div className="text-[10px] text-slate-400 mb-1">Total P/L</div>
-                    <div className={`text-2xl font-bold ${summaryData.total_profit_loss >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      ${summaryData.total_profit_loss.toFixed(2)}
+                    <div className="text-xs text-slate-400">Total P/L</div>
+                    <div className={`text-2xl font-bold ${summaryStats.total_profit_loss >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      ${summaryStats.total_profit_loss.toFixed(2)}
                     </div>
                   </div>
                   <div className="bg-slate-800/50 rounded-lg p-3 text-center">
-                    <div className="text-[10px] text-slate-400 mb-1">Total Stake</div>
-                    <div className="text-2xl font-bold text-slate-200">${summaryData.total_stake.toFixed(2)}</div>
+                    <div className="text-xs text-slate-400">Total Stake</div>
+                    <div className="text-2xl font-bold text-slate-200">${summaryStats.total_stake.toFixed(2)}</div>
                   </div>
                 </div>
 
                 {/* Detailed Stats */}
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div className="bg-slate-800/30 rounded-lg p-2">
-                    <div className="text-[9px] text-slate-400">Wins / Losses</div>
-                    <div className="text-sm font-mono font-bold">
-                      <span className="text-emerald-400">{summaryData.winning_trades}</span>
+                    <div className="text-xs text-slate-400">Wins / Losses</div>
+                    <div className="text-lg font-mono font-bold">
+                      <span className="text-emerald-400">{summaryStats.winning_trades}</span>
                       <span className="text-slate-500"> / </span>
-                      <span className="text-rose-400">{summaryData.losing_trades}</span>
+                      <span className="text-rose-400">{summaryStats.losing_trades}</span>
                     </div>
                   </div>
                   <div className="bg-slate-800/30 rounded-lg p-2">
-                    <div className="text-[9px] text-slate-400">Avg Profit / Loss</div>
+                    <div className="text-xs text-slate-400">Avg Win / Loss</div>
                     <div className="text-sm font-mono font-bold">
-                      <span className="text-emerald-400">+${summaryData.avg_profit_per_trade.toFixed(2)}</span>
+                      <span className="text-emerald-400">+${summaryStats.avg_profit.toFixed(2)}</span>
                       <span className="text-slate-500"> / </span>
-                      <span className="text-rose-400">-${summaryData.avg_loss_per_trade.toFixed(2)}</span>
+                      <span className="text-rose-400">-${summaryStats.avg_loss.toFixed(2)}</span>
                     </div>
                   </div>
                   <div className="bg-slate-800/30 rounded-lg p-2">
-                    <div className="text-[9px] text-slate-400">Largest Win / Loss</div>
+                    <div className="text-xs text-slate-400">Best / Worst Streak</div>
                     <div className="text-sm font-mono font-bold">
-                      <span className="text-emerald-400">+${summaryData.largest_win.toFixed(2)}</span>
+                      <span className="text-emerald-400">{summaryStats.best_streak}W</span>
                       <span className="text-slate-500"> / </span>
-                      <span className="text-rose-400">${summaryData.largest_loss.toFixed(2)}</span>
+                      <span className="text-rose-400">{summaryStats.worst_streak}L</span>
                     </div>
                   </div>
                   <div className="bg-slate-800/30 rounded-lg p-2">
-                    <div className="text-[9px] text-slate-400">Current Streak</div>
+                    <div className="text-xs text-slate-400">Current Streak</div>
                     <div className={`text-sm font-mono font-bold ${
-                      summaryData.current_streak_type === 'win' ? 'text-emerald-400' : 'text-rose-400'
+                      summaryStats.current_streak_type === 'win' ? 'text-emerald-400' : 'text-rose-400'
                     }`}>
-                      {summaryData.current_streak} {summaryData.current_streak_type}
+                      {summaryStats.current_streak} {summaryStats.current_streak_type?.toUpperCase() || '-'}
                     </div>
                   </div>
                   <div className="bg-slate-800/30 rounded-lg p-2">
-                    <div className="text-[9px] text-slate-400">Longest Streak</div>
-                    <div className="text-sm font-mono font-bold">
-                      <span className="text-emerald-400">{summaryData.longest_winning_streak}W</span>
-                      <span className="text-slate-500"> / </span>
-                      <span className="text-rose-400">{summaryData.longest_losing_streak}L</span>
+                    <div className="text-xs text-slate-400">Largest Win</div>
+                    <div className="text-sm font-mono font-bold text-emerald-400">
+                      +${summaryStats.largest_win.toFixed(2)}
                     </div>
                   </div>
                   <div className="bg-slate-800/30 rounded-lg p-2">
-                    <div className="text-[9px] text-slate-400">Total Payout</div>
-                    <div className="text-sm font-mono font-bold text-cyan-400">
-                      ${summaryData.total_payout.toFixed(2)}
+                    <div className="text-xs text-slate-400">Largest Loss</div>
+                    <div className="text-sm font-mono font-bold text-rose-400">
+                      ${summaryStats.largest_loss.toFixed(2)}
                     </div>
                   </div>
                 </div>
-
-                {/* Session Duration */}
-                {summaryData.start_time && (
-                  <div className="bg-slate-800/30 rounded-lg p-2 text-center">
-                    <div className="text-[9px] text-slate-400">Session Duration</div>
-                    <div className="text-xs font-mono text-slate-300">
-                      Started: {new Date(summaryData.start_time).toLocaleString()}
-                      {summaryData.end_time && ` | Ended: ${new Date(summaryData.end_time).toLocaleString()}`}
-                    </div>
-                  </div>
-                )}
-
-                <Button 
-                  onClick={fetchRealityCheckSummary}
-                  disabled={isLoadingSummary}
-                  variant="outline"
-                  className="w-full bg-slate-800/50 border-slate-700 text-slate-300 hover:bg-slate-700/50"
-                >
-                  <RefreshCw className={`w-4 h-4 mr-2 ${isLoadingSummary ? 'animate-spin' : ''}`} />
-                  Refresh Summary
-                </Button>
               </CardContent>
             </Card>
           </TabsContent>
 
           {/* TRANSACTIONS TAB */}
           <TabsContent value="transactions" className="mt-3">
-            <Card className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-slate-700/50 shadow-xl">
+            <Card className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 border-slate-700/50">
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
-                    <CardTitle className="text-slate-200 flex items-center gap-2">
-                      <History className="w-5 h-5 text-blue-400" />
-                      Transaction History
-                    </CardTitle>
-                    <CardDescription className="text-slate-400">
-                      All buy/sell transactions from your trading activity
-                    </CardDescription>
+                    <CardTitle className="text-slate-200">Transaction History</CardTitle>
+                    <CardDescription>All buy/sell records</CardDescription>
                   </div>
-                  <Button 
-                    onClick={exportTransactionsToCSV}
-                    variant="outline"
-                    size="sm"
-                    className="bg-slate-800/50 border-slate-700 text-slate-300"
-                  >
-                    <Download className="w-4 h-4 mr-2" />
-                    Export CSV
-                  </Button>
+                  <div className="flex gap-2">
+                    <div className="flex gap-1">
+                      <Button size="sm" variant={transactionFilter === 'all' ? 'default' : 'outline'} onClick={() => setTransactionFilter('all')} className="h-8 px-2 text-xs">
+                        All
+                      </Button>
+                      <Button size="sm" variant={transactionFilter === 'wins' ? 'default' : 'outline'} onClick={() => setTransactionFilter('wins')} className="h-8 px-2 text-xs bg-emerald-600 hover:bg-emerald-700">
+                        Wins
+                      </Button>
+                      <Button size="sm" variant={transactionFilter === 'losses' ? 'default' : 'outline'} onClick={() => setTransactionFilter('losses')} className="h-8 px-2 text-xs bg-rose-600 hover:bg-rose-700">
+                        Losses
+                      </Button>
+                    </div>
+                    <Button size="sm" onClick={exportToCSV} className="h-8 px-2 text-xs">
+                      <Download className="w-3 h-3 mr-1" /> Export
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
-                {/* Filters */}
-                <div className="flex gap-2 mb-4">
-                  <Button 
-                    variant={transactionFilter === 'all' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setTransactionFilter('all')}
-                    className={transactionFilter === 'all' ? 'bg-blue-600' : 'bg-slate-800/50 border-slate-700'}
-                  >
-                    All
-                  </Button>
-                  <Button 
-                    variant={transactionFilter === 'wins' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setTransactionFilter('wins')}
-                    className={transactionFilter === 'wins' ? 'bg-emerald-600' : 'bg-slate-800/50 border-slate-700'}
-                  >
-                    Wins
-                  </Button>
-                  <Button 
-                    variant={transactionFilter === 'losses' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setTransactionFilter('losses')}
-                    className={transactionFilter === 'losses' ? 'bg-rose-600' : 'bg-slate-800/50 border-slate-700'}
-                  >
-                    Losses
-                  </Button>
-                </div>
-
-                {/* Transactions Table */}
-                <div className="max-h-[500px] overflow-auto">
-                  <table className="w-full text-[11px]">
-                    <thead className="text-[10px] text-slate-400 bg-slate-800/50 sticky top-0">
-                      <tr>
+                <div className="max-h-[400px] overflow-auto">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-slate-800/90">
+                      <tr className="text-slate-400 border-b border-slate-700">
                         <th className="text-left p-2">Time</th>
                         <th className="text-left p-2">Action</th>
                         <th className="text-right p-2">Amount</th>
-                        <th className="text-right p-2">Balance</th>
                         <th className="text-right p-2">P/L</th>
-                        <th className="text-left p-2">Status</th>
+                        <th className="text-left p-2">Contract</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {getFilteredTransactions().length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="text-center text-slate-500 py-12">
-                            No transactions found
+                      {getFilteredTransactions().slice(0, 50).map((tx) => (
+                        <tr key={tx.transaction_id} className="border-b border-slate-700/50 hover:bg-slate-800/30 cursor-pointer" onClick={() => setShowTransactionDetails(showTransactionDetails === tx.transaction_id ? null : tx.transaction_id)}>
+                          <td className="p-2 font-mono text-slate-400">{new Date(tx.transaction_time).toLocaleTimeString()}</td>
+                          <td className="p-2">
+                            <Badge variant="outline" className={`text-[10px] ${tx.action === 'buy' ? 'border-amber-500 text-amber-400' : 'border-cyan-500 text-cyan-400'}`}>
+                              {tx.action}
+                            </Badge>
                           </td>
+                          <td className={`p-2 text-right font-mono font-bold ${tx.action === 'buy' ? 'text-amber-400' : 'text-cyan-400'}`}>
+                            ${tx.amount.toFixed(2)}
+                          </td>
+                          <td className={`p-2 text-right font-mono font-bold ${tx.profit_loss > 0 ? 'text-emerald-400' : tx.profit_loss < 0 ? 'text-rose-400' : 'text-slate-400'}`}>
+                            {tx.profit_loss !== 0 && (tx.profit_loss > 0 ? '+' : '')}{tx.profit_loss.toFixed(2)}
+                          </td>
+                          <td className="p-2 font-mono text-slate-400 text-[10px]">{tx.contract_id || '-'}</td>
                         </tr>
-                      ) : (
-                        getFilteredTransactions().map((tx) => (
-                          <tr key={tx.transaction_id} className="border-t border-slate-700/30 hover:bg-slate-800/30">
-                            <td className="p-2 font-mono text-[9px] text-slate-400">
-                              {new Date(tx.transaction_time).toLocaleTimeString()}
-                            </td>
-                            <td className="p-2 text-[10px]">
-                              <Badge variant="outline" className="bg-slate-800 text-slate-300">
-                                {tx.action}
-                              </Badge>
-                            </td>
-                            <td className={`p-2 font-mono text-right text-[10px] font-bold ${
-                              tx.action === 'buy' ? 'text-amber-400' : 'text-cyan-400'
-                            }`}>
-                              {tx.action === 'buy' ? '-' : '+'}${Math.abs(tx.amount).toFixed(2)}
-                            </td>
-                            <td className="p-2 font-mono text-right text-[10px] text-slate-300">
-                              ${tx.balance_after?.toFixed(2) || '0'}
-                            </td>
-                            <td className={`p-2 font-mono text-right text-[10px] font-bold ${
-                              tx.profit_loss > 0 ? 'text-emerald-400' : tx.profit_loss < 0 ? 'text-rose-400' : 'text-slate-400'
-                            }`}>
-                              {tx.profit_loss !== 0 && (tx.profit_loss > 0 ? '+' : '')}{tx.profit_loss?.toFixed(2)}
-                            </td>
-                            <td className="p-2">
-                              <Badge className={`text-[8px] ${
-                                tx.status === 'completed' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
-                              }`}>
-                                {tx.status}
-                              </Badge>
-                            </td>
-                          </tr>
-                        ))
+                      ))}
+                      {getFilteredTransactions().length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="text-center text-slate-500 py-8">No transactions yet</td>
+                        </tr>
                       )}
                     </tbody>
                   </table>
                 </div>
-
-                {isLoadingTransactions && (
-                  <div className="text-center py-4">
-                    <RefreshCw className="w-4 h-4 animate-spin mx-auto text-slate-400" />
-                  </div>
-                )}
-
-                <Button 
-                  onClick={() => fetchStatement(100, 0)}
-                  variant="outline"
-                  size="sm"
-                  className="w-full mt-4 bg-slate-800/50 border-slate-700 text-slate-300"
-                >
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                  Load More Transactions
-                </Button>
               </CardContent>
             </Card>
           </TabsContent>
 
           {/* JOURNAL TAB */}
           <TabsContent value="journal" className="mt-3">
-            <Card className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-slate-700/50 shadow-xl">
+            <Card className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 border-slate-700/50">
               <CardHeader>
-                <CardTitle className="text-slate-200 flex items-center gap-2">
-                  <BookOpen className="w-5 h-5 text-purple-400" />
-                  Trading Journal
-                </CardTitle>
-                <CardDescription className="text-slate-400">
-                  Real-time log of all trading activities and system events
-                </CardDescription>
+                <CardTitle className="text-slate-200">Trading Journal</CardTitle>
+                <CardDescription>Real-time activity log</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-2 max-h-[500px] overflow-y-auto">
-                  {journalEntries.length === 0 ? (
-                    <div className="text-center text-slate-500 py-12">
-                      No journal entries yet
-                    </div>
-                  ) : (
-                    journalEntries.map((entry) => (
-                      <div 
-                        key={entry.id}
-                        className={`p-3 rounded-lg border-l-4 ${
-                          entry.type === 'PROFIT' ? 'border-l-emerald-500 bg-emerald-500/5' :
-                          entry.type === 'LOSS' ? 'border-l-rose-500 bg-rose-500/5' :
-                          entry.type === 'BUY' ? 'border-l-blue-500 bg-blue-500/5' :
-                          entry.type === 'SELL' ? 'border-l-cyan-500 bg-cyan-500/5' :
-                          entry.type === 'ERROR' ? 'border-l-red-500 bg-red-500/5' :
-                          'border-l-slate-500 bg-slate-500/5'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <Badge className={`text-[8px] ${
-                                entry.type === 'PROFIT' ? 'bg-emerald-500/20 text-emerald-400' :
-                                entry.type === 'LOSS' ? 'bg-rose-500/20 text-rose-400' :
-                                entry.type === 'BUY' ? 'bg-blue-500/20 text-blue-400' :
-                                entry.type === 'SELL' ? 'bg-cyan-500/20 text-cyan-400' :
-                                entry.type === 'ERROR' ? 'bg-red-500/20 text-red-400' :
-                                'bg-slate-500/20 text-slate-400'
-                              }`}>
-                                {entry.type}
-                              </Badge>
-                              <span className="text-[9px] font-mono text-slate-500">
-                                {new Date(entry.timestamp).toLocaleTimeString()}
-                              </span>
-                            </div>
-                            <div className="text-xs text-slate-300">{entry.message}</div>
-                            {entry.contract_id && (
-                              <div className="text-[9px] font-mono text-slate-500 mt-1">
-                                Contract ID: {entry.contract_id}
-                              </div>
-                            )}
-                          </div>
-                          {entry.profit_loss !== undefined && (
-                            <div className={`text-right font-mono text-sm font-bold ${
-                              entry.profit_loss > 0 ? 'text-emerald-400' : entry.profit_loss < 0 ? 'text-rose-400' : 'text-slate-400'
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                  {journalEntries.map((entry) => (
+                    <div key={entry.id} className={`p-3 rounded-lg border-l-4 ${
+                      entry.type === 'PROFIT' ? 'border-l-emerald-500 bg-emerald-500/5' :
+                      entry.type === 'LOSS' ? 'border-l-rose-500 bg-rose-500/5' :
+                      entry.type === 'BUY' ? 'border-l-blue-500 bg-blue-500/5' :
+                      entry.type === 'SELL' ? 'border-l-cyan-500 bg-cyan-500/5' :
+                      entry.type === 'ERROR' ? 'border-l-red-500 bg-red-500/5' :
+                      'border-l-slate-500 bg-slate-500/5'
+                    }`}>
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Badge className={`text-[9px] ${
+                              entry.type === 'PROFIT' ? 'bg-emerald-500/20 text-emerald-400' :
+                              entry.type === 'LOSS' ? 'bg-rose-500/20 text-rose-400' :
+                              entry.type === 'BUY' ? 'bg-blue-500/20 text-blue-400' :
+                              entry.type === 'SELL' ? 'bg-cyan-500/20 text-cyan-400' :
+                              entry.type === 'ERROR' ? 'bg-red-500/20 text-red-400' :
+                              'bg-slate-500/20 text-slate-400'
                             }`}>
-                              {entry.profit_loss > 0 ? '+' : ''}{entry.profit_loss.toFixed(2)}
-                            </div>
+                              {entry.type}
+                            </Badge>
+                            <span className="text-[9px] font-mono text-slate-500">
+                              {new Date(entry.timestamp).toLocaleTimeString()}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-300">{entry.message}</div>
+                          {entry.contract_id && (
+                            <div className="text-[9px] font-mono text-slate-500 mt-1">ID: {entry.contract_id}</div>
                           )}
                         </div>
+                        {entry.profit_loss !== undefined && (
+                          <div className={`text-right font-mono text-sm font-bold ${
+                            entry.profit_loss > 0 ? 'text-emerald-400' : entry.profit_loss < 0 ? 'text-rose-400' : 'text-slate-400'
+                          }`}>
+                            {entry.profit_loss > 0 ? '+' : ''}{entry.profit_loss.toFixed(2)}
+                          </div>
+                        )}
                       </div>
-                    ))
+                    </div>
+                  ))}
+                  {journalEntries.length === 0 && (
+                    <div className="text-center text-slate-500 py-8">No journal entries yet</div>
                   )}
                 </div>
               </CardContent>
@@ -861,6 +784,8 @@ export default function ProScannerBot() {
           </TabsContent>
         </Tabs>
       </div>
+      
+     
     </div>
   );
 }
