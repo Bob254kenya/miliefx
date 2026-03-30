@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'; 
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { copyTradingService } from '@/services/copy-trading-service';
@@ -38,17 +38,40 @@ const SCANNER_MARKETS: { symbol: string; name: string }[] = [
 
 type BotStatus = 'idle' | 'trading_m1' | 'recovery' | 'waiting_pattern' | 'pattern_matched';
 type M1StrategyType = 
+  | 'over0_under9_1'      // NEW: Over 0 / Under 9 (1 tick)
   | 'over0_under9_2' 
   | 'over0_under9_3' 
   | 'over0_under9_4' 
   | 'over1_under8_2' 
+  | 'over1_under8_3'      // NEW: Over 1 / Under 8 (3 ticks)
   | 'over1_under8_4' 
+  | 'over2_under7_2' 
   | 'over2_under7_3' 
+  | 'over2_under7_4' 
+  | 'over2_under7_5'      // NEW: Over 2 / Under 7 (5 ticks)
   | 'over3_under6_4' 
+  | 'over4_under5_4'      // NEW: Over 4 / Under 5 (4 ticks)
   | 'over4_under5_5' 
+  | 'over4_under5_6' 
+  | 'over4_under5_7' 
   | 'disabled';
 
-type M2RecoveryType = 'odd_even_5' | 'odd_even_6' | 'odd_even_8' | 'odd_even_9' | 'odd_even_7' | 'over4_under5_5' | 'over4_under5_6' | 'over4_under5_8' | 'over4_under5_9' | 'over4_under5_7' | 'over3_under6_5' | 'over3_under6_7' | 'disabled';
+type M2RecoveryType = 
+  | 'odd_even_3'          // NEW: Even / Odd (3 ticks)
+  | 'odd_even_4' 
+  | 'odd_even_5' 
+  | 'odd_even_6' 
+  | 'odd_even_7' 
+  | 'odd_even_8' 
+  | 'odd_even_9' 
+  | 'over4_under5_5' 
+  | 'over4_under5_6' 
+  | 'over4_under5_7' 
+  | 'over4_under5_8' 
+  | 'over4_under5_9' 
+  | 'over3_under6_5' 
+  | 'over3_under6_7' 
+  | 'disabled';
 
 interface LogEntry {
   id: number;
@@ -99,15 +122,15 @@ export default function ProScannerBot() {
 
   /* ── Market 2 config ── */
   const [m2Enabled, setM2Enabled] = useState(true);
-  const [m2RecoveryType, setM2RecoveryType] = useState<M2RecoveryType>('over4_under5_9');
+  const [m2RecoveryType, setM2RecoveryType] = useState<M2RecoveryType>('odd_even_4');
 
   /* ── Risk ── */
-  const [stake, setStake] = useState('0.35');
+  const [stake, setStake] = useState('0.6');
   const [martingaleOn, setMartingaleOn] = useState(true);
   const [martingaleMultiplier, setMartingaleMultiplier] = useState('2.0');
   const [martingaleMaxSteps, setMartingaleMaxSteps] = useState('5');
-  const [takeProfit, setTakeProfit] = useState('10');
-  const [stopLoss, setStopLoss] = useState('5');
+  const [takeProfit, setTakeProfit] = useState('5');
+  const [stopLoss, setStopLoss] = useState('30');
 
   /* ── Strategy Enabled Flags ── */
   const [strategyM1Enabled, setStrategyM1Enabled] = useState(true);
@@ -166,6 +189,21 @@ export default function ProScannerBot() {
     const digits = tickMapRef.current.get(symbol) || [];
     
     switch (m1StrategyType) {
+      // Over 0 / Under 9 (1 tick)
+      case 'over0_under9_1': {
+        if (digits.length < 1) return { matched: false };
+        const last1 = digits.slice(-1);
+        const patternKey = `${last1.join(',')}`;
+        
+        if (last1[0] === 0) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '0', patternDigits: patternKey };
+        }
+        if (last1[0] === 9) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '9', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
       // Over 0 / Under 9 (2 ticks)
       case 'over0_under9_2': {
         if (digits.length < 2) return { matched: false };
@@ -230,6 +268,23 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
+      // Over 1 / Under 8 (3 ticks) - NEW
+      case 'over1_under8_3': {
+        if (digits.length < 3) return { matched: false };
+        const last3 = digits.slice(-3);
+        const patternKey = `${last3.join(',')}`;
+        const allZeros = last3.every(d => d === 0);
+        const allNines = last3.every(d => d === 9);
+        
+        if (allZeros) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '1', patternDigits: patternKey };
+        }
+        if (allNines) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '8', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
       // Over 1 / Under 8 (4 ticks)
       case 'over1_under8_4': {
         if (digits.length < 4) return { matched: false };
@@ -247,6 +302,23 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
+      // Over 2 / Under 7 (2 ticks)
+      case 'over2_under7_2': {
+        if (digits.length < 2) return { matched: false };
+        const last2 = digits.slice(-2);
+        const patternKey = `${last2.join(',')}`;
+        const allLessThan2 = last2.every(d => d < 2);
+        const allGreaterThan7 = last2.every(d => d > 7);
+        
+        if (allLessThan2) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '2', patternDigits: patternKey };
+        }
+        if (allGreaterThan7) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '7', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
       // Over 2 / Under 7 (3 ticks)
       case 'over2_under7_3': {
         if (digits.length < 3) return { matched: false };
@@ -254,6 +326,40 @@ export default function ProScannerBot() {
         const patternKey = `${last3.join(',')}`;
         const allLessThan2 = last3.every(d => d < 2);
         const allGreaterThan7 = last3.every(d => d > 7);
+        
+        if (allLessThan2) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '2', patternDigits: patternKey };
+        }
+        if (allGreaterThan7) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '7', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      // Over 2 / Under 7 (4 ticks)
+      case 'over2_under7_4': {
+        if (digits.length < 4) return { matched: false };
+        const last4 = digits.slice(-4);
+        const patternKey = `${last4.join(',')}`;
+        const allLessThan2 = last4.every(d => d < 2);
+        const allGreaterThan7 = last4.every(d => d > 7);
+        
+        if (allLessThan2) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '2', patternDigits: patternKey };
+        }
+        if (allGreaterThan7) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '7', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      // Over 2 / Under 7 (5 ticks) - NEW
+      case 'over2_under7_5': {
+        if (digits.length < 5) return { matched: false };
+        const last5 = digits.slice(-5);
+        const patternKey = `${last5.join(',')}`;
+        const allLessThan2 = last5.every(d => d < 2);
+        const allGreaterThan7 = last5.every(d => d > 7);
         
         if (allLessThan2) {
           return { matched: true, contractType: 'DIGITOVER', barrier: '2', patternDigits: patternKey };
@@ -281,6 +387,23 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
+      // Over 4 / Under 5 (4 ticks) - NEW
+      case 'over4_under5_4': {
+        if (digits.length < 4) return { matched: false };
+        const last4 = digits.slice(-4);
+        const patternKey = `${last4.join(',')}`;
+        const allOver4 = last4.every(d => d >= 5);
+        const allUnder5 = last4.every(d => d <= 4);
+        
+        if (allOver4) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
+        }
+        if (allUnder5) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
       // Over 4 / Under 5 (5 ticks)
       case 'over4_under5_5': {
         if (digits.length < 5) return { matched: false };
@@ -288,6 +411,40 @@ export default function ProScannerBot() {
         const patternKey = `${last5.join(',')}`;
         const allOver4 = last5.every(d => d >= 5);
         const allUnder5 = last5.every(d => d <= 4);
+        
+        if (allOver4) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
+        }
+        if (allUnder5) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      // Over 4 / Under 5 (6 ticks)
+      case 'over4_under5_6': {
+        if (digits.length < 6) return { matched: false };
+        const last6 = digits.slice(-6);
+        const patternKey = `${last6.join(',')}`;
+        const allOver4 = last6.every(d => d >= 5);
+        const allUnder5 = last6.every(d => d <= 4);
+        
+        if (allOver4) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
+        }
+        if (allUnder5) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      // Over 4 / Under 5 (7 ticks)
+      case 'over4_under5_7': {
+        if (digits.length < 7) return { matched: false };
+        const last7 = digits.slice(-7);
+        const patternKey = `${last7.join(',')}`;
+        const allOver4 = last7.every(d => d >= 5);
+        const allUnder5 = last7.every(d => d <= 4);
         
         if (allOver4) {
           return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
@@ -307,6 +464,41 @@ export default function ProScannerBot() {
     const digits = tickMapRef.current.get(symbol) || [];
     
     switch (m2RecoveryType) {
+      // Even / Odd (3 ticks) - NEW
+      case 'odd_even_3': {
+        if (digits.length < 3) return { matched: false };
+        const last3 = digits.slice(-3);
+        const patternKey = `${last3.join(',')}`;
+        const allOdd = last3.every(d => d % 2 !== 0);
+        const allEven = last3.every(d => d % 2 === 0);
+        
+        if (allOdd) {
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+        }
+        if (allEven) {
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      // Even / Odd (4 ticks)
+      case 'odd_even_4': {
+        if (digits.length < 4) return { matched: false };
+        const last4 = digits.slice(-4);
+        const patternKey = `${last4.join(',')}`;
+        const allOdd = last4.every(d => d % 2 !== 0);
+        const allEven = last4.every(d => d % 2 === 0);
+        
+        if (allOdd) {
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+        }
+        if (allEven) {
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      // Even / Odd (5 ticks)
       case 'odd_even_5': {
         if (digits.length < 5) return { matched: false };
         const last5 = digits.slice(-5);
@@ -323,6 +515,7 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
+      // Even / Odd (6 ticks)
       case 'odd_even_6': {
         if (digits.length < 6) return { matched: false };
         const last6 = digits.slice(-6);
@@ -339,38 +532,7 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
-      case 'odd_even_8': {
-        if (digits.length < 8) return { matched: false };
-        const last8 = digits.slice(-8);
-        const patternKey = `${last8.join(',')}`;
-        const allOdd = last8.every(d => d % 2 !== 0);
-        const allEven = last8.every(d => d % 2 === 0);
-        
-        if (allOdd) {
-          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
-        }
-        if (allEven) {
-          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
-        }
-        return { matched: false };
-      }
-      
-      case 'odd_even_9': {
-        if (digits.length < 9) return { matched: false };
-        const last9 = digits.slice(-9);
-        const patternKey = `${last9.join(',')}`;
-        const allOdd = last9.every(d => d % 2 !== 0);
-        const allEven = last9.every(d => d % 2 === 0);
-        
-        if (allOdd) {
-          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
-        }
-        if (allEven) {
-          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
-        }
-        return { matched: false };
-      }
-      
+      // Even / Odd (7 ticks)
       case 'odd_even_7': {
         if (digits.length < 7) return { matched: false };
         const last7 = digits.slice(-7);
@@ -387,6 +549,41 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
+      // Even / Odd (8 ticks)
+      case 'odd_even_8': {
+        if (digits.length < 8) return { matched: false };
+        const last8 = digits.slice(-8);
+        const patternKey = `${last8.join(',')}`;
+        const allOdd = last8.every(d => d % 2 !== 0);
+        const allEven = last8.every(d => d % 2 === 0);
+        
+        if (allOdd) {
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+        }
+        if (allEven) {
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      // Even / Odd (9 ticks)
+      case 'odd_even_9': {
+        if (digits.length < 9) return { matched: false };
+        const last9 = digits.slice(-9);
+        const patternKey = `${last9.join(',')}`;
+        const allOdd = last9.every(d => d % 2 !== 0);
+        const allEven = last9.every(d => d % 2 === 0);
+        
+        if (allOdd) {
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+        }
+        if (allEven) {
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      // Over 4 / Under 5 (5 ticks)
       case 'over4_under5_5': {
         if (digits.length < 5) return { matched: false };
         const last5 = digits.slice(-5);
@@ -403,6 +600,7 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
+      // Over 4 / Under 5 (6 ticks)
       case 'over4_under5_6': {
         if (digits.length < 6) return { matched: false };
         const last6 = digits.slice(-6);
@@ -419,38 +617,7 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
-      case 'over4_under5_8': {
-        if (digits.length < 8) return { matched: false };
-        const last8 = digits.slice(-8);
-        const patternKey = `${last8.join(',')}`;
-        const allOver4 = last8.every(d => d >= 5);
-        const allUnder5 = last8.every(d => d <= 4);
-        
-        if (allOver4) {
-          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
-        }
-        if (allUnder5) {
-          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
-        }
-        return { matched: false };
-      }
-      
-      case 'over4_under5_9': {
-        if (digits.length < 9) return { matched: false };
-        const last9 = digits.slice(-9);
-        const patternKey = `${last9.join(',')}`;
-        const allOver4 = last9.every(d => d >= 5);
-        const allUnder5 = last9.every(d => d <= 4);
-        
-        if (allOver4) {
-          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
-        }
-        if (allUnder5) {
-          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
-        }
-        return { matched: false };
-      }
-      
+      // Over 4 / Under 5 (7 ticks)
       case 'over4_under5_7': {
         if (digits.length < 7) return { matched: false };
         const last7 = digits.slice(-7);
@@ -467,7 +634,41 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
-      // NEW: Over 3 / Under 6 (5 ticks)
+      // Over 4 / Under 5 (8 ticks)
+      case 'over4_under5_8': {
+        if (digits.length < 8) return { matched: false };
+        const last8 = digits.slice(-8);
+        const patternKey = `${last8.join(',')}`;
+        const allOver4 = last8.every(d => d >= 5);
+        const allUnder5 = last8.every(d => d <= 4);
+        
+        if (allOver4) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
+        }
+        if (allUnder5) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      // Over 4 / Under 5 (9 ticks)
+      case 'over4_under5_9': {
+        if (digits.length < 9) return { matched: false };
+        const last9 = digits.slice(-9);
+        const patternKey = `${last9.join(',')}`;
+        const allOver4 = last9.every(d => d >= 5);
+        const allUnder5 = last9.every(d => d <= 4);
+        
+        if (allOver4) {
+          return { matched: true, contractType: 'DIGITOVER', barrier: '4', patternDigits: patternKey };
+        }
+        if (allUnder5) {
+          return { matched: true, contractType: 'DIGITUNDER', barrier: '5', patternDigits: patternKey };
+        }
+        return { matched: false };
+      }
+      
+      // Over 3 / Under 6 (5 ticks)
       case 'over3_under6_5': {
         if (digits.length < 5) return { matched: false };
         const last5 = digits.slice(-5);
@@ -484,7 +685,7 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
-      // NEW: Over 3 / Under 6 (7 ticks)
+      // Over 3 / Under 6 (7 ticks)
       case 'over3_under6_7': {
         if (digits.length < 7) return { matched: false };
         const last7 = digits.slice(-7);
@@ -885,14 +1086,43 @@ export default function ProScannerBot() {
   // Helper function to get display name for M1 strategy
   const getM1DisplayName = (type: M1StrategyType): string => {
     switch (type) {
+      case 'over0_under9_1': return '🎯 Over 0 / Under 9 (1 tick)';
       case 'over0_under9_2': return '🎯 Over 0 / Under 9 (2 ticks)';
       case 'over0_under9_3': return '🎯 Over 0 / Under 9 (3 ticks)';
       case 'over0_under9_4': return '🎯 Over 0 / Under 9 (4 ticks)';
       case 'over1_under8_2': return '🎯 Over 1 / Under 8 (2 ticks)';
+      case 'over1_under8_3': return '🎯 Over 1 / Under 8 (3 ticks)';
       case 'over1_under8_4': return '🎯 Over 1 / Under 8 (4 ticks)';
+      case 'over2_under7_2': return '🎯 Over 2 / Under 7 (2 ticks)';
       case 'over2_under7_3': return '🎯 Over 2 / Under 7 (3 ticks)';
+      case 'over2_under7_4': return '🎯 Over 2 / Under 7 (4 ticks)';
+      case 'over2_under7_5': return '🎯 Over 2 / Under 7 (5 ticks)';
       case 'over3_under6_4': return '🎯 Over 3 / Under 6 (4 ticks)';
+      case 'over4_under5_4': return '🎯 Over 4 / Under 5 (4 ticks)';
       case 'over4_under5_5': return '🎯 Over 4 / Under 5 (5 ticks)';
+      case 'over4_under5_6': return '🎯 Over 4 / Under 5 (6 ticks)';
+      case 'over4_under5_7': return '🎯 Over 4 / Under 5 (7 ticks)';
+      default: return 'Select strategy';
+    }
+  };
+
+  // Helper function to get display name for M2 strategy
+  const getM2DisplayName = (type: M2RecoveryType): string => {
+    switch (type) {
+      case 'odd_even_3': return '🔄 Even / Odd (3 ticks)';
+      case 'odd_even_4': return '🔄 Even / Odd (4 ticks)';
+      case 'odd_even_5': return '🔄 Even / Odd (5 ticks)';
+      case 'odd_even_6': return '🔄 Even / Odd (6 ticks)';
+      case 'odd_even_7': return '🔄 Even / Odd (7 ticks)';
+      case 'odd_even_8': return '🔄 Even / Odd (8 ticks)';
+      case 'odd_even_9': return '🔄 Even / Odd (9 ticks)';
+      case 'over4_under5_5': return '🎯 Over 4 / Under 5 (5 ticks)';
+      case 'over4_under5_6': return '🎯 Over 4 / Under 5 (6 ticks)';
+      case 'over4_under5_7': return '🎯 Over 4 / Under 5 (7 ticks)';
+      case 'over4_under5_8': return '🎯 Over 4 / Under 5 (8 ticks)';
+      case 'over4_under5_9': return '🎯 Over 4 / Under 5 (9 ticks)';
+      case 'over3_under6_5': return '🎯 Over 3 / Under 6 (5 ticks)';
+      case 'over3_under6_7': return '🎯 Over 3 / Under 6 (7 ticks)';
       default: return 'Select strategy';
     }
   };
@@ -931,7 +1161,8 @@ export default function ProScannerBot() {
             </div>
           </div>
         </div>
-     {/* Markets Row - Horizontal */}
+     
+        {/* Markets Row - Horizontal */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {/* Market 1 */}
           <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-emerald-500/30 rounded-xl p-4 shadow-xl">
@@ -959,14 +1190,31 @@ export default function ProScannerBot() {
                     <SelectValue placeholder="Select strategy" />
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
+                    {/* Over 0 / Under 9 group */}
+                    <SelectItem value="over0_under9_1">🎯 Over 0 / Under 9 (1 tick)</SelectItem>
                     <SelectItem value="over0_under9_2">🎯 Over 0 / Under 9 (2 ticks)</SelectItem>
                     <SelectItem value="over0_under9_3">🎯 Over 0 / Under 9 (3 ticks)</SelectItem>
                     <SelectItem value="over0_under9_4">🎯 Over 0 / Under 9 (4 ticks)</SelectItem>
+                    
+                    {/* Over 1 / Under 8 group */}
                     <SelectItem value="over1_under8_2">🎯 Over 1 / Under 8 (2 ticks)</SelectItem>
+                    <SelectItem value="over1_under8_3">🎯 Over 1 / Under 8 (3 ticks)</SelectItem>
                     <SelectItem value="over1_under8_4">🎯 Over 1 / Under 8 (4 ticks)</SelectItem>
+                    
+                    {/* Over 2 / Under 7 group */}
+                    <SelectItem value="over2_under7_2">🎯 Over 2 / Under 7 (2 ticks)</SelectItem>
                     <SelectItem value="over2_under7_3">🎯 Over 2 / Under 7 (3 ticks)</SelectItem>
+                    <SelectItem value="over2_under7_4">🎯 Over 2 / Under 7 (4 ticks)</SelectItem>
+                    <SelectItem value="over2_under7_5">🎯 Over 2 / Under 7 (5 ticks)</SelectItem>
+                    
+                    {/* Over 3 / Under 6 */}
                     <SelectItem value="over3_under6_4">🎯 Over 3 / Under 6 (4 ticks)</SelectItem>
+                    
+                    {/* Over 4 / Under 5 group */}
+                    <SelectItem value="over4_under5_4">🎯 Over 4 / Under 5 (4 ticks)</SelectItem>
                     <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
+                    <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
+                    <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
                   </SelectContent>
                 </Select>
                 {m1StrategyType !== 'disabled' && (
@@ -1008,16 +1256,23 @@ export default function ProScannerBot() {
                     <SelectValue placeholder="Select strategy" />
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
+                    {/* Even / Odd group - organized by tick count */}
+                    <SelectItem value="odd_even_3">🔄 Even / Odd (3 ticks)</SelectItem>
+                    <SelectItem value="odd_even_4">🔄 Even / Odd (4 ticks)</SelectItem>
                     <SelectItem value="odd_even_5">🔄 Even / Odd (5 ticks)</SelectItem>
                     <SelectItem value="odd_even_6">🔄 Even / Odd (6 ticks)</SelectItem>
                     <SelectItem value="odd_even_7">🔄 Even / Odd (7 ticks)</SelectItem>
                     <SelectItem value="odd_even_8">🔄 Even / Odd (8 ticks)</SelectItem>
                     <SelectItem value="odd_even_9">🔄 Even / Odd (9 ticks)</SelectItem>
+                    
+                    {/* Over 4 / Under 5 group */}
                     <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                     <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
                     <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
                     <SelectItem value="over4_under5_8">🎯 Over 4 / Under 5 (8 ticks)</SelectItem>
                     <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
+                    
+                    {/* Over 3 / Under 6 group */}
                     <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                     <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
                   </SelectContent>
@@ -1237,7 +1492,11 @@ export default function ProScannerBot() {
                   <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
                   {SCANNER_MARKETS.length} markets
                 </span>
-                <span className="font-mono text-[7px]">M1: {m1StrategyType !== 'disabled' ? getM1DisplayName(m1StrategyType).substring(0, 20) : 'OFF'} | M2: {m2RecoveryType !== 'disabled' ? m2RecoveryType.substring(0, 8) : 'OFF'}</span>
+                <span className="font-mono text-[7px]">
+                  M1: {m1StrategyType !== 'disabled' ? getM1DisplayName(m1StrategyType).substring(0, 25) : 'OFF'} 
+                  {' | '}
+                  M2: {m2RecoveryType !== 'disabled' ? getM2DisplayName(m2RecoveryType).substring(0, 25) : 'OFF'}
+                </span>
               </div>
             </div>
           </div>
