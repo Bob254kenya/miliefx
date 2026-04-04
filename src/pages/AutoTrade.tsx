@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
+import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -18,7 +19,7 @@ import {
 } from 'lucide-react';
 
 // ============================================
-// TP/SL NOTIFICATION POPUP COMPONENT (Only)
+// TP/SL NOTIFICATION POPUP COMPONENT (Fixed)
 // ============================================
 
 // Notification Styles
@@ -152,47 +153,79 @@ export const showTPNotification = (type: 'tp' | 'sl', message: string, amount?: 
   }
 };
 
-// TP/SL Notification Component
+// TP/SL Notification Component - FIXED to ensure popup shows properly
 const NotificationPopup = () => {
   const [notification, setNotification] = useState<{ type: 'tp' | 'sl'; message: string; amount?: number } | null>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Register callback for TP/SL events
-  useEffect(() => {
-    (window as any).showTPNotification = (type: 'tp' | 'sl', message: string, amount?: number) => {
-      // Clear any existing timeout to prevent conflicts
-      if ((window as any).notificationTimeout) {
-        clearTimeout((window as any).notificationTimeout);
-      }
-      
-      setNotification({ type, message, amount });
-      setIsVisible(true);
-      setIsExiting(false);
-      
-      // Auto-hide after 8 seconds
-      (window as any).notificationTimeout = setTimeout(() => {
-        handleClose();
-      }, 8000);
-    };
-    
-    return () => {
-      if ((window as any).notificationTimeout) {
-        clearTimeout((window as any).notificationTimeout);
-      }
-      delete (window as any).showTPNotification;
-    };
+  // Clear timeout helper
+  const clearNotificationTimeout = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
   }, []);
 
-  const handleClose = () => {
+  // Handle close with animation
+  const handleClose = useCallback(() => {
+    if (isExiting) return;
+    
     setIsExiting(true);
+    clearNotificationTimeout();
+    
     setTimeout(() => {
       setIsVisible(false);
       setNotification(null);
       setIsExiting(false);
     }, 300);
-  };
+  }, [isExiting, clearNotificationTimeout]);
 
+  // Show notification function
+  const showNotification = useCallback((type: 'tp' | 'sl', message: string, amount?: number) => {
+    // Clear any existing notification and timeout
+    clearNotificationTimeout();
+    
+    // If there's an exiting animation, wait a bit
+    if (isExiting) {
+      setTimeout(() => {
+        setNotification({ type, message, amount });
+        setIsVisible(true);
+        setIsExiting(false);
+        
+        // Auto-hide after 8 seconds
+        timeoutRef.current = setTimeout(() => {
+          handleClose();
+        }, 8000);
+      }, 350);
+    } else {
+      setNotification({ type, message, amount });
+      setIsVisible(true);
+      setIsExiting(false);
+      
+      // Auto-hide after 8 seconds
+      timeoutRef.current = setTimeout(() => {
+        handleClose();
+      }, 8000);
+    }
+  }, [clearNotificationTimeout, isExiting, handleClose]);
+
+  // Register callback for TP/SL events
+  useEffect(() => {
+    // Register the global function
+    (window as any).showTPNotification = showNotification;
+    
+    // Cleanup on unmount
+    return () => {
+      clearNotificationTimeout();
+      if ((window as any).showTPNotification === showNotification) {
+        delete (window as any).showTPNotification;
+      }
+    };
+  }, [showNotification, clearNotificationTimeout]);
+
+  // Don't render anything if not visible
   if (!isVisible || !notification) return null;
 
   const isTP = notification.type === 'tp';
@@ -272,7 +305,7 @@ const NotificationPopup = () => {
   return (
     <>
       <style>{notificationStyles}</style>
-      <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+      <div className="fixed inset-0 z-[9999] flex items-center justify-center pointer-events-none">
         <div 
           className={`
             pointer-events-auto w-[400px] h-[250px] rounded-xl shadow-2xl overflow-hidden
@@ -705,8 +738,7 @@ function calculateDigitStats(symbol: string, tickRange: number): DigitStats {
 }
 
 export default function TradingChart() {
-  const { isAuthorized, balance: authBalance, refreshBalance } = useAuth();
-  const [localBalance, setLocalBalance] = useState(authBalance);
+  const { isAuthorized } = useAuth();
   const [showChart, setShowChart] = useState(false);
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
@@ -715,7 +747,7 @@ export default function TradingChart() {
   const [times, setTimes] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [candleCount, setCandleCount] = useState(CANDLE_CONFIG.defaultCandles);
-  const [tickRange, setTickRange] = useState(1000); // Changed to 1000
+  const [tickRange, setTickRange] = useState(100);
   const subscribedRef = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const subscriptionRef = useRef<any>(null);
@@ -783,55 +815,6 @@ export default function TradingChart() {
   const [turboMode, setTurboMode] = useState(false);
 
   const [displaySymbols, setDisplaySymbols] = useState<string[]>([]);
-  
-  // TP/SL notification tracking refs - reset when bot starts
-  const lastPnlRef = useRef(0);
-  const tpNotifiedRef = useRef(false);
-  const slNotifiedRef = useRef(false);
-  const botStartPnlRef = useRef(0); // Track PnL at bot start
-
-  // Update local balance when auth balance changes
-  useEffect(() => {
-    setLocalBalance(authBalance);
-  }, [authBalance]);
-
-  // Monitor PnL for TP/SL notifications - ONLY for new trades after bot starts
-  useEffect(() => {
-    if (!botRunning) {
-      // Reset refs when bot is not running
-      tpNotifiedRef.current = false;
-      slNotifiedRef.current = false;
-      botStartPnlRef.current = 0;
-      lastPnlRef.current = 0;
-      return;
-    }
-    
-    const tpValue = parseFloat(botConfig.takeProfit);
-    const slValue = parseFloat(botConfig.stopLoss);
-    const currentPnl = botStats.pnl;
-    const pnlFromStart = currentPnl - botStartPnlRef.current;
-    
-    // Only trigger if we have a starting point (bot has made at least one trade)
-    if (botStats.trades > 0) {
-      // TP check - based on profit from start
-      if (pnlFromStart >= tpValue && pnlFromStart > 0 && !tpNotifiedRef.current) {
-        console.log('🎯 TP HIT! Profit from start:', pnlFromStart);
-        showTPNotification('tp', `Take Profit Target Hit!`, pnlFromStart);
-        tpNotifiedRef.current = true;
-        slNotifiedRef.current = false;
-      }
-      
-      // SL check - based on loss from start
-      if (pnlFromStart <= -slValue && pnlFromStart < 0 && !slNotifiedRef.current) {
-        console.log('🛑 SL HIT! Loss from start:', pnlFromStart);
-        showTPNotification('sl', `Stop Loss Target Hit!`, Math.abs(pnlFromStart));
-        slNotifiedRef.current = true;
-        tpNotifiedRef.current = false;
-      }
-    }
-    
-    lastPnlRef.current = currentPnl;
-  }, [botStats.pnl, botStats.trades, botConfig.takeProfit, botConfig.stopLoss, botRunning]);
 
   // Helper function to get symbol based on contract type, digit, and price movement
   const getDigitSymbol = useCallback((digit: number, price: number, prevPrice: number | null, type: string, barrier: string): string => {
@@ -846,11 +829,13 @@ export default function TradingChart() {
         return 'C';
         
       case 'DIGITOVER':
+        // For Over: if digit > barrier -> O (Over), if digit == barrier -> S (Same), if digit < barrier -> U (Under)
         if (digit > barrierNum) return 'O';
         if (digit === barrierNum) return 'S';
         return 'U';
         
       case 'DIGITUNDER':
+        // For Under: if digit < barrier -> U (Under), if digit == barrier -> S (Same), if digit > barrier -> O (Over)
         if (digit < barrierNum) return 'U';
         if (digit === barrierNum) return 'S';
         return 'O';
@@ -917,10 +902,12 @@ export default function TradingChart() {
       enabled: true,
     };
     setIndicators(prev => [...prev, newIndicator]);
+    toast.success(`${type} indicator added`);
   }, []);
 
   const removeIndicator = useCallback((id: string) => {
     setIndicators(prev => prev.filter(ind => ind.id !== id));
+    toast.info('Indicator removed');
   }, []);
 
   const toggleIndicator = useCallback((id: string) => {
@@ -1013,10 +1000,12 @@ export default function TradingChart() {
           });
           subscribedRef.current = true;
           console.log(`Subscribed to ${symbol} for real-time updates`);
+          toast.success(`Connected to ${symbol} market`, { duration: 2000 });
         }
       } catch (err) {
         console.error('Error loading market data:', err);
         setIsLoading(false);
+        toast.error(`Failed to load ${symbol} data`);
       }
     };
     
@@ -1045,6 +1034,7 @@ export default function TradingChart() {
 
   const handleManualRefresh = useCallback(async () => {
     if (!derivApi.isConnected) {
+      toast.error('Not connected to Deriv');
       return;
     }
     
@@ -1059,8 +1049,9 @@ export default function TradingChart() {
         const newTimes = [...prev, ...hist.history.times];
         return newTimes.slice(-CANDLE_CONFIG.maxCandles);
       });
+      toast.success('Market data refreshed');
     } catch (err) {
-      console.error('Failed to refresh data:', err);
+      toast.error('Failed to refresh data');
     } finally {
       setIsLoading(false);
     }
@@ -1302,7 +1293,7 @@ export default function TradingChart() {
     };
   }, [candles.length, scrollOffset, candleWidth, showChart]);
 
-  // Chart rendering (keep as is - unchanged for brevity)
+  // Chart rendering
   useEffect(() => {
     if (!showChart) return;
     
@@ -1669,23 +1660,9 @@ export default function TradingChart() {
   }, [voiceEnabled]);
 
   const startBot = useCallback(async () => {
-    if (!isAuthorized) return;
-    
-    // Check if we have sufficient balance for initial stake
-    const initialStake = parseFloat(botConfig.stake);
-    if (localBalance < initialStake) {
-      return;
-    }
-    
+    if (!isAuthorized) { toast.error('Login to Deriv first'); return; }
     setBotRunning(true); setBotPaused(false);
     botRunningRef.current = true; botPausedRef.current = false;
-    
-    // Reset TP/SL notification refs for new bot session
-    tpNotifiedRef.current = false;
-    slNotifiedRef.current = false;
-    botStartPnlRef.current = 0;
-    lastPnlRef.current = 0;
-    
     const baseStake = parseFloat(botConfig.stake) || 1;
     const sl = parseFloat(botConfig.stopLoss) || 10;
     const tp = parseFloat(botConfig.takeProfit) || 20;
@@ -1694,41 +1671,15 @@ export default function TradingChart() {
     const mult = parseFloat(botConfig.multiplier) || 2;
     let stake = baseStake;
     let pnl = 0; let trades = 0; let wins = 0; let losses = 0; let consLosses = 0;
-    
-    // Get fresh balance
-    let currentBalance = localBalance;
-    try {
-      await refreshBalance();
-      currentBalance = authBalance;
-      setLocalBalance(authBalance);
-    } catch (err) {
-      console.error('Failed to refresh balance:', err);
-    }
 
     if (voiceEnabled) speak('Auto trading bot started');
 
     while (botRunningRef.current) {
       if (botPausedRef.current) { await new Promise(r => setTimeout(r, 500)); continue; }
-      
-      // Calculate profit from start
-      const pnlFromStart = pnl - botStartPnlRef.current;
-      
-      // Check TP/SL before each trade
-      if (trades > 0 && pnlFromStart >= tp && pnlFromStart > 0) {
-        console.log('🎯 TP HIT - Stopping bot');
-        showTPNotification('tp', `Take Profit Target Hit!`, pnlFromStart);
-        tpNotifiedRef.current = true;
-        break;
-      }
-      if (trades > 0 && pnlFromStart <= -sl && pnlFromStart < 0) {
-        console.log('🛑 SL HIT - Stopping bot');
-        showTPNotification('sl', `Stop Loss Target Hit!`, Math.abs(pnlFromStart));
-        slNotifiedRef.current = true;
-        break;
-      }
-      
-      if (trades >= maxT) {
-        if (voiceEnabled) speak(`Bot stopped. Max trades reached. Total profit ${pnl.toFixed(2)} dollars`);
+      if (trades >= maxT || pnl <= -sl || pnl >= tp) {
+        const reason = trades >= maxT ? 'Max trades reached' : pnl <= -sl ? 'Stop loss hit' : 'Take profit reached';
+        toast.info(`🤖 Bot stopped: ${reason}`);
+        if (voiceEnabled) speak(`Bot stopped. ${reason}. Total profit ${pnl.toFixed(2)} dollars`);
         break;
       }
 
@@ -1752,17 +1703,9 @@ export default function TradingChart() {
         const tr: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake, profit: 0, status: 'open', symbol: botConfig.botSymbol };
         setTradeHistory(prev => [tr, ...prev].slice(0, 100));
         const result = await derivApi.waitForContractResult(contractId);
-        trades++; 
-        pnl += result.profit;
+        trades++; pnl += result.profit;
         const resultDigit = getLastDigit(result.price || 0);
         setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status, resultDigit } : t));
-        
-        // Update local balance
-        currentBalance += result.profit;
-        setLocalBalance(currentBalance);
-        
-        // Refresh balance in background
-        refreshBalance().catch(console.error);
 
         if (result.status === 'won') {
           wins++; consLosses = 0;
@@ -1778,21 +1721,19 @@ export default function TradingChart() {
           if (voiceEnabled) speak(`Loss ${consLosses}. ${mart ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
         }
         setBotStats({ trades, wins, losses, pnl, currentStake: stake, consecutiveLosses: consLosses });
-        
       } catch (err: any) {
-        console.error('Bot trade error:', err);
+        toast.error(`Bot trade error: ${err.message}`);
         await new Promise(r => setTimeout(r, 2000));
       }
     }
     setBotRunning(false); botRunningRef.current = false;
     setBotStats(prev => ({ ...prev, trades, wins, losses, pnl }));
-    // Final balance refresh
-    refreshBalance().catch(console.error);
-  }, [isAuthorized, botConfig, voiceEnabled, speak, strategyEnabled, checkStrategyCondition, localBalance, authBalance, refreshBalance]);
+  }, [isAuthorized, botConfig, voiceEnabled, speak, strategyEnabled, checkStrategyCondition]);
 
   const stopBot = useCallback(() => { 
     botRunningRef.current = false; 
     setBotRunning(false);
+    toast.info('🛑 Bot stopped'); 
   }, []);
   
   const togglePauseBot = useCallback(() => { 
@@ -1814,940 +1755,935 @@ export default function TradingChart() {
   const legend = getLegendText();
 
   return (
-    <>
-      <style>{notificationStyles}</style>
+    <div className="space-y-4 max-w-[1920px] mx-auto p-4">
+      {/* Include Notification Popup - MUST BE RENDERED */}
       <NotificationPopup />
-      <div className="space-y-4 max-w-[1920px] mx-auto p-4">
-        {/* Header */}
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-              <BarChart3 className="w-5 h-5 text-primary" />RamzFX Trading Chart
-            </h1>
-            <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {candles.length} candles</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="bg-card border border-border rounded-lg px-3 py-1">
-              <span className="text-[10px] text-muted-foreground">Balance:</span>
-              <span className="font-mono text-sm font-bold text-primary ml-1">${localBalance.toFixed(2)}</span>
-            </div>
-            <Button
-              onClick={handleManualRefresh}
-              variant="outline"
-              size="sm"
-              className="gap-1"
-              disabled={isLoading}
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-              Refresh
+      
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-primary" /> Trading Chart
+          </h1>
+          <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {candles.length} candles</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={handleManualRefresh}
+            variant="outline"
+            size="sm"
+            className="gap-1"
+            disabled={isLoading}
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+          <Button
+            onClick={() => setShowChart(!showChart)}
+            variant="outline"
+            size="sm"
+            className="gap-1"
+          >
+            {showChart ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            {showChart ? "Hide Chart" : "Show Chart"}
+          </Button>
+          <Badge className="font-mono text-sm" variant="outline">
+            {currentPrice.toFixed(4)}
+          </Badge>
+        </div>
+      </div>
+
+      {/* Market Selector */}
+      <div className="bg-card border border-border rounded-xl p-3">
+        <div className="flex flex-wrap gap-1 mb-2">
+          {GROUPS.map(g => (
+            <Button key={g.value} size="sm" variant={groupFilter === g.value ? 'default' : 'outline'}
+              className="h-6 text-[10px] px-2" onClick={() => setGroupFilter(g.value)}>
+              {g.label}
             </Button>
-            <Button
-              onClick={() => setShowChart(!showChart)}
-              variant="outline"
-              size="sm"
-              className="gap-1"
-            >
-              {showChart ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              {showChart ? "Hide Chart" : "Show Chart"}
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-1 max-h-20 overflow-auto">
+          {filteredMarkets.map(m => (
+            <Button key={m.symbol} size="sm"
+              variant={symbol === m.symbol ? 'default' : 'ghost'}
+              className={`h-6 text-[9px] px-2 ${symbol === m.symbol ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+              onClick={() => setSymbol(m.symbol)}>
+              {m.name}
             </Button>
-            <Badge className="font-mono text-sm" variant="outline">
-              {currentPrice.toFixed(4)}
-            </Badge>
-          </div>
+          ))}
         </div>
+      </div>
 
-        {/* Market Selector */}
-        <div className="bg-card border border-border rounded-xl p-3">
-          <div className="flex flex-wrap gap-1 mb-2">
-            {GROUPS.map(g => (
-              <Button key={g.value} size="sm" variant={groupFilter === g.value ? 'default' : 'outline'}
-                className="h-6 text-[10px] px-2" onClick={() => setGroupFilter(g.value)}>
-                {g.label}
-              </Button>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-1 max-h-20 overflow-auto">
-            {filteredMarkets.map(m => (
-              <Button key={m.symbol} size="sm"
-                variant={symbol === m.symbol ? 'default' : 'ghost'}
-                className={`h-6 text-[9px] px-2 ${symbol === m.symbol ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
-                onClick={() => setSymbol(m.symbol)}>
-                {m.name}
-              </Button>
-            ))}
-          </div>
+      {/* Timeframe and Candle Count */}
+      <div className="flex flex-wrap gap-2 justify-between items-center">
+        <div className="flex flex-wrap gap-1">
+          {TIMEFRAMES.map(tf => (
+            <Button key={tf} size="sm" variant={timeframe === tf ? 'default' : 'outline'}
+              className={`h-7 text-xs px-3 ${timeframe === tf ? 'bg-primary text-primary-foreground' : ''}`}
+              onClick={() => setTimeframe(tf)}>
+              {tf}
+            </Button>
+          ))}
         </div>
-
-        {/* Timeframe and Candle Count */}
-        <div className="flex flex-wrap gap-2 justify-between items-center">
-          <div className="flex flex-wrap gap-1">
-            {TIMEFRAMES.map(tf => (
-              <Button key={tf} size="sm" variant={timeframe === tf ? 'default' : 'outline'}
-                className={`h-7 text-xs px-3 ${timeframe === tf ? 'bg-primary text-primary-foreground' : ''}`}
-                onClick={() => setTimeframe(tf)}>
-                {tf}
-              </Button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-[10px] text-muted-foreground">Candles (1000-5000):</label>
-            <Select value={String(candleCount)} onValueChange={v => setCandleCount(Math.min(Math.max(parseInt(v), CANDLE_CONFIG.minCandles), CANDLE_CONFIG.maxCandles))}>
-              <SelectTrigger className="h-7 text-xs w-24">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {[1000, 2000, 3000, 4000, 5000].map(c => (
-                  <SelectItem key={c} value={String(c)}>{c}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-          {/* LEFT: Chart + Info */}
-          <div className="xl:col-span-8 space-y-3">
-            {/* Candlestick Chart */}
-            <AnimatePresence mode="wait">
-              {showChart && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.3 }}
-                  className="overflow-hidden"
-                >
-                  <div className="bg-[#0D1117] border border-[#30363D] rounded-xl overflow-hidden">
-                    <canvas ref={canvasRef} className="w-full" style={{ height: 520, cursor: 'crosshair' }} />
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {/* Indicators Panel */}
-            <div className="bg-card border border-border rounded-xl p-3 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                  <LineChart className="w-3.5 h-3.5 text-primary" /> Indicators
-                </h3>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 text-[10px] gap-1"
-                  onClick={() => setShowIndicatorPanel(!showIndicatorPanel)}
-                >
-                  <Plus className="w-3 h-3" />
-                  Add Indicator
-                </Button>
-              </div>
-              
-              {showIndicatorPanel && (
-                <div className="flex flex-wrap gap-2 p-2 bg-muted/30 rounded-lg">
-                  {['RSI', 'BB', 'MA', 'MACD'].map(type => (
-                    <Button
-                      key={type}
-                      size="sm"
-                      variant="outline"
-                      className="h-6 text-[9px]"
-                      onClick={() => addIndicator(type as IndicatorType)}
-                      disabled={indicators.some(i => i.type === type)}
-                    >
-                      + {type}
-                    </Button>
-                  ))}
-                </div>
-              )}
-              
-              {indicators.length > 0 ? (
-                <div className="space-y-1.5">
-                  {indicators.map(indicator => (
-                    <div key={indicator.id} className="flex items-center justify-between p-1.5 bg-muted/20 rounded-lg">
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={indicator.enabled}
-                          onCheckedChange={() => toggleIndicator(indicator.id)}
-                          className="scale-75"
-                        />
-                        <span className="text-[10px] font-mono">{indicator.type}</span>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-5 w-5 p-0 text-muted-foreground hover:text-loss"
-                        onClick={() => removeIndicator(indicator.id)}
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-4 text-muted-foreground text-xs">
-                  No indicators added. Click "Add Indicator" to add RSI, BB, MA, or MACD.
-                </div>
-              )}
-            </div>
-
-            {/* Price Info Panel */}
-            <div className="grid grid-cols-3 md:grid-cols-7 gap-2">
-              {[
-                { label: 'Price', value: currentPrice.toFixed(4), color: 'text-foreground' },
-                { label: 'Last Digit', value: String(lastDigit), color: 'text-primary' },
-                { label: 'Support', value: support.toFixed(2), color: 'text-[#3FB950]' },
-                { label: 'Resistance', value: resistance.toFixed(2), color: 'text-[#F85149]' },
-                { label: 'BB Upper', value: bb.upper.toFixed(2), color: 'text-[#BC8CFF]' },
-                { label: 'BB Middle', value: bb.middle.toFixed(2), color: 'text-[#BC8CFF]' },
-                { label: 'BB Lower', value: bb.lower.toFixed(2), color: 'text-[#BC8CFF]' },
-              ].map(item => (
-                <div key={item.label} className="bg-card border border-border rounded-lg p-2 text-center">
-                  <div className="text-[9px] text-muted-foreground">{item.label}</div>
-                  <div className={`font-mono text-xs font-bold ${item.color}`}>{item.value}</div>
-                </div>
+        <div className="flex items-center gap-2">
+          <label className="text-[10px] text-muted-foreground">Candles (1000-5000):</label>
+          <Select value={String(candleCount)} onValueChange={v => setCandleCount(Math.min(Math.max(parseInt(v), CANDLE_CONFIG.minCandles), CANDLE_CONFIG.maxCandles))}>
+            <SelectTrigger className="h-7 text-xs w-24">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[1000, 2000, 3000, 4000, 5000].map(c => (
+                <SelectItem key={c} value={String(c)}>{c}</SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+        {/* LEFT: Chart + Info */}
+        <div className="xl:col-span-8 space-y-3">
+          {/* Candlestick Chart */}
+          <AnimatePresence mode="wait">
+            {showChart && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.3 }}
+                className="overflow-hidden"
+              >
+                <div className="bg-[#0D1117] border border-[#30363D] rounded-xl overflow-hidden">
+                  <canvas ref={canvasRef} className="w-full" style={{ height: 520, cursor: 'crosshair' }} />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Indicators Panel */}
+          <div className="bg-card border border-border rounded-xl p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
+                <LineChart className="w-3.5 h-3.5 text-primary" /> Indicators
+              </h3>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 text-[10px] gap-1"
+                onClick={() => setShowIndicatorPanel(!showIndicatorPanel)}
+              >
+                <Plus className="w-3 h-3" />
+                Add Indicator
+              </Button>
             </div>
-
-            {/* Digit Analysis - Real-Time Updates */}
-            <div className="bg-card border border-border rounded-xl p-3 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-foreground">Milliefx Digit Analysis (Real-Time)</h3>
-                <div className="flex items-center gap-2">
-                  <label className="text-[9px] text-muted-foreground">Tick Range:</label>
-                  <Select value={String(tickRange)} onValueChange={v => setTickRange(parseInt(v))}>
-                    <SelectTrigger className="h-7 text-xs w-20">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {TICK_RANGES.map(r => (
-                        <SelectItem key={r} value={String(r)}>{r}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Badge variant="outline" className="text-[9px] animate-pulse">
-                    Live: {totalTicks} ticks
-                  </Badge>
-                </div>
+            
+            {showIndicatorPanel && (
+              <div className="flex flex-wrap gap-2 p-2 bg-muted/30 rounded-lg">
+                {['RSI', 'BB', 'MA', 'MACD'].map(type => (
+                  <Button
+                    key={type}
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[9px]"
+                    onClick={() => addIndicator(type as IndicatorType)}
+                    disabled={indicators.some(i => i.type === type)}
+                  >
+                    + {type}
+                  </Button>
+                ))}
               </div>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
-                  <div className="text-[9px] text-[#D29922]">Odd</div>
-                  <div className="font-mono text-sm font-bold text-[#D29922]">{oddPercentage.toFixed(1)}%</div>
-                  <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#D29922] rounded-full" style={{ width: `${oddPercentage}%` }} /></div>
-                </div>
-                <div className="bg-[#3FB950]/10 border border-[#3FB950]/30 rounded-lg p-2">
-                  <div className="text-[9px] text-[#3FB950]">Even</div>
-                  <div className="font-mono text-sm font-bold text-[#3FB950]">{evenPercentage.toFixed(1)}%</div>
-                  <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#3FB950] rounded-full" style={{ width: `${evenPercentage}%` }} /></div>
-                </div>
-                <div className="bg-primary/10 border border-primary/30 rounded-lg p-2">
-                  <div className="text-[9px] text-primary">Over 4 (5-9)</div>
-                  <div className="font-mono text-sm font-bold text-primary">{overPercentage.toFixed(1)}%</div>
-                  <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-primary rounded-full" style={{ width: `${overPercentage}%` }} /></div>
-                </div>
-                <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
-                  <div className="text-[9px] text-[#D29922]">Under 5 (0-4)</div>
-                  <div className="font-mono text-sm font-bold text-[#D29922]">{underPercentage.toFixed(1)}%</div>
-                  <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#D29922] rounded-full" style={{ width: `${underPercentage}%` }} /></div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-5 md:grid-cols-10 gap-1.5">
-                {Array.from({ length: 10 }, (_, d) => {
-                  const pct = percentages[d] || 0;
-                  const count = frequency[d] || 0;
-                  const isHot = pct > 12;
-                  const isWarm = pct > 9;
-                  const isBestMatch = d === mostCommon;
-                  const isBestDiffer = d === leastCommon;
-                  return (
-                    <button key={d}
-                      onClick={() => { setSelectedPrediction(String(d)); }}
-                      className={`relative rounded-lg p-2 text-center transition-all border cursor-pointer hover:ring-2 hover:ring-primary ${
-                        selectedPrediction === String(d) ? 'ring-2 ring-primary' : ''
-                      } ${isHot ? 'bg-loss/10 border-loss/40 text-loss' :
-                        isWarm ? 'bg-warning/10 border-warning/40 text-warning' :
-                        'bg-card border-border text-primary'}`}
+            )}
+            
+            {indicators.length > 0 ? (
+              <div className="space-y-1.5">
+                {indicators.map(indicator => (
+                  <div key={indicator.id} className="flex items-center justify-between p-1.5 bg-muted/20 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={indicator.enabled}
+                        onCheckedChange={() => toggleIndicator(indicator.id)}
+                        className="scale-75"
+                      />
+                      <span className="text-[10px] font-mono">{indicator.type}</span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-5 w-5 p-0 text-muted-foreground hover:text-loss"
+                      onClick={() => removeIndicator(indicator.id)}
                     >
-                      <div className="font-mono text-lg font-bold">{d}</div>
-                      <div className="text-[8px]">{count} ({pct.toFixed(1)}%)</div>
-                      <div className="h-1 bg-muted rounded-full mt-1">
-                        <div className={`h-full rounded-full ${isHot ? 'bg-loss' : isWarm ? 'bg-warning' : 'bg-primary'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
-                      </div>
-                      {isBestMatch && (
-                        <Badge className="absolute -top-1 -right-1 text-[7px] px-1 bg-profit text-profit-foreground">Match</Badge>
-                      )}
-                      {isBestDiffer && (
-                        <Badge className="absolute -top-1 -left-1 text-[7px] px-1 bg-loss text-loss-foreground">Diff</Badge>
-                      )}
-                    </button>
-                  );
-                })}
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ))}
               </div>
-              
-              <div className="text-center text-[8px] text-muted-foreground animate-pulse">
-                🔄 Updating in real-time with each new tick
+            ) : (
+              <div className="text-center py-4 text-muted-foreground text-xs">
+                No indicators added. Click "Add Indicator" to add RSI, BB, MA, or MACD.
               </div>
-            </div>
-
-            {/* Strategic Recommendations */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              <div className="bg-card border border-profit/30 rounded-lg p-2">
-                <div className="text-[9px] text-muted-foreground">Best Match</div>
-                <div className="font-mono text-lg font-bold text-profit">{mostCommon}</div>
-                <div className="text-[8px] text-muted-foreground">{percentages[mostCommon]?.toFixed(1)}% frequency</div>
-              </div>
-              <div className="bg-card border border-loss/30 rounded-lg p-2">
-                <div className="text-[9px] text-muted-foreground">Best Differ</div>
-                <div className="font-mono text-lg font-bold text-loss">{leastCommon}</div>
-                <div className="text-[8px] text-muted-foreground">{percentages[leastCommon]?.toFixed(1)}% frequency</div>
-              </div>
-              <div className="bg-card border border-[#D29922]/30 rounded-lg p-2">
-                <div className="text-[9px] text-muted-foreground">Even/Odd</div>
-                <div className={`font-mono text-lg font-bold ${evenPercentage > 50 ? 'text-[#3FB950]' : 'text-[#D29922]'}`}>
-                  {evenPercentage > 50 ? 'EVEN' : 'ODD'}
-                </div>
-                <div className="text-[8px] text-muted-foreground">{Math.max(evenPercentage, oddPercentage).toFixed(1)}%</div>
-              </div>
-              <div className="bg-card border border-primary/30 rounded-lg p-2">
-                <div className="text-[9px] text-muted-foreground">Over/Under</div>
-                <div className={`font-mono text-lg font-bold ${overPercentage > 50 ? 'text-primary' : 'text-[#D29922]'}`}>
-                  {overPercentage > 50 ? 'OVER' : 'UNDER'}
-                </div>
-                <div className="text-[8px] text-muted-foreground">{Math.max(overPercentage, underPercentage).toFixed(1)}%</div>
-              </div>
-            </div>
+            )}
           </div>
 
-          {/* RIGHT: Signals + Bot + Last 26 Digits */}
-          <div className="xl:col-span-4 space-y-3">
-            {/* Voice AI Toggle */}
-            <div className="bg-card border border-primary/30 rounded-xl p-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                  <Zap className="w-3.5 h-3.5 text-primary" />Ramzfx AI Voice Signals
-                </h3>
-                <Button
-                  size="sm"
-                  variant={voiceEnabled ? 'default' : 'outline'}
-                  className="h-7 text-[10px] gap-1"
-                  onClick={() => {
-                    setVoiceEnabled(!voiceEnabled);
-                    if (!voiceEnabled) {
-                      const u = new SpeechSynthesisUtterance('Voice signals enabled');
-                      u.rate = 1.1;
-                      window.speechSynthesis?.speak(u);
-                    } else {
-                      window.speechSynthesis?.cancel();
-                    }
-                  }}
-                >
-                  {voiceEnabled ? <Volume2 className="w-3 h-3" /> : <VolumeX className="w-3 h-3" />}
-                  {voiceEnabled ? 'ON' : 'OFF'}
-                </Button>
+          {/* Price Info Panel */}
+          <div className="grid grid-cols-3 md:grid-cols-7 gap-2">
+            {[
+              { label: 'Price', value: currentPrice.toFixed(4), color: 'text-foreground' },
+              { label: 'Last Digit', value: String(lastDigit), color: 'text-primary' },
+              { label: 'Support', value: support.toFixed(2), color: 'text-[#3FB950]' },
+              { label: 'Resistance', value: resistance.toFixed(2), color: 'text-[#F85149]' },
+              { label: 'BB Upper', value: bb.upper.toFixed(2), color: 'text-[#BC8CFF]' },
+              { label: 'BB Middle', value: bb.middle.toFixed(2), color: 'text-[#BC8CFF]' },
+              { label: 'BB Lower', value: bb.lower.toFixed(2), color: 'text-[#BC8CFF]' },
+            ].map(item => (
+              <div key={item.label} className="bg-card border border-border rounded-lg p-2 text-center">
+                <div className="text-[9px] text-muted-foreground">{item.label}</div>
+                <div className={`font-mono text-xs font-bold ${item.color}`}>{item.value}</div>
               </div>
-              {voiceEnabled && (
-                <p className="text-[9px] text-muted-foreground mt-1">🔊 Ramfx AI will announce trade results</p>
-              )}
-            </div>
+            ))}
+          </div>
 
-            {/* Trading Signals */}
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-card border border-border rounded-xl p-3">
-                <div className="flex items-center gap-1 mb-1">
-                  {riseSignal.direction === 'Rise' ? <TrendingUp className="w-3.5 h-3.5 text-profit" /> : <TrendingDown className="w-3.5 h-3.5 text-loss" />}
-                  <span className="text-[10px] font-semibold">Rise/Fall</span>
-                </div>
-                <div className={`font-mono text-sm font-bold ${riseSignal.direction === 'Rise' ? 'text-profit' : 'text-loss'}`}>
-                  {riseSignal.direction}
-                </div>
-                <div className="text-[8px] text-muted-foreground mb-1">RSI: {rsi.toFixed(1)}</div>
-                <div className="h-1.5 bg-muted rounded-full">
-                  <div className={`h-full rounded-full ${riseSignal.direction === 'Rise' ? 'bg-profit' : 'bg-loss'}`}
-                    style={{ width: `${riseSignal.confidence}%` }} />
-                </div>
-              </div>
-
-              <div className="bg-card border border-border rounded-xl p-3">
-                <div className="flex items-center gap-1 mb-1">
-                  <Activity className="w-3.5 h-3.5 text-primary" />
-                  <span className="text-[10px] font-semibold">Even/Odd</span>
-                </div>
-                <div className={`font-mono text-sm font-bold ${eoSignal.direction === 'Even' ? 'text-[#3FB950]' : 'text-[#D29922]'}`}>
-                  {eoSignal.direction}
-                </div>
-                <div className="text-[8px] text-muted-foreground mb-1">{evenPercentage.toFixed(1)}% even</div>
-                <div className="h-1.5 bg-muted rounded-full">
-                  <div className={`h-full rounded-full ${eoSignal.direction === 'Even' ? 'bg-[#3FB950]' : 'bg-[#D29922]'}`}
-                    style={{ width: `${eoSignal.confidence}%` }} />
-                </div>
-              </div>
-
-              <div className="bg-card border border-border rounded-xl p-3">
-                <div className="flex items-center gap-1 mb-1">
-                  <ArrowUp className="w-3.5 h-3.5 text-primary" />
-                  <span className="text-[10px] font-semibold">Over/Under</span>
-                </div>
-                <div className={`font-mono text-sm font-bold ${ouSignal.direction === 'Over' ? 'text-primary' : 'text-[#D29922]'}`}>
-                  {ouSignal.direction}
-                </div>
-                <div className="text-[8px] text-muted-foreground mb-1">{overPercentage.toFixed(1)}% over</div>
-                <div className="h-1.5 bg-muted rounded-full">
-                  <div className={`h-full rounded-full ${ouSignal.direction === 'Over' ? 'bg-primary' : 'bg-[#D29922]'}`}
-                    style={{ width: `${ouSignal.confidence}%` }} />
-                </div>
-              </div>
-
-              <div className="bg-card border border-border rounded-xl p-3">
-                <div className="flex items-center gap-1 mb-1">
-                  <Target className="w-3.5 h-3.5 text-profit" />
-                  <span className="text-[10px] font-semibold">Best Match</span>
-                </div>
-                <div className="font-mono text-sm font-bold text-profit">Digit {matchSignal.digit}</div>
-                <div className="text-[8px] text-muted-foreground mb-1">{percentages[mostCommon]?.toFixed(1)}%</div>
-                <div className="h-1.5 bg-muted rounded-full">
-                  <div className="h-full bg-profit rounded-full" style={{ width: `${matchSignal.confidence}%` }} />
-                </div>
-              </div>
-            </div>
-
-            {/* AUTO BOT PANEL */}
-            <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                  <Zap className="w-3.5 h-3.5 text-primary" /> Ramzfx Speed Bot
-                </h3>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant={turboMode ? 'default' : 'outline'}
-                    className={`h-6 text-[9px] px-2 ${turboMode ? 'bg-profit hover:bg-profit/90 text-profit-foreground animate-pulse' : ''}`}
-                    onClick={() => setTurboMode(!turboMode)}
-                    disabled={botRunning}
-                  >
-                    <Zap className="w-3 h-3 mr-0.5" />
-                    {turboMode ? '⚡ TURBO' : 'Turbo'}
-                  </Button>
-                  {botRunning && (
-                    <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ repeat: Infinity, duration: 1.5 }}>
-                      <Badge className="text-[8px] bg-profit text-profit-foreground">RUNNING</Badge>
-                    </motion.div>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[9px] text-muted-foreground">Market</label>
-                <Select value={botConfig.botSymbol} onValueChange={handleBotSymbolChange} disabled={botRunning}>
-                  <SelectTrigger className="h-8 text-xs">
+          {/* Digit Analysis - Real-Time Updates */}
+          <div className="bg-card border border-border rounded-xl p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-foreground">Ramzfx Digit Analysis (Real-Time)</h3>
+              <div className="flex items-center gap-2">
+                <label className="text-[9px] text-muted-foreground">Tick Range:</label>
+                <Select value={String(tickRange)} onValueChange={v => setTickRange(parseInt(v))}>
+                  <SelectTrigger className="h-7 text-xs w-20">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="max-h-60">
-                    {ALL_MARKETS.map(m => (
-                      <SelectItem key={m.symbol} value={m.symbol}>
-                        {m.name}
+                  <SelectContent>
+                    {TICK_RANGES.map(r => (
+                      <SelectItem key={r} value={String(r)}>{r}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Badge variant="outline" className="text-[9px] animate-pulse">
+                  Live: {totalTicks} ticks
+                </Badge>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
+                <div className="text-[9px] text-[#D29922]">Odd</div>
+                <div className="font-mono text-sm font-bold text-[#D29922]">{oddPercentage.toFixed(1)}%</div>
+                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#D29922] rounded-full" style={{ width: `${oddPercentage}%` }} /></div>
+              </div>
+              <div className="bg-[#3FB950]/10 border border-[#3FB950]/30 rounded-lg p-2">
+                <div className="text-[9px] text-[#3FB950]">Even</div>
+                <div className="font-mono text-sm font-bold text-[#3FB950]">{evenPercentage.toFixed(1)}%</div>
+                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#3FB950] rounded-full" style={{ width: `${evenPercentage}%` }} /></div>
+              </div>
+              <div className="bg-primary/10 border border-primary/30 rounded-lg p-2">
+                <div className="text-[9px] text-primary">Over 4 (5-9)</div>
+                <div className="font-mono text-sm font-bold text-primary">{overPercentage.toFixed(1)}%</div>
+                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-primary rounded-full" style={{ width: `${overPercentage}%` }} /></div>
+              </div>
+              <div className="bg-[#D29922]/10 border border-[#D29922]/30 rounded-lg p-2">
+                <div className="text-[9px] text-[#D29922]">Under 5 (0-4)</div>
+                <div className="font-mono text-sm font-bold text-[#D29922]">{underPercentage.toFixed(1)}%</div>
+                <div className="h-1.5 bg-muted rounded-full mt-1"><div className="h-full bg-[#D29922] rounded-full" style={{ width: `${underPercentage}%` }} /></div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-5 md:grid-cols-10 gap-1.5">
+              {Array.from({ length: 10 }, (_, d) => {
+                const pct = percentages[d] || 0;
+                const count = frequency[d] || 0;
+                const isHot = pct > 12;
+                const isWarm = pct > 9;
+                const isBestMatch = d === mostCommon;
+                const isBestDiffer = d === leastCommon;
+                return (
+                  <button key={d}
+                    onClick={() => { setSelectedPrediction(String(d)); }}
+                    className={`relative rounded-lg p-2 text-center transition-all border cursor-pointer hover:ring-2 hover:ring-primary ${
+                      selectedPrediction === String(d) ? 'ring-2 ring-primary' : ''
+                    } ${isHot ? 'bg-loss/10 border-loss/40 text-loss' :
+                      isWarm ? 'bg-warning/10 border-warning/40 text-warning' :
+                      'bg-card border-border text-primary'}`}
+                  >
+                    <div className="font-mono text-lg font-bold">{d}</div>
+                    <div className="text-[8px]">{count} ({pct.toFixed(1)}%)</div>
+                    <div className="h-1 bg-muted rounded-full mt-1">
+                      <div className={`h-full rounded-full ${isHot ? 'bg-loss' : isWarm ? 'bg-warning' : 'bg-primary'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
+                    </div>
+                    {isBestMatch && (
+                      <Badge className="absolute -top-1 -right-1 text-[7px] px-1 bg-profit text-profit-foreground">Match</Badge>
+                    )}
+                    {isBestDiffer && (
+                      <Badge className="absolute -top-1 -left-1 text-[7px] px-1 bg-loss text-loss-foreground">Diff</Badge>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            
+            <div className="text-center text-[8px] text-muted-foreground animate-pulse">
+              🔄 Updating in real-time with each new tick
+            </div>
+          </div>
+
+          {/* Strategic Recommendations */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="bg-card border border-profit/30 rounded-lg p-2">
+              <div className="text-[9px] text-muted-foreground">Best Match</div>
+              <div className="font-mono text-lg font-bold text-profit">{mostCommon}</div>
+              <div className="text-[8px] text-muted-foreground">{percentages[mostCommon]?.toFixed(1)}% frequency</div>
+            </div>
+            <div className="bg-card border border-loss/30 rounded-lg p-2">
+              <div className="text-[9px] text-muted-foreground">Best Differ</div>
+              <div className="font-mono text-lg font-bold text-loss">{leastCommon}</div>
+              <div className="text-[8px] text-muted-foreground">{percentages[leastCommon]?.toFixed(1)}% frequency</div>
+            </div>
+            <div className="bg-card border border-[#D29922]/30 rounded-lg p-2">
+              <div className="text-[9px] text-muted-foreground">Even/Odd</div>
+              <div className={`font-mono text-lg font-bold ${evenPercentage > 50 ? 'text-[#3FB950]' : 'text-[#D29922]'}`}>
+                {evenPercentage > 50 ? 'EVEN' : 'ODD'}
+              </div>
+              <div className="text-[8px] text-muted-foreground">{Math.max(evenPercentage, oddPercentage).toFixed(1)}%</div>
+            </div>
+            <div className="bg-card border border-primary/30 rounded-lg p-2">
+              <div className="text-[9px] text-muted-foreground">Over/Under</div>
+              <div className={`font-mono text-lg font-bold ${overPercentage > 50 ? 'text-primary' : 'text-[#D29922]'}`}>
+                {overPercentage > 50 ? 'OVER' : 'UNDER'}
+              </div>
+              <div className="text-[8px] text-muted-foreground">{Math.max(overPercentage, underPercentage).toFixed(1)}%</div>
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT: Signals + Bot + Last 26 Digits */}
+        <div className="xl:col-span-4 space-y-3">
+          {/* Voice AI Toggle */}
+          <div className="bg-card border border-primary/30 rounded-xl p-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
+                <Zap className="w-3.5 h-3.5 text-primary" /> AI Voice Signals
+              </h3>
+              <Button
+                size="sm"
+                variant={voiceEnabled ? 'default' : 'outline'}
+                className="h-7 text-[10px] gap-1"
+                onClick={() => {
+                  setVoiceEnabled(!voiceEnabled);
+                  if (!voiceEnabled) {
+                    const u = new SpeechSynthesisUtterance('Voice signals enabled');
+                    u.rate = 1.1;
+                    window.speechSynthesis?.speak(u);
+                  } else {
+                    window.speechSynthesis?.cancel();
+                  }
+                }}
+              >
+                {voiceEnabled ? <Volume2 className="w-3 h-3" /> : <VolumeX className="w-3 h-3" />}
+                {voiceEnabled ? 'ON' : 'OFF'}
+              </Button>
+            </div>
+            {voiceEnabled && (
+              <p className="text-[9px] text-muted-foreground mt-1">🔊 Dessyfx AI will announce trade results</p>
+            )}
+          </div>
+
+          {/* Trading Signals */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-card border border-border rounded-xl p-3">
+              <div className="flex items-center gap-1 mb-1">
+                {riseSignal.direction === 'Rise' ? <TrendingUp className="w-3.5 h-3.5 text-profit" /> : <TrendingDown className="w-3.5 h-3.5 text-loss" />}
+                <span className="text-[10px] font-semibold">Rise/Fall</span>
+              </div>
+              <div className={`font-mono text-sm font-bold ${riseSignal.direction === 'Rise' ? 'text-profit' : 'text-loss'}`}>
+                {riseSignal.direction}
+              </div>
+              <div className="text-[8px] text-muted-foreground mb-1">RSI: {rsi.toFixed(1)}</div>
+              <div className="h-1.5 bg-muted rounded-full">
+                <div className={`h-full rounded-full ${riseSignal.direction === 'Rise' ? 'bg-profit' : 'bg-loss'}`}
+                  style={{ width: `${riseSignal.confidence}%` }} />
+              </div>
+            </div>
+
+            <div className="bg-card border border-border rounded-xl p-3">
+              <div className="flex items-center gap-1 mb-1">
+                <Activity className="w-3.5 h-3.5 text-primary" />
+                <span className="text-[10px] font-semibold">Even/Odd</span>
+              </div>
+              <div className={`font-mono text-sm font-bold ${eoSignal.direction === 'Even' ? 'text-[#3FB950]' : 'text-[#D29922]'}`}>
+                {eoSignal.direction}
+              </div>
+              <div className="text-[8px] text-muted-foreground mb-1">{evenPercentage.toFixed(1)}% even</div>
+              <div className="h-1.5 bg-muted rounded-full">
+                <div className={`h-full rounded-full ${eoSignal.direction === 'Even' ? 'bg-[#3FB950]' : 'bg-[#D29922]'}`}
+                  style={{ width: `${eoSignal.confidence}%` }} />
+              </div>
+            </div>
+
+            <div className="bg-card border border-border rounded-xl p-3">
+              <div className="flex items-center gap-1 mb-1">
+                <ArrowUp className="w-3.5 h-3.5 text-primary" />
+                <span className="text-[10px] font-semibold">Over/Under</span>
+              </div>
+              <div className={`font-mono text-sm font-bold ${ouSignal.direction === 'Over' ? 'text-primary' : 'text-[#D29922]'}`}>
+                {ouSignal.direction}
+              </div>
+              <div className="text-[8px] text-muted-foreground mb-1">{overPercentage.toFixed(1)}% over</div>
+              <div className="h-1.5 bg-muted rounded-full">
+                <div className={`h-full rounded-full ${ouSignal.direction === 'Over' ? 'bg-primary' : 'bg-[#D29922]'}`}
+                  style={{ width: `${ouSignal.confidence}%` }} />
+              </div>
+            </div>
+
+            <div className="bg-card border border-border rounded-xl p-3">
+              <div className="flex items-center gap-1 mb-1">
+                <Target className="w-3.5 h-3.5 text-profit" />
+                <span className="text-[10px] font-semibold">Best Match</span>
+              </div>
+              <div className="font-mono text-sm font-bold text-profit">Digit {matchSignal.digit}</div>
+              <div className="text-[8px] text-muted-foreground mb-1">{percentages[mostCommon]?.toFixed(1)}%</div>
+              <div className="h-1.5 bg-muted rounded-full">
+                <div className="h-full bg-profit rounded-full" style={{ width: `${matchSignal.confidence}%` }} />
+              </div>
+            </div>
+          </div>
+
+          {/* AUTO BOT PANEL */}
+          <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
+                <Zap className="w-3.5 h-3.5 text-primary" /> Dessyfx Speed Bot
+              </h3>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant={turboMode ? 'default' : 'outline'}
+                  className={`h-6 text-[9px] px-2 ${turboMode ? 'bg-profit hover:bg-profit/90 text-profit-foreground animate-pulse' : ''}`}
+                  onClick={() => setTurboMode(!turboMode)}
+                  disabled={botRunning}
+                >
+                  <Zap className="w-3 h-3 mr-0.5" />
+                  {turboMode ? '⚡ TURBO' : 'Turbo'}
+                </Button>
+                {botRunning && (
+                  <motion.div animate={{ opacity: [0.4, 1, 0.4] }} transition={{ repeat: Infinity, duration: 1.5 }}>
+                    <Badge className="text-[8px] bg-profit text-profit-foreground">RUNNING</Badge>
+                  </motion.div>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[9px] text-muted-foreground">Market</label>
+              <Select value={botConfig.botSymbol} onValueChange={handleBotSymbolChange} disabled={botRunning}>
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="max-h-60">
+                  {ALL_MARKETS.map(m => (
+                    <SelectItem key={m.symbol} value={m.symbol}>
+                      {m.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Select value={botConfig.contractType} onValueChange={v => setBotConfig(p => ({ ...p, contractType: v }))} disabled={botRunning}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
+            </Select>
+
+            {['DIGITMATCH','DIGITDIFF','DIGITOVER','DIGITUNDER'].includes(botConfig.contractType) && (
+              <div>
+                <label className="text-[9px] text-muted-foreground">Prediction (0-9)</label>
+                <div className="grid grid-cols-5 gap-1">
+                  {Array.from({ length: 10 }, (_, i) => (
+                    <button key={i} disabled={botRunning} onClick={() => setBotConfig(p => ({ ...p, prediction: String(i) }))}
+                      className={`h-6 rounded text-[10px] font-mono font-bold transition-all ${
+                        botConfig.prediction === String(i) ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground hover:bg-secondary'
+                      }`}>{i}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[9px] text-muted-foreground">Stake ($)</label>
+                <Input type="number" min="0.35" step="0.01" value={botConfig.stake}
+                  onChange={e => setBotConfig(p => ({ ...p, stake: e.target.value }))} disabled={botRunning} className="h-7 text-xs" />
+              </div>
+              <div>
+                <label className="text-[9px] text-muted-foreground">Duration</label>
+                <div className="flex gap-1">
+                  <Input type="number" min="1" value={botConfig.duration}
+                    onChange={e => setBotConfig(p => ({ ...p, duration: e.target.value }))} disabled={botRunning} className="h-7 text-xs flex-1" />
+                  <Select value={botConfig.durationUnit} onValueChange={v => setBotConfig(p => ({ ...p, durationUnit: v }))} disabled={botRunning}>
+                    <SelectTrigger className="h-7 text-xs w-16"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="t">T</SelectItem>
+                      <SelectItem value="s">S</SelectItem>
+                      <SelectItem value="m">M</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] text-foreground">Martingale</label>
+              <div className="flex items-center gap-2">
+                {botConfig.martingale && (
+                  <Input type="number" min="1.1" step="0.1" value={botConfig.multiplier}
+                    onChange={e => setBotConfig(p => ({ ...p, multiplier: e.target.value }))} disabled={botRunning}
+                    className="h-6 text-[10px] w-14" />
+                )}
+                <button onClick={() => setBotConfig(p => ({ ...p, martingale: !p.martingale }))} disabled={botRunning}
+                  className={`w-9 h-5 rounded-full transition-colors ${botConfig.martingale ? 'bg-primary' : 'bg-muted'} relative`}>
+                  <div className={`w-4 h-4 rounded-full bg-background shadow absolute top-0.5 transition-transform ${botConfig.martingale ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* Strategy Section */}
+            <div className="border-t border-border pt-2 mt-1">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-[10px] font-semibold text-warning flex items-center gap-1">
+                  <Zap className="w-3 h-3" /> Pattern/Digit Strategy
+                </label>
+                <Switch checked={strategyEnabled} onCheckedChange={setStrategyEnabled} disabled={botRunning} />
+              </div>
+
+              {strategyEnabled && (
+                <div className="space-y-2">
+                  <div className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant={strategyMode === 'pattern' ? 'default' : 'outline'}
+                      className="text-[9px] h-6 px-2 flex-1"
+                      onClick={() => setStrategyMode('pattern')}
+                      disabled={botRunning}
+                    >
+                      Pattern (E/O)
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={strategyMode === 'digit' ? 'default' : 'outline'}
+                      className="text-[9px] h-6 px-2 flex-1"
+                      onClick={() => setStrategyMode('digit')}
+                      disabled={botRunning}
+                    >
+                      Digit Condition 
+                    </Button>
+                  </div>
+
+                  {strategyMode === 'pattern' ? (
+                    <div>
+                      <label className="text-[8px] text-muted-foreground">Pattern (E=Even, O=Odd)</label>
+                      <Textarea
+                        placeholder="e.g., EEEOE or OOEEO"
+                        value={patternInput}
+                        onChange={e => setPatternInput(e.target.value.toUpperCase().replace(/[^EO]/g, ''))}
+                        disabled={botRunning}
+                        className="h-12 text-[10px] font-mono min-h-0 mt-1"
+                      />
+                      <div className={`text-[9px] font-mono mt-1 ${patternValid ? 'text-profit' : 'text-loss'}`}>
+                        {cleanPattern.length === 0 ? 'Enter pattern (min 2 characters)' :
+                          patternValid ? `✓ Pattern: ${cleanPattern}` : `✗ Need at least 2 characters (E/O)`}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-1">
+                      <div>
+                        <label className="text-[8px] text-muted-foreground">If last </label>
+                        <Input type="number" min="1" max="50" value={digitWindow}
+                          onChange={e => setDigitWindow(e.target.value)} disabled={botRunning}
+                          className="h-7 text-[10px]" />
+                      </div>
+                      <div>
+                        <label className="text-[8px] text-muted-foreground">ticks are </label>
+                        <Select value={digitCondition} onValueChange={setDigitCondition} disabled={botRunning}>
+                          <SelectTrigger className="h-7 text-[10px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {['==', '!=', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <label className="text-[8px] text-muted-foreground">Digit</label>
+                        <Input type="number" min="0" max="9" value={digitCompare}
+                          onChange={e => setDigitCompare(e.target.value)} disabled={botRunning}
+                          className="h-7 text-[10px]" />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="text-[8px] text-muted-foreground text-center py-1">
+                    Bot will wait for {strategyMode === 'pattern' ? 'pattern match' : 'digit condition'} before each trade
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-3 gap-1.5">
+              <div>
+                <label className="text-[8px] text-muted-foreground">Stop Loss</label>
+                <Input type="number" value={botConfig.stopLoss} onChange={e => setBotConfig(p => ({ ...p, stopLoss: e.target.value }))}
+                  disabled={botRunning} className="h-7 text-xs" />
+              </div>
+              <div>
+                <label className="text-[8px] text-muted-foreground">Take Profit</label>
+                <Input type="number" value={botConfig.takeProfit} onChange={e => setBotConfig(p => ({ ...p, takeProfit: e.target.value }))}
+                  disabled={botRunning} className="h-7 text-xs" />
+              </div>
+              <div>
+                <label className="text-[8px] text-muted-foreground">Max Trades</label>
+                <Input type="number" value={botConfig.maxTrades} onChange={e => setBotConfig(p => ({ ...p, maxTrades: e.target.value }))}
+                  disabled={botRunning} className="h-7 text-xs" />
+              </div>
+            </div>
+
+            {botRunning && (
+              <div className="grid grid-cols-3 gap-1 text-center">
+                <div className="bg-muted/30 rounded p-1">
+                  <div className="text-[7px] text-muted-foreground">Stake</div>
+                  <div className="font-mono text-[10px] font-bold text-foreground">${botStats.currentStake.toFixed(2)}</div>
+                </div>
+                <div className="bg-muted/30 rounded p-1">
+                  <div className="text-[7px] text-muted-foreground">Streak</div>
+                  <div className="font-mono text-[10px] font-bold text-loss">{botStats.consecutiveLosses}L</div>
+                </div>
+                <div className={`${botStats.pnl >= 0 ? 'bg-profit/10' : 'bg-loss/10'} rounded p-1`}>
+                  <div className="text-[7px] text-muted-foreground">P/L</div>
+                  <div className={`font-mono text-[10px] font-bold ${botStats.pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
+                    {botStats.pnl >= 0 ? '+' : ''}{botStats.pnl.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              {!botRunning ? (
+                <Button onClick={startBot} disabled={!isAuthorized} className="flex-1 h-10 text-xs font-bold bg-profit hover:bg-profit/90 text-profit-foreground">
+                  <Play className="w-4 h-4 mr-1" /> Start Bot
+                </Button>
+              ) : (
+                <>
+                  <Button onClick={togglePauseBot} variant="outline" className="flex-1 h-10 text-xs">
+                    <Pause className="w-3.5 h-3.5 mr-1" /> {botPaused ? 'Resume' : 'Pause'}
+                  </Button>
+                  <Button onClick={stopBot} variant="destructive" className="flex-1 h-10 text-xs">
+                    <StopCircle className="w-3.5 h-3.5 mr-1" /> Stop
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Last 26 Digits - Filtration Chamber */}
+          <div className="bg-card border border-border rounded-xl p-3">
+            <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center justify-between">
+              <span>Filtration Chamber 🚆</span>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="text-[8px] animate-pulse">
+                  🟢 LIVE
+                </Badge>
+                <Badge className="text-[8px] bg-primary/20 text-primary">
+                  {selectedContractType === 'CALL' ? 'Rise' : 
+                   selectedContractType === 'PUT' ? 'Fall' :
+                   selectedContractType === 'DIGITOVER' ? `Over ${selectedPrediction}` :
+                   selectedContractType === 'DIGITUNDER' ? `Under ${selectedPrediction}` :
+                   selectedContractType === 'DIGITEVEN' ? 'Even' :
+                   selectedContractType === 'DIGITODD' ? 'Odd' :
+                   selectedContractType === 'DIGITMATCH' ? `Match ${selectedPrediction}` :
+                   selectedContractType === 'DIGITDIFF' ? `Diff ${selectedPrediction}` : selectedContractType}
+                </Badge>
+              </div>
+            </h3>
+            
+            {/* Legend */}
+            <div className="flex flex-wrap gap-3 mb-3 text-[8px] justify-center">
+              {legend.symbol1 && (
+                <div className="flex items-center gap-1">
+                  <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
+                    legend.symbol1 === 'R' ? 'bg-profit/20 text-profit' :
+                    legend.symbol1 === 'F' ? 'bg-loss/20 text-loss' :
+                    legend.symbol1 === 'O' ? 'bg-loss/20 text-loss' :
+                    legend.symbol1 === 'U' ? 'bg-profit/20 text-profit' :
+                    legend.symbol1 === 'S' ? 'bg-primary/20 text-primary' :
+                    legend.symbol1 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
+                    'bg-muted/20 text-foreground'
+                  }`}>
+                    {legend.symbol1}
+                  </div>
+                  <span className="text-muted-foreground">{legend.meaning1}</span>
+                </div>
+              )}
+              {legend.symbol2 && (
+                <div className="flex items-center gap-1">
+                  <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
+                    legend.symbol2 === 'R' ? 'bg-profit/20 text-profit' :
+                    legend.symbol2 === 'F' ? 'bg-loss/20 text-loss' :
+                    legend.symbol2 === 'O' ? 'bg-loss/20 text-loss' :
+                    legend.symbol2 === 'U' ? 'bg-profit/20 text-profit' :
+                    legend.symbol2 === 'S' ? 'bg-primary/20 text-primary' :
+                    legend.symbol2 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
+                    'bg-muted/20 text-foreground'
+                  }`}>
+                    {legend.symbol2}
+                  </div>
+                  <span className="text-muted-foreground">{legend.meaning2}</span>
+                </div>
+              )}
+              {legend.symbol3 && (
+                <div className="flex items-center gap-1">
+                  <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
+                    legend.symbol3 === 'R' ? 'bg-profit/20 text-profit' :
+                    legend.symbol3 === 'F' ? 'bg-loss/20 text-loss' :
+                    legend.symbol3 === 'O' ? 'bg-loss/20 text-loss' :
+                    legend.symbol3 === 'U' ? 'bg-profit/20 text-profit' :
+                    legend.symbol3 === 'S' ? 'bg-primary/20 text-primary' :
+                    legend.symbol3 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
+                    'bg-muted/20 text-foreground'
+                  }`}>
+                    {legend.symbol3}
+                  </div>
+                  <span className="text-muted-foreground">{legend.meaning3}</span>
+                </div>
+              )}
+            </div>
+            
+            {/* Analysis Mode Selector */}
+            <div className="mb-3 pt-1 border-t border-border">
+              <div className="flex items-center gap-2">
+                <label className="text-[9px] text-muted-foreground whitespace-nowrap">Mode:</label>
+                <Select value={selectedContractType} onValueChange={(value) => {
+                  setSelectedContractType(value);
+                  setTimeout(() => updateDisplaySymbols(), 0);
+                }}>
+                  <SelectTrigger className="h-6 text-[10px] flex-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CONTRACT_TYPES.map(c => (
+                      <SelectItem key={c.value} value={c.value} className="text-[10px]">
+                        {c.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-
-              <Select value={botConfig.contractType} onValueChange={v => setBotConfig(p => ({ ...p, contractType: v }))} disabled={botRunning}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent>
-              </Select>
-
-              {['DIGITMATCH','DIGITDIFF','DIGITOVER','DIGITUNDER'].includes(botConfig.contractType) && (
-                <div>
-                  <label className="text-[9px] text-muted-foreground">Prediction (0-9)</label>
-                  <div className="grid grid-cols-5 gap-1">
-                    {Array.from({ length: 10 }, (_, i) => (
-                      <button key={i} disabled={botRunning} onClick={() => setBotConfig(p => ({ ...p, prediction: String(i) }))}
-                        className={`h-6 rounded text-[10px] font-mono font-bold transition-all ${
-                          botConfig.prediction === String(i) ? 'bg-primary text-primary-foreground' : 'bg-muted text-foreground hover:bg-secondary'
-                        }`}>{i}</button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-[9px] text-muted-foreground">Stake ($)</label>
-                  <Input type="number" min="0.35" step="0.01" value={botConfig.stake}
-                    onChange={e => setBotConfig(p => ({ ...p, stake: e.target.value }))} disabled={botRunning} className="h-7 text-xs" />
-                </div>
-                <div>
-                  <label className="text-[9px] text-muted-foreground">Duration</label>
-                  <div className="flex gap-1">
-                    <Input type="number" min="1" value={botConfig.duration}
-                      onChange={e => setBotConfig(p => ({ ...p, duration: e.target.value }))} disabled={botRunning} className="h-7 text-xs flex-1" />
-                    <Select value={botConfig.durationUnit} onValueChange={v => setBotConfig(p => ({ ...p, durationUnit: v }))} disabled={botRunning}>
-                      <SelectTrigger className="h-7 text-xs w-16"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="t">T</SelectItem>
-                        <SelectItem value="s">S</SelectItem>
-                        <SelectItem value="m">M</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <label className="text-[10px] text-foreground">Martingale</label>
-                <div className="flex items-center gap-2">
-                  {botConfig.martingale && (
-                    <Input type="number" min="1.1" step="0.1" value={botConfig.multiplier}
-                      onChange={e => setBotConfig(p => ({ ...p, multiplier: e.target.value }))} disabled={botRunning}
-                      className="h-6 text-[10px] w-14" />
-                  )}
-                  <button onClick={() => setBotConfig(p => ({ ...p, martingale: !p.martingale }))} disabled={botRunning}
-                    className={`w-9 h-5 rounded-full transition-colors ${botConfig.martingale ? 'bg-primary' : 'bg-muted'} relative`}>
-                    <div className={`w-4 h-4 rounded-full bg-background shadow absolute top-0.5 transition-transform ${botConfig.martingale ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Strategy Section */}
-              <div className="border-t border-border pt-2 mt-1">
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-[10px] font-semibold text-warning flex items-center gap-1">
-                    <Zap className="w-3 h-3" /> Pattern/Digit Strategy
-                  </label>
-                  <Switch checked={strategyEnabled} onCheckedChange={setStrategyEnabled} disabled={botRunning} />
-                </div>
-
-                {strategyEnabled && (
-                  <div className="space-y-2">
-                    <div className="flex gap-1">
-                      <Button
-                        size="sm"
-                        variant={strategyMode === 'pattern' ? 'default' : 'outline'}
-                        className="text-[9px] h-6 px-2 flex-1"
-                        onClick={() => setStrategyMode('pattern')}
-                        disabled={botRunning}
-                      >
-                        Pattern (E/O)
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant={strategyMode === 'digit' ? 'default' : 'outline'}
-                        className="text-[9px] h-6 px-2 flex-1"
-                        onClick={() => setStrategyMode('digit')}
-                        disabled={botRunning}
-                      >
-                        Digit Condition 
-                      </Button>
-                    </div>
-
-                    {strategyMode === 'pattern' ? (
-                      <div>
-                        <label className="text-[8px] text-muted-foreground">Pattern (E=Even, O=Odd)</label>
-                        <Textarea
-                          placeholder="e.g., EEEOE or OOEEO"
-                          value={patternInput}
-                          onChange={e => setPatternInput(e.target.value.toUpperCase().replace(/[^EO]/g, ''))}
-                          disabled={botRunning}
-                          className="h-12 text-[10px] font-mono min-h-0 mt-1"
-                        />
-                        <div className={`text-[9px] font-mono mt-1 ${patternValid ? 'text-profit' : 'text-loss'}`}>
-                          {cleanPattern.length === 0 ? 'Enter pattern (min 2 characters)' :
-                            patternValid ? `✓ Pattern: ${cleanPattern}` : `✗ Need at least 2 characters (E/O)`}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-3 gap-1">
-                        <div>
-                          <label className="text-[8px] text-muted-foreground">If last </label>
-                          <Input type="number" min="1" max="50" value={digitWindow}
-                            onChange={e => setDigitWindow(e.target.value)} disabled={botRunning}
-                            className="h-7 text-[10px]" />
-                        </div>
-                        <div>
-                          <label className="text-[8px] text-muted-foreground">ticks are </label>
-                          <Select value={digitCondition} onValueChange={setDigitCondition} disabled={botRunning}>
-                            <SelectTrigger className="h-7 text-[10px]"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {['==', '!=', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div>
-                          <label className="text-[8px] text-muted-foreground">Digit</label>
-                          <Input type="number" min="0" max="9" value={digitCompare}
-                            onChange={e => setDigitCompare(e.target.value)} disabled={botRunning}
-                            className="h-7 text-[10px]" />
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="text-[8px] text-muted-foreground text-center py-1">
-                      Bot will wait for {strategyMode === 'pattern' ? 'pattern match' : 'digit condition'} before each trade
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="grid grid-cols-3 gap-1.5">
-                <div>
-                  <label className="text-[8px] text-muted-foreground">Stop Loss</label>
-                  <Input type="number" value={botConfig.stopLoss} onChange={e => setBotConfig(p => ({ ...p, stopLoss: e.target.value }))}
-                    disabled={botRunning} className="h-7 text-xs" />
-                </div>
-                <div>
-                  <label className="text-[8px] text-muted-foreground">Take Profit</label>
-                  <Input type="number" value={botConfig.takeProfit} onChange={e => setBotConfig(p => ({ ...p, takeProfit: e.target.value }))}
-                    disabled={botRunning} className="h-7 text-xs" />
-                </div>
-                <div>
-                  <label className="text-[8px] text-muted-foreground">Max Trades</label>
-                  <Input type="number" value={botConfig.maxTrades} onChange={e => setBotConfig(p => ({ ...p, maxTrades: e.target.value }))}
-                    disabled={botRunning} className="h-7 text-xs" />
-                </div>
-              </div>
-
-              {botRunning && (
-                <div className="grid grid-cols-3 gap-1 text-center">
-                  <div className="bg-muted/30 rounded p-1">
-                    <div className="text-[7px] text-muted-foreground">Stake</div>
-                    <div className="font-mono text-[10px] font-bold text-foreground">${botStats.currentStake.toFixed(2)}</div>
-                  </div>
-                  <div className="bg-muted/30 rounded p-1">
-                    <div className="text-[7px] text-muted-foreground">Streak</div>
-                    <div className="font-mono text-[10px] font-bold text-loss">{botStats.consecutiveLosses}L</div>
-                  </div>
-                  <div className={`${botStats.pnl >= 0 ? 'bg-profit/10' : 'bg-loss/10'} rounded p-1`}>
-                    <div className="text-[7px] text-muted-foreground">P/L</div>
-                    <div className={`font-mono text-[10px] font-bold ${botStats.pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
-                      {botStats.pnl >= 0 ? '+' : ''}{botStats.pnl.toFixed(2)}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                {!botRunning ? (
-                  <Button onClick={startBot} disabled={!isAuthorized} className="flex-1 h-10 text-xs font-bold bg-profit hover:bg-profit/90 text-profit-foreground">
-                    <Play className="w-4 h-4 mr-1" /> Start Bot
-                  </Button>
-                ) : (
-                  <>
-                    <Button onClick={togglePauseBot} variant="outline" className="flex-1 h-10 text-xs">
-                      <Pause className="w-3.5 h-3.5 mr-1" /> {botPaused ? 'Resume' : 'Pause'}
-                    </Button>
-                    <Button onClick={stopBot} variant="destructive" className="flex-1 h-10 text-xs">
-                      <StopCircle className="w-3.5 h-3.5 mr-1" /> Stop
-                    </Button>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Last 26 Digits - Filtration Chamber */}
-            <div className="bg-card border border-border rounded-xl p-3">
-              <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center justify-between">
-                <span>Filtration Chamber 🚆</span>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-[8px] animate-pulse">
-                    🟢 LIVE
-                  </Badge>
-                  <Badge className="text-[8px] bg-primary/20 text-primary">
-                    {selectedContractType === 'CALL' ? 'Rise' : 
-                     selectedContractType === 'PUT' ? 'Fall' :
-                     selectedContractType === 'DIGITOVER' ? `Over ${selectedPrediction}` :
-                     selectedContractType === 'DIGITUNDER' ? `Under ${selectedPrediction}` :
-                     selectedContractType === 'DIGITEVEN' ? 'Even' :
-                     selectedContractType === 'DIGITODD' ? 'Odd' :
-                     selectedContractType === 'DIGITMATCH' ? `Match ${selectedPrediction}` :
-                     selectedContractType === 'DIGITDIFF' ? `Diff ${selectedPrediction}` : selectedContractType}
-                  </Badge>
-                </div>
-              </h3>
               
-              {/* Legend */}
-              <div className="flex flex-wrap gap-3 mb-3 text-[8px] justify-center">
-                {legend.symbol1 && (
-                  <div className="flex items-center gap-1">
-                    <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
-                      legend.symbol1 === 'R' ? 'bg-profit/20 text-profit' :
-                      legend.symbol1 === 'F' ? 'bg-loss/20 text-loss' :
-                      legend.symbol1 === 'O' ? 'bg-loss/20 text-loss' :
-                      legend.symbol1 === 'U' ? 'bg-profit/20 text-profit' :
-                      legend.symbol1 === 'S' ? 'bg-primary/20 text-primary' :
-                      legend.symbol1 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
-                      'bg-muted/20 text-foreground'
-                    }`}>
-                      {legend.symbol1}
-                    </div>
-                    <span className="text-muted-foreground">{legend.meaning1}</span>
-                  </div>
-                )}
-                {legend.symbol2 && (
-                  <div className="flex items-center gap-1">
-                    <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
-                      legend.symbol2 === 'R' ? 'bg-profit/20 text-profit' :
-                      legend.symbol2 === 'F' ? 'bg-loss/20 text-loss' :
-                      legend.symbol2 === 'O' ? 'bg-loss/20 text-loss' :
-                      legend.symbol2 === 'U' ? 'bg-profit/20 text-profit' :
-                      legend.symbol2 === 'S' ? 'bg-primary/20 text-primary' :
-                      legend.symbol2 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
-                      'bg-muted/20 text-foreground'
-                    }`}>
-                      {legend.symbol2}
-                    </div>
-                    <span className="text-muted-foreground">{legend.meaning2}</span>
-                  </div>
-                )}
-                {legend.symbol3 && (
-                  <div className="flex items-center gap-1">
-                    <div className={`w-4 h-4 rounded flex items-center justify-center text-[9px] font-bold ${
-                      legend.symbol3 === 'R' ? 'bg-profit/20 text-profit' :
-                      legend.symbol3 === 'F' ? 'bg-loss/20 text-loss' :
-                      legend.symbol3 === 'O' ? 'bg-loss/20 text-loss' :
-                      legend.symbol3 === 'U' ? 'bg-profit/20 text-profit' :
-                      legend.symbol3 === 'S' ? 'bg-primary/20 text-primary' :
-                      legend.symbol3 === 'E' ? 'bg-[#3FB950]/20 text-[#3FB950]' :
-                      'bg-muted/20 text-foreground'
-                    }`}>
-                      {legend.symbol3}
-                    </div>
-                    <span className="text-muted-foreground">{legend.meaning3}</span>
-                  </div>
-                )}
-              </div>
-              
-              {/* Analysis Mode Selector */}
-              <div className="mb-3 pt-1 border-t border-border">
-                <div className="flex items-center gap-2">
-                  <label className="text-[9px] text-muted-foreground whitespace-nowrap">Mode:</label>
-                  <Select value={selectedContractType} onValueChange={(value) => {
-                    setSelectedContractType(value);
-                    setTimeout(() => updateDisplaySymbols(), 0);
-                  }}>
-                    <SelectTrigger className="h-6 text-[10px] flex-1">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {CONTRACT_TYPES.map(c => (
-                        <SelectItem key={c.value} value={c.value} className="text-[10px]">
-                          {c.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                {['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(selectedContractType) && (
-                  <div className="flex items-center gap-2 mt-2">
-                    <label className="text-[9px] text-muted-foreground whitespace-nowrap">Digit:</label>
-                    <Input
-                      type="number"
-                      min="0"
-                      max="9"
-                      value={selectedPrediction}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === '' || (parseInt(val) >= 0 && parseInt(val) <= 9)) {
-                          setSelectedPrediction(val);
-                          setTimeout(() => updateDisplaySymbols(), 0);
-                        }
-                      }}
-                      className="h-6 text-[10px] w-12 text-center"
-                    />
-                  </div>
-                )}
-              </div>
-              
-              <div className="flex gap-1 flex-wrap justify-center">
-                {displaySymbols.length > 0 ? (
-                  displaySymbols.map((symbol, i) => {
-                    const isLast = i === displaySymbols.length - 1;
-                    
-                    let bgColor = '';
-                    let textColor = '';
-                    
-                    // Color mapping based on symbol meaning
-                    if (symbol === 'R' || symbol === 'U') {
-                      bgColor = 'bg-profit/20';
-                      textColor = 'text-profit';
-                    } else if (symbol === 'F' || symbol === 'O') {
-                      bgColor = 'bg-loss/20';
-                      textColor = 'text-loss';
-                    } else if (symbol === 'E') {
-                      bgColor = 'bg-[#3FB950]/20';
-                      textColor = 'text-[#3FB950]';
-                    } else if (symbol === 'S') {
-                      bgColor = 'bg-primary/20';
-                      textColor = 'text-primary';
-                    } else if (symbol === 'D') {
-                      bgColor = 'bg-[#D29922]/20';
-                      textColor = 'text-[#D29922]';
-                    } else {
-                      bgColor = 'bg-muted/20';
-                      textColor = 'text-foreground';
-                    }
-                    
-                    return (
-                      <motion.div
-                        key={i}
-                        initial={isLast ? { scale: 0.8 } : {}}
-                        animate={isLast ? { scale: [1, 1.2, 1] } : {}}
-                        transition={isLast ? { duration: 0.5 } : {}}
-                        className={`w-7 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-sm border-2 transition-all ${
-                          isLast ? 'w-9 h-11 text-base ring-2 ring-primary' : ''
-                        } ${bgColor} ${textColor} ${
-                          isLast ? 'border-primary' : 
-                          symbol === 'R' || symbol === 'U' ? 'border-profit/30' :
-                          symbol === 'F' || symbol === 'O' ? 'border-loss/30' :
-                          symbol === 'E' ? 'border-[#3FB950]/30' :
-                          symbol === 'S' ? 'border-primary/30' :
-                          symbol === 'D' ? 'border-[#D29922]/30' :
-                          'border-border'
-                        }`}
-                      >
-                        {symbol}
-                      </motion.div>
-                    );
-                  })
-                ) : (
-                  <div className="text-center text-xs text-muted-foreground py-4">
-                    Waiting for tick data...
-                  </div>
-                )}
-              </div>
-              <div className="text-center text-[8px] text-muted-foreground mt-2">
-                🔄 Updates with every tick • Latest digit highlighted
-              </div>
-            </div>
-
-            {/* Bot Progress */}
-            <div className="bg-card border border-border rounded-xl p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                  <Trophy className="w-3.5 h-3.5 text-primary" /> Trade Results 
-                </h3>
-                {tradeHistory.length > 0 && (
-                  <Button variant="ghost" size="sm" className="h-6 text-[9px] text-muted-foreground hover:text-loss"
-                    onClick={() => { setTradeHistory([]); setBotStats({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 }); }}>
-                    Clear
-                  </Button>
-                )}
-              </div>
-              <div className="grid grid-cols-4 gap-1.5">
-                <div className="bg-muted/30 rounded-lg p-1.5 text-center">
-                  <div className="text-[8px] text-muted-foreground">Trades</div>
-                  <div className="font-mono text-sm font-bold text-foreground">{totalTrades}</div>
-                </div>
-                <div className="bg-profit/10 rounded-lg p-1.5 text-center">
-                  <div className="text-[8px] text-profit">Wins</div>
-                  <div className="font-mono text-sm font-bold text-profit">{wins}</div>
-                </div>
-                <div className="bg-loss/10 rounded-lg p-1.5 text-center">
-                  <div className="text-[8px] text-loss">Losses</div>
-                  <div className="font-mono text-sm font-bold text-loss">{losses}</div>
-                </div>
-                <div className={`${totalProfit >= 0 ? 'bg-profit/10' : 'bg-loss/10'} rounded-lg p-1.5 text-center`}>
-                  <div className="text-[8px] text-muted-foreground">P/L</div>
-                  <div className={`font-mono text-sm font-bold ${totalProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
-                    {totalProfit >= 0 ? '+' : ''}{totalProfit.toFixed(2)}
-                  </div>
-                </div>
-              </div>
-              {totalTrades > 0 && (
-                <div>
-                  <div className="flex justify-between text-[9px] text-muted-foreground mb-0.5">
-                    <span>Win Rate</span>
-                    <span className="font-mono font-bold">{winRate.toFixed(1)}%</span>
-                  </div>
-                  <div className="h-2 bg-muted rounded-full overflow-hidden">
-                    <div className="h-full bg-profit rounded-full" style={{ width: `${winRate}%` }} />
-                  </div>
-                </div>
-              )}
-
-              {tradeHistory.length > 0 && (
-                <div className="max-h-40 overflow-auto space-y-1">
-                  {tradeHistory.slice(0, 10).map(t => {
-                    const outcomeSymbol = getOutcomeSymbol(t);
-                    const outcomeColor = t.status === 'won' ? 'text-profit' : 'text-loss';
-                    
-                    // Determine badge color based on outcome symbol
-                    let badgeColor = '';
-                    if (outcomeSymbol === 'R' || outcomeSymbol === 'U') badgeColor = 'border-profit text-profit';
-                    else if (outcomeSymbol === 'F' || outcomeSymbol === 'O') badgeColor = 'border-loss text-loss';
-                    else if (outcomeSymbol === 'S') badgeColor = 'border-primary text-primary';
-                    else if (outcomeSymbol === 'D') badgeColor = 'border-[#D29922] text-[#D29922]';
-                    else if (outcomeSymbol === 'E') badgeColor = 'border-[#3FB950] text-[#3FB950]';
-                    
-                    return (
-                      <div key={t.id} className={`flex items-center justify-between text-[9px] p-1.5 rounded-lg border ${
-                        t.status === 'open' ? 'border-primary/30 bg-primary/5' :
-                        t.status === 'won' ? 'border-profit/30 bg-profit/5' :
-                        'border-loss/30 bg-loss/5'
-                      }`}>
-                        <div className="flex items-center gap-1.5">
-                          <span className={`font-bold ${t.status === 'won' ? 'text-profit' : t.status === 'lost' ? 'text-loss' : 'text-primary'}`}>
-                            {t.status === 'open' ? '⏳' : t.status === 'won' ? '✅' : '❌'}
-                          </span>
-                          <span className="font-mono text-muted-foreground">{t.type}</span>
-                          <span className="text-muted-foreground">${t.stake.toFixed(2)}</span>
-                          {t.resultDigit !== undefined && (
-                            <Badge variant="outline" className={`text-[8px] px-1 ${t.status === 'won' ? 'border-profit text-profit' : 'border-loss text-loss'}`}>
-                              {t.resultDigit}
-                            </Badge>
-                          )}
-                          {outcomeSymbol && t.status !== 'open' && (
-                            <Badge variant="outline" className={`text-[8px] px-1 font-mono ${badgeColor}`}>
-                              {outcomeSymbol}
-                            </Badge>
-                          )}
-                        </div>
-                        <span className={`font-mono font-bold ${t.profit >= 0 ? 'text-profit' : 'text-loss'}`}>
-                          {t.status === 'open' ? '...' : `${t.profit >= 0 ? '+' : ''}$${t.profit.toFixed(2)}`}
-                        </span>
-                      </div>
-                    );
-                  })}
+              {['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(selectedContractType) && (
+                <div className="flex items-center gap-2 mt-2">
+                  <label className="text-[9px] text-muted-foreground whitespace-nowrap">Digit:</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="9"
+                    value={selectedPrediction}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '' || (parseInt(val) >= 0 && parseInt(val) <= 9)) {
+                        setSelectedPrediction(val);
+                        setTimeout(() => updateDisplaySymbols(), 0);
+                      }
+                    }}
+                    className="h-6 text-[10px] w-12 text-center"
+                  />
                 </div>
               )}
             </div>
+            
+            <div className="flex gap-1 flex-wrap justify-center">
+              {displaySymbols.length > 0 ? (
+                displaySymbols.map((symbol, i) => {
+                  const isLast = i === displaySymbols.length - 1;
+                  
+                  let bgColor = '';
+                  let textColor = '';
+                  
+                  // Color mapping based on symbol meaning
+                  if (symbol === 'R' || symbol === 'U') {
+                    bgColor = 'bg-profit/20';
+                    textColor = 'text-profit';
+                  } else if (symbol === 'F' || symbol === 'O') {
+                    bgColor = 'bg-loss/20';
+                    textColor = 'text-loss';
+                  } else if (symbol === 'E') {
+                    bgColor = 'bg-[#3FB950]/20';
+                    textColor = 'text-[#3FB950]';
+                  } else if (symbol === 'S') {
+                    bgColor = 'bg-primary/20';
+                    textColor = 'text-primary';
+                  } else if (symbol === 'D') {
+                    bgColor = 'bg-[#D29922]/20';
+                    textColor = 'text-[#D29922]';
+                  } else {
+                    bgColor = 'bg-muted/20';
+                    textColor = 'text-foreground';
+                  }
+                  
+                  return (
+                    <motion.div
+                      key={i}
+                      initial={isLast ? { scale: 0.8 } : {}}
+                      animate={isLast ? { scale: [1, 1.2, 1] } : {}}
+                      transition={isLast ? { duration: 0.5 } : {}}
+                      className={`w-7 h-9 rounded-lg flex items-center justify-center font-mono font-bold text-sm border-2 transition-all ${
+                        isLast ? 'w-9 h-11 text-base ring-2 ring-primary' : ''
+                      } ${bgColor} ${textColor} ${
+                        isLast ? 'border-primary' : 
+                        symbol === 'R' || symbol === 'U' ? 'border-profit/30' :
+                        symbol === 'F' || symbol === 'O' ? 'border-loss/30' :
+                        symbol === 'E' ? 'border-[#3FB950]/30' :
+                        symbol === 'S' ? 'border-primary/30' :
+                        symbol === 'D' ? 'border-[#D29922]/30' :
+                        'border-border'
+                      }`}
+                    >
+                      {symbol}
+                    </motion.div>
+                  );
+                })
+              ) : (
+                <div className="text-center text-xs text-muted-foreground py-4">
+                  Waiting for tick data...
+                </div>
+              )}
+            </div>
+            <div className="text-center text-[8px] text-muted-foreground mt-2">
+              🔄 Updates with every tick • Latest digit highlighted
+            </div>
+          </div>
 
-            {/* Technical Status */}
-            <div className="bg-card border border-border rounded-xl p-3 space-y-2">
+          {/* Bot Progress */}
+          <div className="bg-card border border-border rounded-xl p-3 space-y-2">
+            <div className="flex items-center justify-between">
               <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                <ShieldAlert className="w-3.5 h-3.5 text-primary" /> Technical Status
+                <Trophy className="w-3.5 h-3.5 text-primary" /> Trade Results 
               </h3>
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-[10px]">
-                  <span className="text-muted-foreground">RSI (14)</span>
-                  <span className={`font-mono font-bold ${rsi > 70 ? 'text-loss' : rsi < 30 ? 'text-profit' : 'text-foreground'}`}>
-                    {rsi.toFixed(1)} {rsi > 70 ? '🔴 Overbought' : rsi < 30 ? '🟢 Oversold' : '⚪ Neutral'}
-                  </span>
+              {tradeHistory.length > 0 && (
+                <Button variant="ghost" size="sm" className="h-6 text-[9px] text-muted-foreground hover:text-loss"
+                  onClick={() => { setTradeHistory([]); setBotStats({ trades: 0, wins: 0, losses: 0, pnl: 0, currentStake: 0, consecutiveLosses: 0 }); }}>
+                  Clear
+                </Button>
+              )}
+            </div>
+            <div className="grid grid-cols-4 gap-1.5">
+              <div className="bg-muted/30 rounded-lg p-1.5 text-center">
+                <div className="text-[8px] text-muted-foreground">Trades</div>
+                <div className="font-mono text-sm font-bold text-foreground">{totalTrades}</div>
+              </div>
+              <div className="bg-profit/10 rounded-lg p-1.5 text-center">
+                <div className="text-[8px] text-profit">Wins</div>
+                <div className="font-mono text-sm font-bold text-profit">{wins}</div>
+              </div>
+              <div className="bg-loss/10 rounded-lg p-1.5 text-center">
+                <div className="text-[8px] text-loss">Losses</div>
+                <div className="font-mono text-sm font-bold text-loss">{losses}</div>
+              </div>
+              <div className={`${totalProfit >= 0 ? 'bg-profit/10' : 'bg-loss/10'} rounded-lg p-1.5 text-center`}>
+                <div className="text-[8px] text-muted-foreground">P/L</div>
+                <div className={`font-mono text-sm font-bold ${totalProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
+                  {totalProfit >= 0 ? '+' : ''}{totalProfit.toFixed(2)}
                 </div>
-                <div className="flex items-center justify-between text-[10px]">
-                  <span className="text-muted-foreground">MACD</span>
-                  <span className={`font-mono font-bold ${macd.macd > 0 ? 'text-profit' : 'text-loss'}`}>
-                    {macd.macd.toFixed(4)} {macd.macd > 0 ? '📈 Bullish' : '📉 Bearish'}
-                  </span>
+              </div>
+            </div>
+            {totalTrades > 0 && (
+              <div>
+                <div className="flex justify-between text-[9px] text-muted-foreground mb-0.5">
+                  <span>Win Rate</span>
+                  <span className="font-mono font-bold">{winRate.toFixed(1)}%</span>
                 </div>
-                <div className="flex items-center justify-between text-[10px]">
-                  <span className="text-muted-foreground">EMA 50</span>
-                  <span className={`font-mono font-bold ${currentPrice > (ema50[ema50.length - 1] || 0) ? 'text-profit' : 'text-loss'}`}>
-                    {currentPrice > (ema50[ema50.length - 1] || 0) ? '📈 Above' : '📉 Below'} ({(ema50[ema50.length - 1] || 0).toFixed(2)})
-                  </span>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full bg-profit rounded-full" style={{ width: `${winRate}%` }} />
                 </div>
-                <div className="flex items-center justify-between text-[10px]">
-                  <span className="text-muted-foreground">BB Position</span>
-                  <span className="font-mono font-bold text-[#BC8CFF]">{bbPosition.toFixed(1)}%</span>
-                </div>
-                <div className="h-1.5 bg-muted rounded-full">
-                  <div className="h-full bg-[#BC8CFF] rounded-full" style={{ width: `${Math.min(100, Math.max(0, bbPosition))}%` }} />
-                </div>
+              </div>
+            )}
+
+            {tradeHistory.length > 0 && (
+              <div className="max-h-40 overflow-auto space-y-1">
+                {tradeHistory.slice(0, 10).map(t => {
+                  const outcomeSymbol = getOutcomeSymbol(t);
+                  const outcomeColor = t.status === 'won' ? 'text-profit' : 'text-loss';
+                  
+                  // Determine badge color based on outcome symbol
+                  let badgeColor = '';
+                  if (outcomeSymbol === 'R' || outcomeSymbol === 'U') badgeColor = 'border-profit text-profit';
+                  else if (outcomeSymbol === 'F' || outcomeSymbol === 'O') badgeColor = 'border-loss text-loss';
+                  else if (outcomeSymbol === 'S') badgeColor = 'border-primary text-primary';
+                  else if (outcomeSymbol === 'D') badgeColor = 'border-[#D29922] text-[#D29922]';
+                  else if (outcomeSymbol === 'E') badgeColor = 'border-[#3FB950] text-[#3FB950]';
+                  
+                  return (
+                    <div key={t.id} className={`flex items-center justify-between text-[9px] p-1.5 rounded-lg border ${
+                      t.status === 'open' ? 'border-primary/30 bg-primary/5' :
+                      t.status === 'won' ? 'border-profit/30 bg-profit/5' :
+                      'border-loss/30 bg-loss/5'
+                    }`}>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`font-bold ${t.status === 'won' ? 'text-profit' : t.status === 'lost' ? 'text-loss' : 'text-primary'}`}>
+                          {t.status === 'open' ? '⏳' : t.status === 'won' ? '✅' : '❌'}
+                        </span>
+                        <span className="font-mono text-muted-foreground">{t.type}</span>
+                        <span className="text-muted-foreground">${t.stake.toFixed(2)}</span>
+                        {t.resultDigit !== undefined && (
+                          <Badge variant="outline" className={`text-[8px] px-1 ${t.status === 'won' ? 'border-profit text-profit' : 'border-loss text-loss'}`}>
+                            {t.resultDigit}
+                          </Badge>
+                        )}
+                        {outcomeSymbol && t.status !== 'open' && (
+                          <Badge variant="outline" className={`text-[8px] px-1 font-mono ${badgeColor}`}>
+                            {outcomeSymbol}
+                          </Badge>
+                        )}
+                      </div>
+                      <span className={`font-mono font-bold ${t.profit >= 0 ? 'text-profit' : 'text-loss'}`}>
+                        {t.status === 'open' ? '...' : `${t.profit >= 0 ? '+' : ''}$${t.profit.toFixed(2)}`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Technical Status */}
+          <div className="bg-card border border-border rounded-xl p-3 space-y-2">
+            <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
+              <ShieldAlert className="w-3.5 h-3.5 text-primary" /> Technical Status
+            </h3>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-muted-foreground">RSI (14)</span>
+                <span className={`font-mono font-bold ${rsi > 70 ? 'text-loss' : rsi < 30 ? 'text-profit' : 'text-foreground'}`}>
+                  {rsi.toFixed(1)} {rsi > 70 ? '🔴 Overbought' : rsi < 30 ? '🟢 Oversold' : '⚪ Neutral'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-muted-foreground">MACD</span>
+                <span className={`font-mono font-bold ${macd.macd > 0 ? 'text-profit' : 'text-loss'}`}>
+                  {macd.macd.toFixed(4)} {macd.macd > 0 ? '📈 Bullish' : '📉 Bearish'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-muted-foreground">EMA 50</span>
+                <span className={`font-mono font-bold ${currentPrice > (ema50[ema50.length - 1] || 0) ? 'text-profit' : 'text-loss'}`}>
+                  {currentPrice > (ema50[ema50.length - 1] || 0) ? '📈 Above' : '📉 Below'} ({(ema50[ema50.length - 1] || 0).toFixed(2)})
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-muted-foreground">BB Position</span>
+                <span className="font-mono font-bold text-[#BC8CFF]">{bbPosition.toFixed(1)}%</span>
+              </div>
+              <div className="h-1.5 bg-muted rounded-full">
+                <div className="h-full bg-[#BC8CFF] rounded-full" style={{ width: `${Math.min(100, Math.max(0, bbPosition))}%` }} />
               </div>
             </div>
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
