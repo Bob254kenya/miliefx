@@ -1822,7 +1822,7 @@ export default function TradingChart() {
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div>
             <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-              <BarChart3 className="w-5 h-5 text-primary" /> Trading Chart
+              <BarChart3 className="w-5 h-5 text-primary" />RamzFX Trading Chart
             </h1>
             <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {candles.length} candles</p>
           </div>
@@ -2124,7 +2124,7 @@ export default function TradingChart() {
             <div className="bg-card border border-primary/30 rounded-xl p-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                  <Zap className="w-3.5 h-3.5 text-primary" /> AI Voice Signals
+                  <Zap className="w-3.5 h-3.5 text-primary" />Ramzfx AI Voice Signals
                 </h3>
                 <Button
                   size="sm"
@@ -2146,7 +2146,7 @@ export default function TradingChart() {
                 </Button>
               </div>
               {voiceEnabled && (
-                <p className="text-[9px] text-muted-foreground mt-1">🔊 Millie AI will announce trade results</p>
+                <p className="text-[9px] text-muted-foreground mt-1">🔊 Ramfx AI will announce trade results</p>
               )}
             </div>
 
@@ -2214,7 +2214,7 @@ export default function TradingChart() {
             <div className={`bg-card border rounded-xl p-3 space-y-2 ${botRunning ? 'border-profit glow-profit' : 'border-border'}`}>
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-semibold text-foreground flex items-center gap-1">
-                  <Zap className="w-3.5 h-3.5 text-primary" /> Milliefx Speed Bot
+                  <Zap className="w-3.5 h-3.5 text-primary" /> Ramzfx Speed Bot
                 </h3>
                 <div className="flex items-center gap-2">
                   <Button
