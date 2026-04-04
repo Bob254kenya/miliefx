@@ -18,32 +18,251 @@ import {
 } from 'lucide-react';
 import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
-const SCANNER_MARKETS: { symbol: string; name: string }[] = [
-  // Volatility indices
-  { symbol: 'R_10', name: 'Vol 10' },
-  { symbol: 'R_25', name: 'Vol 25' },
-  { symbol: 'R_50', name: 'Vol 50' },
-  { symbol: 'R_75', name: 'Vol 75' },
-  { symbol: 'R_100', name: 'Vol 100' },
-  
-  // 1-second volatility indices
-  { symbol: '1HZ10V', name: 'V10 1s' },
-  { symbol: '1HZ15V', name: 'V15 1s' },
-  { symbol: '1HZ25V', name: 'V25 1s' },
-  { symbol: '1HZ30V', name: 'V30 1s' },
-  { symbol: '1HZ50V', name: 'V50 1s' },
-  { symbol: '1HZ75V', name: 'V75 1s' },
-  { symbol: '1HZ90V', name: 'V90 1s' },
-  { symbol: '1HZ100V', name: 'V100 1s' },
-  
-  // Jump indices
-  { symbol: 'JD10', name: 'Jump 10' },
-  { symbol: 'JD25', name: 'Jump 25' },
-  
-  // Directional indices
-  { symbol: 'RDBEAR', name: 'Bear' },
-  { symbol: 'RDBULL', name: 'Bull' },
-];
+// ============================================
+// TP/SL NOTIFICATION POPUP - COMBINED CODE
+// ============================================
+
+// Animation Styles (add to your global CSS or component)
+const notificationStyles = `
+@keyframes slideUpCenter {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes slideDownCenter {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
+  }
+}
+
+@keyframes float {
+  0% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-10px) rotate(5deg);
+  }
+  100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+}
+
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+.animate-slide-up-center {
+  animation: slideUpCenter 0.4s cubic-bezier(0.34, 1.2, 0.64, 1) forwards;
+}
+
+.animate-slide-down-center {
+  animation: slideDownCenter 0.3s ease-out forwards;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-bounce {
+  animation: bounce 0.4s ease-in-out 2;
+}
+
+.animate-pulse-slow {
+  animation: pulse 1s ease-in-out infinite;
+}
+`;
+
+// Helper function to show notification (TP/SL)
+export const showTPNotification = (type: 'tp' | 'sl', message: string, amount?: number) => {
+  if (typeof window !== 'undefined' && (window as any).showTPNotification) {
+    (window as any).showTPNotification(type, message, amount);
+  }
+};
+
+// TP/SL Notification Component
+const TPSLNotificationPopup = () => {
+  const [notification, setNotification] = useState<{ type: 'tp' | 'sl'; message: string; amount?: number } | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const [isExiting, setIsExiting] = useState(false);
+
+  useEffect(() => {
+    (window as any).showTPNotification = (type: 'tp' | 'sl', message: string, amount?: number) => {
+      setNotification({ type, message, amount });
+      setIsVisible(true);
+      setIsExiting(false);
+      
+      const timeout = setTimeout(() => {
+        handleClose();
+      }, 8000);
+      
+      return () => clearTimeout(timeout);
+    };
+    
+    return () => {
+      delete (window as any).showTPNotification;
+    };
+  }, []);
+
+  const handleClose = () => {
+    setIsExiting(true);
+    setTimeout(() => {
+      setIsVisible(false);
+      setNotification(null);
+      setIsExiting(false);
+    }, 300);
+  };
+
+  if (!isVisible || !notification) return null;
+
+  const isTP = notification.type === 'tp';
+  const amount = notification.amount;
+
+  const backgroundIcons = () => {
+    const icons = [];
+    const iconCount = 12;
+    const colors = isTP 
+      ? ['#10b981', '#34d399', '#6ee7b7', '#059669']
+      : ['#f43f5e', '#fb7185', '#fda4af', '#e11d48'];
+    
+    for (let i = 0; i < iconCount; i++) {
+      const size = 12 + Math.random() * 20;
+      const left = Math.random() * 100;
+      const delay = Math.random() * 12;
+      const duration = 6 + Math.random() * 8;
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      const icon = isTP ? '💰' : '😢';
+      
+      icons.push(
+        <div
+          key={i}
+          className="absolute animate-float"
+          style={{
+            left: `${left}%`,
+            bottom: '-30px',
+            fontSize: `${size}px`,
+            opacity: 0.25,
+            animationDelay: `${delay}s`,
+            animationDuration: `${duration}s`,
+            color: color,
+            filter: 'drop-shadow(0 0 2px currentColor)',
+            pointerEvents: 'none',
+            zIndex: 1,
+          }}
+        >
+          {icon}
+        </div>
+      );
+    }
+    return icons;
+  };
+
+  return (
+    <>
+      <style>{notificationStyles}</style>
+      <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+        <div 
+          className={`
+            pointer-events-auto w-[300px] h-[200px] rounded-xl shadow-2xl overflow-hidden
+            ${isExiting ? 'animate-slide-down-center' : 'animate-slide-up-center'}
+          `}
+        >
+          <div className={`
+            relative w-full h-full overflow-hidden
+            ${isTP 
+              ? 'bg-gradient-to-br from-emerald-500 to-emerald-700' 
+              : 'bg-gradient-to-br from-rose-500 to-rose-700'
+            }
+          `}>
+            <div className="absolute inset-0 overflow-hidden">
+              {backgroundIcons()}
+            </div>
+            
+            <div className="absolute inset-0 opacity-5">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-white rounded-full -translate-y-1/2 translate-x-1/2" />
+              <div className="absolute bottom-0 left-0 w-32 h-32 bg-white rounded-full translate-y-1/2 -translate-x-1/2" />
+            </div>
+            
+            <div className="relative w-full h-full flex flex-col p-3 z-10">
+              <div className="flex items-center gap-2 mb-2">
+                <div className={`
+                  w-10 h-10 rounded-full flex items-center justify-center text-xl
+                  ${isTP 
+                    ? 'bg-emerald-400/30' 
+                    : 'bg-rose-400/30'
+                  }
+                  shadow-lg backdrop-blur-sm
+                  animate-pulse-slow
+                  flex-shrink-0
+                `}>
+                  {isTP ? '🎉' : '😢'}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className={`text-sm font-bold text-white truncate`}>
+                    {isTP ? 'TAKE PROFIT!' : 'STOP LOSS!'}
+                  </h3>
+                  <p className="text-[8px] text-white/70">
+                    {new Date().toLocaleTimeString()}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex-1 flex flex-col items-center justify-center text-center mb-2">
+                <p className="text-white text-xs font-medium leading-tight">
+                  {notification.message}
+                </p>
+                {amount && (
+                  <p className={`text-xl font-bold mt-1 ${isTP ? 'text-emerald-200' : 'text-rose-200'} animate-bounce`}>
+                    {isTP ? '+' : '-'}${Math.abs(amount).toFixed(2)}
+                  </p>
+                )}
+              </div>
+              
+              <button
+                onClick={handleClose}
+                className={`
+                  w-full py-1.5 rounded-lg font-semibold text-xs transition-all duration-200
+                  ${isTP 
+                    ? 'bg-white/95 text-emerald-600 hover:bg-white hover:scale-[1.02]' 
+                    : 'bg-white/95 text-rose-600 hover:bg-white hover:scale-[1.02]'
+                  }
+                  transform active:scale-[0.98]
+                  shadow-lg backdrop-blur-sm
+                `}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
 
 const CONTRACT_TYPES = [
   'DIGITEVEN', 'DIGITODD', 'DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER',
@@ -616,10 +835,14 @@ export default function ProScannerBot() {
 
       let shouldBreak = false;
       if (localPnl >= parseFloat(takeProfit)) {
+        // Show TP notification
+        showTPNotification('tp', `Target reached! +$${localPnl.toFixed(2)}`, localPnl);
         toast.success(`🎯 Take Profit! +$${localPnl.toFixed(2)}`);
         shouldBreak = true;
       }
       if (localPnl <= -parseFloat(stopLoss)) {
+        // Show SL notification
+        showTPNotification('sl', `Stop loss triggered! ${localPnl.toFixed(2)}`, Math.abs(localPnl));
         toast.error(`🛑 Stop Loss! $${localPnl.toFixed(2)}`);
         shouldBreak = true;
       }
@@ -634,13 +857,22 @@ export default function ProScannerBot() {
       if (!turboMode) await new Promise(r => setTimeout(r, 2000));
       return { localPnl, localBalance, cStake, mStep, inRecovery, shouldBreak: false };
     }
-  }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, turboMode]);
+  }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, turboMode, activeAccount, recordLoss]);
 
   const stopBot = useCallback(() => {
     runningRef.current = false;
     setIsRunning(false);
     setBotStatus('idle');
   }, []);
+
+  // Single toggle button handler
+  const handleToggleBot = useCallback(() => {
+    if (isRunning) {
+      stopBot();
+    } else {
+      startBot();
+    }
+  }, [isRunning, startBot, stopBot]);
 
   /* ── Status helpers ── */
   const statusConfig: Record<BotStatus, { icon: string; label: string; color: string }> = {
@@ -727,6 +959,9 @@ export default function ProScannerBot() {
 
   return (
     <div className="space-y-2 max-w-7xl mx-auto">
+      {/* TP/SL Notification Popup */}
+      <TPSLNotificationPopup />
+
       {/* ── Compact Header ── */}
       <div className="flex items-center justify-between gap-2 bg-card border border-border rounded-xl px-3 py-2">
         <h1 className="text-base font-bold text-foreground flex items-center gap-2">
@@ -1040,18 +1275,16 @@ export default function ProScannerBot() {
                         <label className="text-[8px] text-muted-foreground text-center">If the Last </label>
                         <label className="text-[8px] text-muted-foreground text-center">Ticks Are</label>
                         <label className="text-[8px] text-muted-foreground text-center">Digit</label>
-                        
                       </div>
                       <div className="grid grid-cols-3 gap-1">
-                         <Input type="number" min="1" max="50" value={m1DigitWindow} onChange={e => setM1DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
-                           <Select value={m1DigitCondition} onValueChange={setM1DigitCondition} disabled={isRunning}>
-                            <SelectTrigger className="h-6 text-[10px]"><SelectValue /></SelectTrigger>
-                            <SelectContent>
+                        <Input type="number" min="1" max="50" value={m1DigitWindow} onChange={e => setM1DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                        <Select value={m1DigitCondition} onValueChange={setM1DigitCondition} disabled={isRunning}>
+                          <SelectTrigger className="h-6 text-[10px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
                             {['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                           </SelectContent>
                         </Select>
                         <Input type="number" min="0" max="9" value={m1DigitCompare} onChange={e => setM1DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
-                       
                       </div>
                     </>
                   )}
@@ -1090,18 +1323,16 @@ export default function ProScannerBot() {
                         <label className="text-[8px] text-muted-foreground text-center">If the last </label>
                         <label className="text-[8px] text-muted-foreground text-center">Ticks Are </label>
                         <label className="text-[8px] text-muted-foreground text-center">Digit</label>
-                        
                       </div>
                       <div className="grid grid-cols-3 gap-1">
                         <Input type="number" min="1" max="50" value={m2DigitWindow} onChange={e => setM2DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
-                      
                         <Select value={m2DigitCondition} onValueChange={setM2DigitCondition} disabled={isRunning}>
                           <SelectTrigger className="h-6 text-[10px]"><SelectValue /></SelectTrigger>
                           <SelectContent>
                             {['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                           </SelectContent>
                         </Select>
-                          <Input type="number" min="0" max="9" value={m2DigitCompare} onChange={e => setM2DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
+                        <Input type="number" min="0" max="9" value={m2DigitCompare} onChange={e => setM2DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                       </div>
                     </>
                   )}
@@ -1295,24 +1526,26 @@ export default function ProScannerBot() {
             </div>
           </div>
 
-          {/* Start / Stop Buttons */}
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              onClick={startBot}
-              disabled={isRunning || !isAuthorized || balance < parseFloat(stake)}
-              className="h-14 text-base font-bold bg-profit hover:bg-profit/90 text-profit-foreground rounded-xl"
-            >
-              <Play className="w-5 h-5 mr-2" /> START M1
-            </Button>
-            <Button
-              onClick={stopBot}
-              disabled={!isRunning}
-              variant="destructive"
-              className="h-14 text-base font-bold rounded-xl"
-            >
-              <StopCircle className="w-5 h-5 mr-2" /> STOP
-            </Button>
-          </div>
+          {/* Single START/STOP Button */}
+          <Button
+            onClick={handleToggleBot}
+            disabled={!isAuthorized || (!isRunning && balance < parseFloat(stake))}
+            className={`h-14 text-base font-bold rounded-xl w-full ${
+              isRunning 
+                ? 'bg-destructive hover:bg-destructive/90 text-destructive-foreground' 
+                : 'bg-profit hover:bg-profit/90 text-profit-foreground'
+            }`}
+          >
+            {isRunning ? (
+              <>
+                <StopCircle className="w-5 h-5 mr-2" /> STOP BOT
+              </>
+            ) : (
+              <>
+                <Play className="w-5 h-5 mr-2" /> START BOT
+              </>
+            )}
+          </Button>
 
           {/* Activity Log */}
           <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -1323,16 +1556,6 @@ export default function ProScannerBot() {
                   <span className="text-[9px] text-muted-foreground font-mono hidden md:inline truncate max-w-[200px]">
                     {logEntries[0].switchInfo}
                   </span>
-                )}
-                {!isRunning ? (
-                  <Button onClick={startBot} disabled={!isAuthorized || balance < parseFloat(stake)}
-                    size="sm" className="h-7 text-[10px] font-bold bg-profit hover:bg-profit/90 text-profit-foreground px-3">
-                    <Play className="w-3 h-3 mr-1" /> START
-                  </Button>
-                ) : (
-                  <Button onClick={stopBot} variant="destructive" size="sm" className="h-7 text-[10px] font-bold px-3">
-                    <StopCircle className="w-3 h-3 mr-1" /> STOP
-                  </Button>
                 )}
                 <Button variant="ghost" size="sm" onClick={clearLog} className="h-7 w-7 p-0 text-muted-foreground hover:text-loss">
                   <Trash2 className="w-3 h-3" />
