@@ -51,7 +51,7 @@ export default function VolatilityCard({
     setStatus('connecting');
     onConnectionStatus?.(false);
     
-    const ws = new WebSocket('wss://ws.binaryws.com/websockets/v3?app_id=1089');
+    const ws = new WebSocket('wss://ws.binaryws.com/websockets/v3?app_id=131592');
     wsRef.current = ws;
 
     ws.onopen = () => {
