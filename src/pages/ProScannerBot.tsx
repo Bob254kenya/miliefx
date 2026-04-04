@@ -128,7 +128,7 @@ const SocialNotificationPopup = () => {
   const socialLinks = [
     {
       name: 'WhatsApp',
-      url: 'https://wa.me/0757261120',
+      url: 'https://wa.me/+254757261120',
       icon: <MessageCircle className="w-4 h-4" />,
       color: 'hover:text-[#25D366]',
       bgGradient: 'from-green-500/20 to-green-600/20',
