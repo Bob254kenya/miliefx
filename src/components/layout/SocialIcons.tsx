@@ -6,7 +6,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 const socials = [
   {
     name: 'WhatsApp',
-    url: 'https://wa.me/0757261120',
+    url: 'https://wa.me/+254757261120',
     hoverClass: 'hover:text-[hsl(142,70%,49%)] hover:drop-shadow-[0_0_6px_hsl(142,70%,49%,0.4)]',
     icon: (
       <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
