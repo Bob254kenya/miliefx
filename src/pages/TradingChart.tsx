@@ -215,7 +215,7 @@ const NotificationPopup = () => {
     <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
       <div 
         className={`
-          pointer-events-auto w-[800px] h-[600px] rounded-xl shadow-2xl overflow-hidden
+          pointer-events-auto w-[500px] h-[300px] rounded-xl shadow-2xl overflow-hidden
           ${isExiting ? 'animate-slide-down-center' : 'animate-slide-up-center'}
         `}
       >
