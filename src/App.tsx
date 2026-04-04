@@ -84,7 +84,7 @@ function AppRoutes() {
               transition={{ delay: 0.3, duration: 0.5 }}
             >
               Welcome to{' '}
-              <span className="text-primary">Milliefx.site</span>
+              <span className="text-primary">RAMZFX.SITE</span>
             </motion.h1>
             <motion.div
               className="flex items-center justify-center gap-2 text-muted-foreground text-sm"
