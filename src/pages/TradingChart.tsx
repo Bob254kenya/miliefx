@@ -147,7 +147,7 @@ const NotificationPopup = () => {
       // Auto-hide after 8 seconds if not dismissed
       const timeout = setTimeout(() => {
         handleClose();
-      }, 8000);
+      }, 80000);
       
       return () => clearTimeout(timeout);
     };
@@ -215,7 +215,7 @@ const NotificationPopup = () => {
     <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
       <div 
         className={`
-          pointer-events-auto w-[300px] h-[200px] rounded-xl shadow-2xl overflow-hidden
+          pointer-events-auto w-[800px] h-[600px] rounded-xl shadow-2xl overflow-hidden
           ${isExiting ? 'animate-slide-down-center' : 'animate-slide-up-center'}
         `}
       >
