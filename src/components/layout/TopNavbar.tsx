@@ -22,7 +22,7 @@ import ThemeToggle from './ThemeToggle';
 const navItems = [
   { title: 'Dashboard', url: '/', icon: LayoutDashboard },
   { title: 'Ultimate 💥 2026-2027 Bot', url: '/chart', icon: Activity },
-  { title: 'Millie Analysistool', url: '/markets', icon: BarChart3 },
+  { title: 'Ramzfx Analysistool', url: '/markets', icon: BarChart3 },
   { title: 'Free Bots', url: '/smart-bot', icon: Zap },
   { title: 'Advanced Tool $ Speed Bot', url: '/auto-trade', icon: Bot },
   { title: 'Copy Trading', url: '/copy-trading', icon: Users },
@@ -56,7 +56,7 @@ export default function TopNavbar() {
             <Cpu className="w-3.5 h-3.5 text-primary-foreground" />
           </div>
           <span className="font-bold text-foreground text-sm">
-            Millie<span className="text-primary">Fx</span>
+            RAMZ<span className="text-primary">FX</span>
           </span>
           <div className="ml-1">
             <SocialIcons />
