@@ -2,134 +2,146 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
-
-@import url("https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700&display=swap");
-
-@import url("https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&display=swap");
-
-@import url("https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;700&display=swap");
-
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
-
-@import url("https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap");
+/* Modern Fonts for Cyberpunk/Terminal Theme */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap');
 
 @layer base {
   :root {
-    --background: 209 40% 96%;
-    --foreground: 222 47% 11%;
-
-    --card: 210 40% 98%;
-    --card-foreground: 222 47% 11%;
-
-    --popover: 214 31% 91%;
-    --popover-foreground: 222 47% 11%;
-
-    --primary: 200 98% 39%;
-    --primary-foreground: 204 100% 97%;
-
-    --secondary: 215 24% 26%;
-    --secondary-foreground: 210 40% 98%;
-
-    --muted: 215 20% 65%;
-    --muted-foreground: 222 47% 11%;
-
-    --accent: 210 40% 98%;
-    --accent-foreground: 215 19% 34%;
-
-    --destructive: 0 72% 50%;
-    --destructive-foreground: 0 85% 97%;
-
-    --border: 212 26% 83%;
-    --input: 212 26% 83%;
-    --ring: 200 98% 39%;
-
-    --radius: 0.5rem;
-
-    --profit: 145 80% 42%;
-    --profit-foreground: 145 80% 95%;
-    --loss: 0 72% 51%;
-    --loss-foreground: 0 72% 95%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 38 92% 95%;
-
-    --chart-1: 198 93% 59%;
-    --chart-2: 213 93% 67%;
-    --chart-3: 215 20% 65%;
-    --chart-4: 215 16% 46%;
-    --chart-5: 215 19% 34%;
-
-    --even: 210 90% 55%;
-    --even-foreground: 210 90% 95%;
-    --odd: 25 90% 55%;
-    --odd-foreground: 25 90% 95%;
-    --signal: 270 70% 60%;
-    --signal-foreground: 270 70% 95%;
-
-    --sidebar-background: 225 25% 5%;
-    --sidebar-foreground: 222 47% 11%;
-    --sidebar-primary: 200 98% 39%;
-    --sidebar-primary-foreground: 204 100% 97%;
-    --sidebar-accent: 215 24% 26%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 212 26% 83%;
-    --sidebar-ring: 200 98% 39%;
-    --sidebar: 210 40% 98%;
-    --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
-    --font-serif: 'Lora', ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
-    --font-mono: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-    --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
-    --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
-    --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
-    --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
-    --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.1);
-    --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 4px 6px -1px hsl(0 0% 0% / 0.1);
-    --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
-    --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
-    --tracking-normal: 0em;
+    /* Core Colors - Cyberpunk Dark Theme */
+    --background: 222 47% 8%;      /* Deeper dark background */
+    --foreground: 210 20% 92%;     /* Crisp off-white text */
+    
+    --card: 225 30% 12%;           /* Dark elevated surface */
+    --card-foreground: 210 20% 92%;
+    
+    --popover: 225 30% 12%;
+    --popover-foreground: 210 20% 92%;
+    
+    /* Primary - Electric Cyan */
+    --primary: 175 100% 45%;
+    --primary-foreground: 222 47% 8%;
+    
+    /* Secondary - Vibrant Purple */
+    --secondary: 280 80% 60%;
+    --secondary-foreground: 210 20% 92%;
+    
+    /* Muted - Slate Gray */
+    --muted: 217 25% 25%;
+    --muted-foreground: 215 20% 70%;
+    
+    /* Accent - Neon Pink */
+    --accent: 330 85% 60%;
+    --accent-foreground: 210 20% 92%;
+    
+    /* Destructive - Red Alert */
+    --destructive: 0 85% 65%;
+    --destructive-foreground: 210 20% 92%;
+    
+    /* Border & Input - Cyberpunk Glow */
+    --border: 217 25% 30%;
+    --input: 217 25% 20%;
+    --ring: 175 100% 45%;
+    
+    --radius: 0.25rem;             /* Sharper corners for terminal feel */
+    
+    /* Trading Specific Colors */
+    --profit: 130 80% 55%;         /* Bright neon green */
+    --profit-foreground: 130 80% 10%;
+    --loss: 0 85% 60%;             /* Vibrant red */
+    --loss-foreground: 0 85% 10%;
+    --warning: 45 100% 55%;        /* Electric yellow */
+    --warning-foreground: 45 100% 10%;
+    
+    /* Chart Colors - Cyberpunk Palette */
+    --chart-1: 175 100% 45%;       /* Cyan */
+    --chart-2: 280 80% 60%;        /* Purple */
+    --chart-3: 330 85% 60%;        /* Pink */
+    --chart-4: 45 100% 55%;        /* Yellow */
+    --chart-5: 195 100% 50%;       /* Bright Blue */
+    
+    /* Parity Colors */
+    --even: 175 100% 45%;
+    --even-foreground: 222 47% 8%;
+    --odd: 280 80% 60%;
+    --odd-foreground: 210 20% 92%;
+    --signal: 330 85% 60%;
+    --signal-foreground: 210 20% 92%;
+    
+    /* Sidebar - Darker Terminal */
+    --sidebar-background: 222 47% 5%;
+    --sidebar-foreground: 210 20% 92%;
+    --sidebar-primary: 175 100% 45%;
+    --sidebar-primary-foreground: 222 47% 8%;
+    --sidebar-accent: 280 80% 60%;
+    --sidebar-accent-foreground: 210 20% 92%;
+    --sidebar-border: 217 25% 20%;
+    --sidebar-ring: 175 100% 45%;
+    --sidebar: 225 30% 10%;
+    
+    /* Typography - Modern & Clean */
+    --font-sans: 'DM Sans', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Space Mono', 'SF Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+    --font-display: 'Space Grotesk', 'Inter', ui-sans-serif, system-ui;
+    
+    /* Shadows - Glow Effects */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+    --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.4);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.4), 0 8px 10px -6px rgb(0 0 0 / 0.4);
+    --shadow-2xl: 0 25px 50px -12px rgb(0 0 0 / 0.5);
+    
+    /* Spacing */
     --spacing: 0.25rem;
   }
-  .dark {
-    --background: 222 47% 11%;
-    --foreground: 210 40% 98%;
-    --card: 217 32% 17%;
-    --card-foreground: 210 40% 98%;
-    --popover: 215 24% 26%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 198 93% 59%;
-    --primary-foreground: 204 80% 15%;
-    --secondary: 212 26% 83%;
-    --secondary-foreground: 228 84% 4%;
-    --muted: 215 16% 46%;
-    --muted-foreground: 210 40% 98%;
-    --accent: 228 84% 4%;
-    --accent-foreground: 215 20% 65%;
-    --destructive: 0 84% 60%;
-    --destructive-foreground: 0 85% 97%;
-    --border: 215 19% 34%;
-    --input: 215 19% 34%;
-    --ring: 198 93% 59%;
-    --chart-1: 199 95% 73%;
-    --chart-2: 211 96% 78%;
-    --chart-3: 215 20% 65%;
-    --chart-4: 215 16% 46%;
-    --chart-5: 215 19% 34%;
-    --sidebar: 217 32% 17%;
-    --sidebar-foreground: 210 40% 98%;
-    --sidebar-primary: 198 93% 59%;
-    --sidebar-primary-foreground: 204 80% 15%;
-    --sidebar-accent: 215 20% 65%;
-    --sidebar-accent-foreground: 228 84% 4%;
-    --sidebar-border: 215 19% 34%;
-    --sidebar-ring: 198 93% 59%;
-    --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
-    --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
-    --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
-    --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 1px 2px -1px hsl(0 0% 0% / 0.1);
-    --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 2px 4px -1px hsl(0 0% 0% / 0.1);
-    --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 4px 6px -1px hsl(0 0% 0% / 0.1);
-    --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
-    --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  
+  /* Light Theme Option - Clean Modern White */
+  .light {
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+    
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    
+    --primary: 175 80% 35%;
+    --primary-foreground: 210 20% 98%;
+    
+    --secondary: 280 70% 50%;
+    --secondary-foreground: 210 20% 98%;
+    
+    --muted: 210 15% 90%;
+    --muted-foreground: 222 47% 30%;
+    
+    --accent: 330 75% 50%;
+    --accent-foreground: 210 20% 98%;
+    
+    --destructive: 0 75% 55%;
+    --destructive-foreground: 210 20% 98%;
+    
+    --border: 214 20% 85%;
+    --input: 214 20% 85%;
+    --ring: 175 80% 35%;
+    
+    --profit: 130 75% 45%;
+    --profit-foreground: 210 20% 98%;
+    --loss: 0 75% 55%;
+    --loss-foreground: 210 20% 98%;
+    --warning: 40 95% 50%;
+    --warning-foreground: 210 20% 98%;
+    
+    --sidebar-background: 210 20% 95%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 175 80% 35%;
+    --sidebar-primary-foreground: 210 20% 98%;
+    --sidebar-accent: 280 70% 50%;
+    --sidebar-accent-foreground: 210 20% 98%;
+    --sidebar-border: 214 20% 85%;
+    --sidebar-ring: 175 80% 35%;
   }
 }
 
@@ -137,49 +149,74 @@
   * {
     @apply border-border;
   }
-
+  
   body {
-    @apply bg-background text-foreground font-sans;
-    font-family: 'Inter', sans-serif;
-    font-size: 16px;
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: var(--font-sans);
+    font-size: 15px;
     line-height: 1.6;
     font-weight: 400;
+    letter-spacing: -0.01em;
   }
-
-  h1 {
-    font-family: 'Inter', sans-serif;
-    font-size: 48px;
+  
+  /* Typography Scale */
+  h1, .h1 {
+    font-family: var(--font-display);
+    font-size: 56px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    @apply tracking-tight;
+  }
+  
+  h2, .h2 {
+    font-family: var(--font-display);
+    font-size: 40px;
     font-weight: 700;
     line-height: 1.2;
     letter-spacing: -0.02em;
   }
-
-  h2 {
-    font-family: 'Inter', sans-serif;
-    font-size: 36px;
-    font-weight: 700;
-    line-height: 1.25;
-    letter-spacing: -0.015em;
-  }
-
-  h3 {
-    font-family: 'Inter', sans-serif;
-    font-size: 24px;
+  
+  h3, .h3 {
+    font-family: var(--font-display);
+    font-size: 28px;
     font-weight: 700;
     line-height: 1.3;
+    letter-spacing: -0.015em;
+  }
+  
+  h4, .h4 {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.4;
     letter-spacing: -0.01em;
   }
-
-  strong, b {
-    font-weight: 600;
+  
+  /* Mono for Data & Code */
+  code, pre, .tabular-nums, .data-text {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum" on, "lnum" on;
   }
-
-  .font-mono {
-    font-family: 'JetBrains Mono', monospace;
+  
+  strong, b {
+    font-weight: 700;
+  }
+  
+  /* Button & Interactive Elements */
+  button, .button {
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  
+  /* Links */
+  a {
+    @apply transition-all duration-200;
   }
 }
 
 @layer utilities {
+  /* Trading Colors */
   .text-profit {
     color: hsl(var(--profit));
   }
@@ -189,6 +226,7 @@
   .text-warning {
     color: hsl(var(--warning));
   }
+  
   .bg-profit {
     background-color: hsl(var(--profit));
   }
@@ -198,6 +236,7 @@
   .bg-warning {
     background-color: hsl(var(--warning));
   }
+  
   .bg-profit\/10 {
     background-color: hsl(var(--profit) / 0.1);
   }
@@ -207,28 +246,79 @@
   .bg-warning\/10 {
     background-color: hsl(var(--warning) / 0.1);
   }
-
+  
+  /* Glow Effects - Cyberpunk Style */
   .glow-primary {
-    box-shadow: 0 0 20px hsl(var(--primary) / 0.3), 0 0 60px hsl(var(--primary) / 0.1);
+    box-shadow: 0 0 20px hsl(var(--primary) / 0.5), 0 0 40px hsl(var(--primary) / 0.3);
   }
   .glow-profit {
-    box-shadow: 0 0 20px hsl(var(--profit) / 0.3);
+    box-shadow: 0 0 15px hsl(var(--profit) / 0.5), 0 0 30px hsl(var(--profit) / 0.2);
   }
   .glow-loss {
-    box-shadow: 0 0 20px hsl(var(--loss) / 0.3);
+    box-shadow: 0 0 15px hsl(var(--loss) / 0.5), 0 0 30px hsl(var(--loss) / 0.2);
   }
-
+  .glow-accent {
+    box-shadow: 0 0 20px hsl(var(--accent) / 0.4);
+  }
+  
+  /* Text Glow */
+  .text-glow-primary {
+    text-shadow: 0 0 10px hsl(var(--primary) / 0.5);
+  }
+  .text-glow-profit {
+    text-shadow: 0 0 8px hsl(var(--profit) / 0.4);
+  }
+  
+  /* Gradients */
   .gradient-primary {
-    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)));
+    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--secondary)));
   }
-
+  .gradient-accent {
+    background: linear-gradient(135deg, hsl(var(--accent)), hsl(var(--secondary)));
+  }
+  .gradient-dark {
+    background: linear-gradient(135deg, hsl(222 47% 8%), hsl(225 30% 12%));
+  }
+  
+  /* Terminal Grid Pattern */
   .trading-grid {
     background-image: 
-      linear-gradient(hsl(var(--border) / 0.3) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(var(--border) / 0.3) 1px, transparent 1px);
-    background-size: 40px 40px;
-
-
+      linear-gradient(hsl(var(--border) / 0.2) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.2) 1px, transparent 1px);
+    background-size: 30px 30px;
+  }
+  
+  /* Subtle Dot Pattern */
+  .dot-pattern {
+    background-image: radial-gradient(hsl(var(--border) / 0.15) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+  
+  /* Scanner Line Animation */
+  @keyframes scanner {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(100vh); }
+  }
+  
+  .scanner-line {
+    position: relative;
+    overflow: hidden;
+  }
+  
+  .scanner-line::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, hsl(var(--primary)), transparent);
+    animation: scanner 8s linear infinite;
+    opacity: 0.3;
+    pointer-events: none;
+  }
+  
+  /* Hide Scrollbar but keep functionality */
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
@@ -236,5 +326,137 @@
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
+  
+  /* Custom Scrollbar - Terminal Style */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: hsl(var(--muted) / 0.3);
+    border-radius: 4px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(var(--primary) / 0.5);
+    border-radius: 4px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.8);
+  }
+  
+  /* Blinking Cursor Effect */
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+  
+  .blinking-cursor {
+    animation: blink 1s step-end infinite;
+  }
+  
+  /* Card Hover Effects */
+  .card-hover {
+    @apply transition-all duration-300;
+  }
+  
+  .card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px -5px rgb(0 0 0 / 0.3);
+  }
+  
+  /* Data Tables */
+  .data-table th {
+    @apply font-mono text-xs font-semibold uppercase tracking-wider;
+  }
+  
+  .data-table td {
+    @apply font-mono text-sm tabular-nums;
+  }
+  
+  /* Badges */
+  .badge-profit {
+    @apply bg-profit/10 text-profit font-mono text-xs font-semibold px-2 py-0.5 rounded;
+  }
+  
+  .badge-loss {
+    @apply bg-loss/10 text-loss font-mono text-xs font-semibold px-2 py-0.5 rounded;
+  }
+  
+  .badge-warning {
+    @apply bg-warning/10 text-warning font-mono text-xs font-semibold px-2 py-0.5 rounded;
+  }
+  
+  /* Glass Morphism Effects */
+  .glass {
+    background: hsl(var(--card) / 0.7);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  
+  /* Number Animations */
+  @keyframes countUp {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  .animate-count-up {
+    animation: countUp 0.5s ease-out forwards;
+  }
+  
+  /* Pulse Ring */
+  @keyframes pulse-ring {
+    0% {
+      transform: scale(0.8);
+      opacity: 0.8;
+    }
+    100% {
+      transform: scale(2);
+      opacity: 0;
+    }
+  }
+  
+  .pulse-ring {
+    position: relative;
+  }
+  
+  .pulse-ring::before {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    border-radius: inherit;
+    background: hsl(var(--profit));
+    animation: pulse-ring 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    opacity: 0;
+  }
+  
+  /* Status Indicators */
+  .status-online {
+    @apply relative inline-flex items-center;
+  }
+  
+  .status-online::before {
+    content: '';
+    @apply absolute w-2 h-2 bg-profit rounded-full;
+    animation: pulse-ring 1.5s infinite;
+  }
 }
+
+/* Print Styles */
+@media print {
+  .no-print {
+    display: none;
+  }
+  
+  body {
+    @apply bg-white text-black;
+  }
 }
