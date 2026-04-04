@@ -83,7 +83,7 @@ function AppRoutes() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3, duration: 0.5 }}
             >
-              Welcome to{' '}
+              WELCOME TO {' '}
               <span className="text-primary">RAMZFX.SITE</span>
             </motion.h1>
             <motion.div
@@ -96,7 +96,7 @@ function AppRoutes() {
                 animate={{ opacity: [0.4, 1, 0.4] }}
                 transition={{ duration: 1.5, repeat: Infinity }}
               >
-                Initializing trading engine
+                Trade Smart. Trade Fast. Trade with Precision🔥💥
               </motion.span>
               <motion.span
                 className="flex gap-0.5"
