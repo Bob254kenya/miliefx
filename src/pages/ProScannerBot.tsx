@@ -128,42 +128,42 @@ const SocialNotificationPopup = () => {
   const socialLinks = [
     {
       name: 'WhatsApp',
-      url: 'https://wa.me/+254757261120',
+      url: 'https://wa.me/+254794944129',
       icon: <MessageCircle className="w-4 h-4" />,
       color: 'hover:text-[#25D366]',
       bgGradient: 'from-green-500/20 to-green-600/20',
     },
     {
       name: 'Telegram Group',
-      url: 'https://t.me/+YDUwvuuVDYg5NjE0',
+      url: 'https://youtube.com/@millicentalice-sc6kz?si=TRpxu_Eji8k2q98K',
       icon: <MessageSquare className="w-4 h-4" />,
       color: 'hover:text-[#26A5E4]',
       bgGradient: 'from-blue-500/20 to-blue-600/20',
     },
     {
       name: 'Telegram Channel',
-      url: 'https://t.me/ramztrader',
+      url: 'https://www.facebook.com/share/17ZY1Y6cSd/',
       icon: <MessageSquare className="w-4 h-4" />,
       color: 'hover:text-[#26A5E4]',
       bgGradient: 'from-blue-500/20 to-blue-600/20',
     },
     {
       name: 'YouTube',
-      url: 'https://www.youtube.com/@ceoramz',
+      url: 'https://youtube.com/@millicentalice-sc6kz?si=TRpxu_Eji8k2q98K',
       icon: <Youtube className="w-4 h-4" />,
       color: 'hover:text-[#FF0000]',
       bgGradient: 'from-red-500/20 to-red-600/20',
     },
     {
       name: 'TikTok',
-      url: 'https://www.tiktok.com/@ceoramz?_r=1&_t=ZS-94SPdGqZ8dR',
+      url: 'https://www.tiktok.com/@aliceousmillie?_t=ZM-90rqIhv3NY8&_r=1',
       icon: <Music className="w-4 h-4" />,
       color: 'hover:text-foreground',
       bgGradient: 'from-gray-500/20 to-gray-600/20',
     },
     {
       name: 'Instagram',
-      url: 'https://www.instagram.com/ramztrader.site?igsh=aDY1aGFiMGpobHJi',
+      url: ' https://www.instagram.com/aliceousmilliie?igsh=ZHJrZXFtdGViendx',
       icon: <Instagram className="w-4 h-4" />,
       color: 'hover:text-[#E4405F]',
       bgGradient: 'from-pink-500/20 to-pink-600/20',
@@ -263,7 +263,7 @@ const SocialNotificationPopup = () => {
             </button>
             <button
               onClick={handleMaybeLater}
-              className="flex-1 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white text-sm font-semibold transition-all duration-200 shadow-lg"
+              className="flex-1 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-500 hover:to-blue-700 text-white text-sm font-semibold transition-all duration-200 shadow-lg"
             >
               MAYBE LATER
             </button>
@@ -1866,6 +1866,92 @@ export default function ProScannerBot() {
                      botStatus === 'virtual_hook' ? '🎣 HOOK' : 
                      botStatus === 'pattern_matched' ? '✅ MATCHED' : '⚪ RUNNING'}
                   </Badge>
+                </div>
+              )}
+            </div>
+
+            {/* DUPLICATE LIVE STATUS - Added below start button and above Activity Log */}
+            <div className="bg-card border border-border rounded-xl p-3 shadow-md">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-semibold flex items-center gap-2">
+                  <Zap className="w-3.5 h-3.5 text-primary" />
+                  Live Status (Realtime)
+                </h3>
+                {isRunning && (
+                  <span className="flex items-center gap-1 text-[9px] text-profit animate-pulse">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-profit opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-profit"></span>
+                    </span>
+                    ACTIVE
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Status</div>
+                  <div className={`text-[11px] font-bold ${status.color} flex items-center justify-center gap-1`}>
+                    <span>{status.icon}</span> {status.label}
+                  </div>
+                </div>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Market</div>
+                  <div className={`text-[11px] font-bold ${currentMarket === 1 ? 'text-profit' : 'text-purple-400'}`}>
+                    {currentMarket === 1 ? 'M1 (HOME)' : 'M2 (RECOVERY)'}
+                  </div>
+                </div>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Win Rate</div>
+                  <div className="text-[11px] font-bold font-mono text-primary">{winRate}%</div>
+                </div>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Current P/L</div>
+                  <div className={`text-[11px] font-bold font-mono ${netProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
+                    ${netProfit.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+              {/* Additional real-time stats row */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Current Stake</div>
+                  <div className="text-[11px] font-bold font-mono">
+                    ${currentStake.toFixed(2)}
+                    {martingaleStep > 0 && <span className="text-warning ml-1">M{martingaleStep}</span>}
+                  </div>
+                </div>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Balance</div>
+                  <div className="text-[11px] font-bold font-mono text-primary">${localBalance.toFixed(2)}</div>
+                </div>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Total Staked</div>
+                  <div className="text-[11px] font-bold font-mono">${totalStaked.toFixed(2)}</div>
+                </div>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">W/L (Session)</div>
+                  <div className="text-[11px] font-bold font-mono">
+                    <span className="text-profit">{wins}</span>
+                    <span className="text-muted-foreground mx-0.5">/</span>
+                    <span className="text-loss">{losses}</span>
+                  </div>
+                </div>
+              </div>
+              {botStatus === 'virtual_hook' && (
+                <div className="mt-2 text-center bg-primary/10 border border-primary/30 rounded-lg p-1.5">
+                  <div className="text-[9px] text-primary animate-pulse flex items-center justify-center gap-2">
+                    <Anchor className="w-3 h-3" />
+                    Virtual Hook Active — Waiting for {m1HookEnabled ? m1VirtualLossCount : m2VirtualLossCount} consecutive losses...
+                    <span className="font-bold">({vhConsecLosses}/{m1HookEnabled ? m1VirtualLossCount : m2VirtualLossCount})</span>
+                  </div>
+                </div>
+              )}
+              {botStatus === 'waiting_pattern' && (
+                <div className="mt-2 text-center bg-warning/10 border border-warning/30 rounded-lg p-1.5">
+                  <div className="text-[9px] text-warning animate-pulse flex items-center justify-center gap-2">
+                    <Scan className="w-3 h-3" />
+                    Scanning for pattern match...
+                  </div>
                 </div>
               )}
             </div>
