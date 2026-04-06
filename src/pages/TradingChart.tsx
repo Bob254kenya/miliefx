@@ -350,14 +350,14 @@ type M2RecoveryType =
   | 'over4_under5_9' 
   | 'over3_under6_5' 
   | 'over3_under6_7' 
-  | 'even_odd_3'
-  | 'even_odd_4'
-  | 'even_odd_5'
-  | 'even_odd_6'
-  | 'even_odd_7'
-  | 'even_odd_8'
-  | 'even_odd_9'
-  | 'even_odd_10'
+  | 'same_direction_3'
+  | 'same_direction_4'
+  | 'same_direction_5'
+  | 'same_direction_6'
+  | 'same_direction_7'
+  | 'same_direction_8'
+  | 'same_direction_9'
+  | 'same_direction_10'
   | 'disabled';
 
 interface LogEntry {
@@ -416,18 +416,18 @@ function waitForNextTick(symbol: string): Promise<{ quote: number }> {
 }
 
 // ============================================
-// INDEPENDENT EVEN/ODD STRATEGY FOR MARKET 2
+// SAME DIRECTION STRATEGY FOR MARKET 2 (FIXED)
 // ============================================
 
-// Independent tick storage for Even/Odd strategy (completely separate from existing tickMapRef)
-const evenOddTickMapRef = new Map<string, number[]>();
+// Independent tick storage for Same Direction strategy (completely separate from existing tickMapRef)
+const sameDirectionTickMapRef = new Map<string, number[]>();
 
 // Function to update independent tick storage
-const updateEvenOddTickStorage = (symbol: string, digit: number) => {
-  let arr = evenOddTickMapRef.get(symbol);
+const updateSameDirectionTickStorage = (symbol: string, digit: number) => {
+  let arr = sameDirectionTickMapRef.get(symbol);
   if (!arr) {
     arr = [];
-    evenOddTickMapRef.set(symbol, arr);
+    sameDirectionTickMapRef.set(symbol, arr);
   }
   arr.push(digit);
   // Keep only last 10 digits
@@ -435,39 +435,39 @@ const updateEvenOddTickStorage = (symbol: string, digit: number) => {
 };
 
 // Function to get recent digits from independent storage
-const getEvenOddRecentDigits = (symbol: string, count: number): number[] => {
-  const digits = evenOddTickMapRef.get(symbol) || [];
+const getSameDirectionRecentDigits = (symbol: string, count: number): number[] => {
+  const digits = sameDirectionTickMapRef.get(symbol) || [];
   return digits.slice(-count);
 };
 
-// FIXED: Function to check Even/Odd pattern - CORRECT LOGIC
-// If all digits are EVEN -> bet on ODD (DIGITODD)
-// If all digits are ODD -> bet on EVEN (DIGITEVEN)
-const checkEvenOddPattern = (symbol: string, tickLength: number): { matched: boolean; contractType?: string; patternDigits?: string } => {
-  const digits = getEvenOddRecentDigits(symbol, tickLength);
+// FIXED: Function to check Same Direction pattern - CORRECT LOGIC
+// If all digits are EVEN -> bet on EVEN (DIGITEVEN)
+// If all digits are ODD -> bet on ODD (DIGITODD)
+const checkSameDirectionPattern = (symbol: string, tickLength: number): { matched: boolean; contractType?: string; patternDigits?: string } => {
+  const digits = getSameDirectionRecentDigits(symbol, tickLength);
   if (digits.length < tickLength) return { matched: false };
   
   const allEven = digits.every(d => d % 2 === 0);
   const allOdd = digits.every(d => d % 2 !== 0);
   
   if (allEven) {
-    return { matched: true, contractType: 'DIGITODD', patternDigits: digits.join(',') };
+    return { matched: true, contractType: 'DIGITEVEN', patternDigits: digits.join(',') };
   }
   if (allOdd) {
-    return { matched: true, contractType: 'DIGITEVEN', patternDigits: digits.join(',') };
+    return { matched: true, contractType: 'DIGITODD', patternDigits: digits.join(',') };
   }
   
   return { matched: false };
 };
 
-// Function to find Even/Odd match across all markets (independent)
-const findEvenOddMatch = (): { symbol: string; contractType: string; tickLength: number; patternDigits: string } | null => {
+// Function to find Same Direction match across all markets (independent)
+const findSameDirectionMatch = (): { symbol: string; contractType: string; tickLength: number; patternDigits: string } | null => {
   // Check all tick lengths from 3 to 10, prioritize smallest matching length
   for (let tickLength = 3; tickLength <= 10; tickLength++) {
     for (const market of SCANNER_MARKETS) {
-      const result = checkEvenOddPattern(market.symbol, tickLength);
+      const result = checkSameDirectionPattern(market.symbol, tickLength);
       if (result.matched && result.contractType) {
-        logDebug(`[Even/Odd] ✅ PATTERN FOUND on ${market.symbol} (${tickLength} ticks): ${result.patternDigits} -> ${result.contractType}`);
+        logDebug(`[Same Direction] ✅ PATTERN FOUND on ${market.symbol} (${tickLength} ticks): ${result.patternDigits} -> ${result.contractType}`);
         return {
           symbol: market.symbol,
           contractType: result.contractType,
@@ -556,7 +556,7 @@ export default function ProScannerBot() {
 
   /* ── Market 2 config ── */
   const [m2Enabled, setM2Enabled] = useState(true);
-  const [m2RecoveryType, setM2RecoveryType] = useState<M2RecoveryType>('even_odd_4'); // Changed default to new Even/Odd strategy
+  const [m2RecoveryType, setM2RecoveryType] = useState<M2RecoveryType>('same_direction_4'); // Changed default to new Same Direction strategy
 
   /* ── Risk ── */
   const [stake, setStake] = useState('0.6');
@@ -726,7 +726,7 @@ export default function ProScannerBot() {
     logDebug('Bot stopped by user');
   }, []);
 
-  // Initial subscription and tick handler - IMPROVED with independent Even/Odd storage
+  // Initial subscription and tick handler - IMPROVED with independent Same Direction storage
   useEffect(() => {
     let active = true;
     let reconnectTimeout: NodeJS.Timeout;
@@ -768,9 +768,9 @@ export default function ProScannerBot() {
       if (arr.length > 200) arr.shift();
       
       // ============================================
-      // INDEPENDENT EVEN/ODD TICK STORAGE UPDATE
+      // INDEPENDENT SAME DIRECTION TICK STORAGE UPDATE
       // ============================================
-      updateEvenOddTickStorage(sym, digit);
+      updateSameDirectionTickStorage(sym, digit);
       
       // Mark subscription as active if we receive data
       if (!subscriptionStatusRef.current.get(sym)) {
@@ -1108,7 +1108,7 @@ export default function ProScannerBot() {
     }
   }, [m1StrategyType, isDataFresh, getRecentDigits]);
 
-  // M2 Pattern Checker - FIXED to include new Even/Odd strategy with correct logic
+  // M2 Pattern Checker - FIXED to include new Same Direction strategy with correct logic
   const checkM2Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string; patternDigits?: string } => {
     if (!isDataFresh(symbol)) {
       return { matched: false };
@@ -1343,17 +1343,17 @@ export default function ProScannerBot() {
       }
       
       // ============================================
-      // FIXED INDEPENDENT EVEN/ODD STRATEGY CASES
-      // All Even → ODD (DIGITODD) / All Odd → EVEN (DIGITEVEN)
+      // FIXED INDEPENDENT SAME DIRECTION STRATEGY CASES
+      // All Even → EVEN (DIGITEVEN) / All Odd → ODD (DIGITODD)
       // ============================================
-      case 'even_odd_3':
-      case 'even_odd_4':
-      case 'even_odd_5':
-      case 'even_odd_6':
-      case 'even_odd_7':
-      case 'even_odd_8':
-      case 'even_odd_9':
-      case 'even_odd_10': {
+      case 'same_direction_3':
+      case 'same_direction_4':
+      case 'same_direction_5':
+      case 'same_direction_6':
+      case 'same_direction_7':
+      case 'same_direction_8':
+      case 'same_direction_9':
+      case 'same_direction_10': {
         const tickLength = parseInt(m2RecoveryType.split('_')[2]);
         if (digits.length < tickLength) return { matched: false };
         
@@ -1363,12 +1363,12 @@ export default function ProScannerBot() {
         const allOdd = lastNDigits.every(d => d % 2 !== 0);
         
         if (allEven) {
-          // All digits are EVEN -> bet on ODD
-          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+          // All digits are EVEN -> bet on EVEN
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         if (allOdd) {
-          // All digits are ODD -> bet on EVEN
-          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+          // All digits are ODD -> bet on ODD
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -1441,36 +1441,36 @@ export default function ProScannerBot() {
     return null;
   }, [checkM1Pattern, m1StrategyType, addDetectedPattern, getRecentDigits]);
 
-  // Find M2 match across ALL markets - MODIFIED to support new Even/Odd strategy
+  // Find M2 match across ALL markets - MODIFIED to support new Same Direction strategy
   const findM2Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null => {
     // CRITICAL FIX: Only allow trade if 2 seconds have passed since last trade
     if (Date.now() - lastTradeOverallRef.current < 2000) return null;
     
-    // Check if using new Even/Odd strategy
-    const isEvenOddStrategy = m2RecoveryType.startsWith('even_odd_');
+    // Check if using new Same Direction strategy
+    const isSameDirectionStrategy = m2RecoveryType.startsWith('same_direction_');
     
-    if (isEvenOddStrategy) {
-      // Use independent Even/Odd pattern detection
-      const match = findEvenOddMatch();
+    if (isSameDirectionStrategy) {
+      // Use independent Same Direction pattern detection
+      const match = findSameDirectionMatch();
       if (match) {
         const market = SCANNER_MARKETS.find(m => m.symbol === match.symbol);
         if (market) {
-          const digits = getEvenOddRecentDigits(match.symbol, 10);
+          const digits = getSameDirectionRecentDigits(match.symbol, 10);
           addDetectedPattern(match.symbol, market.name, `M2: ${m2RecoveryType} (${match.tickLength} ticks)`, digits);
           
           const lastPattern = lastPatternDigitsRef.current.get(match.symbol);
           if (lastPattern === match.patternDigits) {
-            logDebug(`[Even/Odd M2] Skipping duplicate pattern for ${match.symbol}: ${match.patternDigits}`);
+            logDebug(`[Same Direction M2] Skipping duplicate pattern for ${match.symbol}: ${match.patternDigits}`);
             return null;
           }
           
           const lastTrade = lastTradeTimeRef.current.get(match.symbol) || 0;
           if (Date.now() - lastTrade < 30000) {
-            logDebug(`[Even/Odd M2] Cooldown active for ${match.symbol}, last trade: ${new Date(lastTrade).toLocaleTimeString()}`);
+            logDebug(`[Same Direction M2] Cooldown active for ${match.symbol}, last trade: ${new Date(lastTrade).toLocaleTimeString()}`);
             return null;
           }
           
-          logDebug(`[Even/Odd M2] ✅ PATTERN FOUND on ${match.symbol} (${match.tickLength} ticks): ${match.patternDigits} -> ${match.contractType}`);
+          logDebug(`[Same Direction M2] ✅ PATTERN FOUND on ${match.symbol} (${match.tickLength} ticks): ${match.patternDigits} -> ${match.contractType}`);
           
           return {
             symbol: match.symbol,
@@ -1990,14 +1990,14 @@ export default function ProScannerBot() {
       case 'over4_under5_9': return '🎯 Over 4 / Under 5 (9 ticks)';
       case 'over3_under6_5': return '🎯 Over 3 / Under 6 (5 ticks)';
       case 'over3_under6_7': return '🎯 Over 3 / Under 6 (7 ticks)';
-      case 'even_odd_3': return '🔢 All Even → ODD / All Odd → EVEN (3 ticks)';
-      case 'even_odd_4': return '🔢 All Even → ODD / All Odd → EVEN (4 ticks)';
-      case 'even_odd_5': return '🔢 All Even → ODD / All Odd → EVEN (5 ticks)';
-      case 'even_odd_6': return '🔢 All Even → ODD / All Odd → EVEN (6 ticks)';
-      case 'even_odd_7': return '🔢 All Even → ODD / All Odd → EVEN (7 ticks)';
-      case 'even_odd_8': return '🔢 All Even → ODD / All Odd → EVEN (8 ticks)';
-      case 'even_odd_9': return '🔢 All Even → ODD / All Odd → EVEN (9 ticks)';
-      case 'even_odd_10': return '🔢 All Even → ODD / All Odd → EVEN (10 ticks)';
+      case 'same_direction_3': return '🔢 Same Direction (3 ticks)';
+      case 'same_direction_4': return '🔢 Same Direction (4 ticks)';
+      case 'same_direction_5': return '🔢 Same Direction (5 ticks)';
+      case 'same_direction_6': return '🔢 Same Direction (6 ticks)';
+      case 'same_direction_7': return '🔢 Same Direction (7 ticks)';
+      case 'same_direction_8': return '🔢 Same Direction (8 ticks)';
+      case 'same_direction_9': return '🔢 Same Direction (9 ticks)';
+      case 'same_direction_10': return '🔢 Same Direction (10 ticks)';
       default: return 'Select strategy';
     }
   };
@@ -2067,6 +2067,7 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
+                      <SelectItem>Over/Under (If last 3 ticks are less than 1 trade over)</SelectItem>
                       <SelectItem value="over0_under9_1">🎯 Over 0 / Under 9 (1 tick)</SelectItem>
                       <SelectItem value="over0_under9_2">🎯 Over 0 / Under 9 (2 ticks)</SelectItem>
                       <SelectItem value="over0_under9_3">🎯 Over 0 / Under 9 (3 ticks)</SelectItem>
@@ -2124,6 +2125,7 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
+                      <SelectItem >Even / Odd (if last 3 are odd trade even)</SelectItem>
                       <SelectItem value="odd_even_3">🔄 Even / Odd (3 ticks)</SelectItem>
                       <SelectItem value="odd_even_4">🔄 Even / Odd (4 ticks)</SelectItem>
                       <SelectItem value="odd_even_5">🔄 Even / Odd (5 ticks)</SelectItem>
@@ -2131,6 +2133,7 @@ export default function ProScannerBot() {
                       <SelectItem value="odd_even_7">🔄 Even / Odd (7 ticks)</SelectItem>
                       <SelectItem value="odd_even_8">🔄 Even / Odd (8 ticks)</SelectItem>
                       <SelectItem value="odd_even_9">🔄 Even / Odd (9 ticks)</SelectItem>
+                      <SelectItem>OVER/UNDER RECOVERY (If last 7 are greater than 5 trade under)</SelectItem>
                       <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                       <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
                       <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
@@ -2138,14 +2141,15 @@ export default function ProScannerBot() {
                       <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
                       <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                       <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
-                      <SelectItem value="even_odd_3">🔢 All Even → ODD / All Odd → EVEN (3 ticks)</SelectItem>
-                      <SelectItem value="even_odd_4">🔢 All Even → ODD / All Odd → EVEN (4 ticks)</SelectItem>
-                      <SelectItem value="even_odd_5">🔢 All Even → ODD / All Odd → EVEN (5 ticks)</SelectItem>
-                      <SelectItem value="even_odd_6">🔢 All Even → ODD / All Odd → EVEN (6 ticks)</SelectItem>
-                      <SelectItem value="even_odd_7">🔢 All Even → ODD / All Odd → EVEN (7 ticks)</SelectItem>
-                      <SelectItem value="even_odd_8">🔢 All Even → ODD / All Odd → EVEN (8 ticks)</SelectItem>
-                      <SelectItem value="even_odd_9">🔢 All Even → ODD / All Odd → EVEN (9 ticks)</SelectItem>
-                      <SelectItem value="even_odd_10">🔢 All Even → ODD / All Odd → EVEN (10 ticks)</SelectItem>
+                      <SelectItem> Same Direction (if the last 3 even trade even) </SelectItem>
+                      <SelectItem value="same_direction_3">🔢 Same Direction (EVEN/ODD - 3 ticks)</SelectItem>
+                      <SelectItem value="same_direction_4">🔢 Same Direction (EVEN/ODD - 4 ticks)</SelectItem>
+                      <SelectItem value="same_direction_5">🔢 Same Direction (EVEN/ODD - 5 ticks)</SelectItem>
+                      <SelectItem value="same_direction_6">🔢 Same Direction (EVEN/ODD - 6 ticks)</SelectItem>
+                      <SelectItem value="same_direction_7">🔢 Same Direction (EVEN/ODD - 7 ticks)</SelectItem>
+                      <SelectItem value="same_direction_8">🔢 Same Direction (EVEN/ODD - 8 ticks)</SelectItem>
+                      <SelectItem value="same_direction_9">🔢 Same Direction (EVEN/ODD - 9 ticks)</SelectItem>
+                      <SelectItem value="same_direction_10">🔢 Same Direction (EVEN/ODD - 10 ticks)</SelectItem>
                     </SelectContent>
                   </Select>
                   {m2RecoveryType !== 'disabled' && (
