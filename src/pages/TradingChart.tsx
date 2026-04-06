@@ -416,7 +416,7 @@ function waitForNextTick(symbol: string): Promise<{ quote: number }> {
 }
 
 // ============================================
-// SAME DIRECTION STRATEGY FOR MARKET 2 (FIXED)
+// FIXED SAME DIRECTION STRATEGY FOR MARKET 2
 // ============================================
 
 // Independent tick storage for Same Direction strategy (completely separate from existing tickMapRef)
@@ -430,7 +430,7 @@ const updateSameDirectionTickStorage = (symbol: string, digit: number) => {
     sameDirectionTickMapRef.set(symbol, arr);
   }
   arr.push(digit);
-  // Keep only last 10 digits
+  // Keep only last 10 digits (more than enough for max tick length of 10)
   if (arr.length > 10) arr.shift();
 };
 
@@ -440,41 +440,57 @@ const getSameDirectionRecentDigits = (symbol: string, count: number): number[] =
   return digits.slice(-count);
 };
 
-// FIXED: Function to check Same Direction pattern - CORRECT LOGIC
-// If all digits are EVEN -> bet on EVEN (DIGITEVEN)
-// If all digits are ODD -> bet on ODD (DIGITODD)
-const checkSameDirectionPattern = (symbol: string, tickLength: number): { matched: boolean; contractType?: string; patternDigits?: string } => {
-  const digits = getSameDirectionRecentDigits(symbol, tickLength);
-  if (digits.length < tickLength) return { matched: false };
+/**
+ * FIXED: Reusable function to get Same Direction trading signal
+ * @param ticks - Array of digit numbers (0-9)
+ * @param requiredTicks - Number of ticks to analyze (3-10)
+ * @returns 'even' | 'odd' | null
+ */
+const getSameDirectionSignal = (ticks: number[], requiredTicks: number): 'even' | 'odd' | null => {
+  if (ticks.length < requiredTicks) return null;
   
-  const allEven = digits.every(d => d % 2 === 0);
-  const allOdd = digits.every(d => d % 2 !== 0);
+  const lastNTicks = ticks.slice(-requiredTicks);
+  const allEven = lastNTicks.every(d => d % 2 === 0);
+  const allOdd = lastNTicks.every(d => d % 2 !== 0);
   
-  if (allEven) {
+  if (allEven) return 'even';
+  if (allOdd) return 'odd';
+  return null;
+};
+
+// FIXED: Function to check Same Direction pattern with DYNAMIC tick length
+const checkSameDirectionPattern = (symbol: string, requiredTicks: number): { matched: boolean; contractType?: string; patternDigits?: string } => {
+  const digits = getSameDirectionRecentDigits(symbol, requiredTicks);
+  if (digits.length < requiredTicks) return { matched: false };
+  
+  const signal = getSameDirectionSignal(digits, requiredTicks);
+  
+  if (signal === 'even') {
     return { matched: true, contractType: 'DIGITEVEN', patternDigits: digits.join(',') };
   }
-  if (allOdd) {
+  if (signal === 'odd') {
     return { matched: true, contractType: 'DIGITODD', patternDigits: digits.join(',') };
   }
   
   return { matched: false };
 };
 
-// Function to find Same Direction match across all markets (independent)
-const findSameDirectionMatch = (): { symbol: string; contractType: string; tickLength: number; patternDigits: string } | null => {
-  // Check all tick lengths from 3 to 10, prioritize smallest matching length
-  for (let tickLength = 3; tickLength <= 10; tickLength++) {
-    for (const market of SCANNER_MARKETS) {
-      const result = checkSameDirectionPattern(market.symbol, tickLength);
-      if (result.matched && result.contractType) {
-        logDebug(`[Same Direction] ✅ PATTERN FOUND on ${market.symbol} (${tickLength} ticks): ${result.patternDigits} -> ${result.contractType}`);
-        return {
-          symbol: market.symbol,
-          contractType: result.contractType,
-          tickLength,
-          patternDigits: result.patternDigits
-        };
-      }
+// Function to find Same Direction match across all markets based on the SELECTED strategy
+const findSameDirectionMatch = (selectedStrategy: M2RecoveryType): { symbol: string; contractType: string; tickLength: number; patternDigits: string } | null => {
+  // Extract the required tick length from the strategy name
+  const tickLength = parseInt(selectedStrategy.split('_')[2]);
+  if (isNaN(tickLength) || tickLength < 3 || tickLength > 10) return null;
+  
+  for (const market of SCANNER_MARKETS) {
+    const result = checkSameDirectionPattern(market.symbol, tickLength);
+    if (result.matched && result.contractType) {
+      logDebug(`[Same Direction] ✅ PATTERN FOUND on ${market.symbol} (${tickLength} ticks): ${result.patternDigits} -> ${result.contractType}`);
+      return {
+        symbol: market.symbol,
+        contractType: result.contractType,
+        tickLength,
+        patternDigits: result.patternDigits
+      };
     }
   }
   return null;
@@ -653,7 +669,7 @@ export default function ProScannerBot() {
     isReconnectingRef.current = false;
     logDebug('Reconnection failed after all attempts');
     return false;
-  }, []);
+  }, [resubscribeToMarkets]);
 
   // Subscribe to all markets with retry
   const resubscribeToMarkets = useCallback(async () => {
@@ -1108,7 +1124,7 @@ export default function ProScannerBot() {
     }
   }, [m1StrategyType, isDataFresh, getRecentDigits]);
 
-  // M2 Pattern Checker - FIXED to include new Same Direction strategy with correct logic
+  // M2 Pattern Checker - FIXED to include new Same Direction strategy with correct dynamic logic
   const checkM2Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string; patternDigits?: string } => {
     if (!isDataFresh(symbol)) {
       return { matched: false };
@@ -1344,7 +1360,7 @@ export default function ProScannerBot() {
       
       // ============================================
       // FIXED INDEPENDENT SAME DIRECTION STRATEGY CASES
-      // All Even → EVEN (DIGITEVEN) / All Odd → ODD (DIGITODD)
+      // Now dynamically checks the correct number of ticks based on strategy
       // ============================================
       case 'same_direction_3':
       case 'same_direction_4':
@@ -1363,11 +1379,9 @@ export default function ProScannerBot() {
         const allOdd = lastNDigits.every(d => d % 2 !== 0);
         
         if (allEven) {
-          // All digits are EVEN -> bet on EVEN
           return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         if (allOdd) {
-          // All digits are ODD -> bet on ODD
           return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         return { matched: false };
@@ -1441,7 +1455,7 @@ export default function ProScannerBot() {
     return null;
   }, [checkM1Pattern, m1StrategyType, addDetectedPattern, getRecentDigits]);
 
-  // Find M2 match across ALL markets - MODIFIED to support new Same Direction strategy
+  // Find M2 match across ALL markets - MODIFIED to support new Same Direction strategy with dynamic tick length
   const findM2Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string } | null => {
     // CRITICAL FIX: Only allow trade if 2 seconds have passed since last trade
     if (Date.now() - lastTradeOverallRef.current < 2000) return null;
@@ -1450,12 +1464,12 @@ export default function ProScannerBot() {
     const isSameDirectionStrategy = m2RecoveryType.startsWith('same_direction_');
     
     if (isSameDirectionStrategy) {
-      // Use independent Same Direction pattern detection
-      const match = findSameDirectionMatch();
+      // Use independent Same Direction pattern detection with the SELECTED strategy
+      const match = findSameDirectionMatch(m2RecoveryType);
       if (match) {
         const market = SCANNER_MARKETS.find(m => m.symbol === match.symbol);
         if (market) {
-          const digits = getSameDirectionRecentDigits(match.symbol, 10);
+          const digits = getSameDirectionRecentDigits(match.symbol, match.tickLength);
           addDetectedPattern(match.symbol, market.name, `M2: ${m2RecoveryType} (${match.tickLength} ticks)`, digits);
           
           const lastPattern = lastPatternDigitsRef.current.get(match.symbol);
@@ -2487,7 +2501,7 @@ export default function ProScannerBot() {
                     </tr>
                   ))}
                 </tbody>
-               </table>
+              </table>
             </div>
           </div>
         </div>
