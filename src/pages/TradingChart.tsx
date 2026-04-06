@@ -2225,7 +2225,7 @@ export default function ProScannerBot() {
               onClick={isRunning ? stopBot : startBot}
               disabled={!isRunning && (!isAuthorized || localBalance < parseFloat(stake))}
               className={`
-                relative w-[1500px] h-14 text-base font-bold rounded-xl transition-all duration-300 ease-out
+                relative w-[1000px] h-14 text-base font-bold rounded-xl transition-all duration-300 ease-out
                 overflow-hidden group
                 ${isRunning 
                   ? 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white shadow-lg shadow-red-500/30' 
@@ -2278,7 +2278,7 @@ export default function ProScannerBot() {
 
           {/* Market Scanner Patterns Container */}
           <div className="flex justify-center">
-            <div className="w-[1500px] bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
+            <div className="w-[1000px] bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
               <div className="p-3 border-b border-slate-700/50">
                 <div className="flex items-center gap-2">
                   <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
@@ -2326,38 +2326,7 @@ export default function ProScannerBot() {
                     />
                   ))}
                 </div>
-              </div>
-               {/* Animated Dollar Icons Row */}
-              <div className="py-2 bg-slate-800/30 overflow-hidden relative">
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10">SCANNING</span>
-                </div>
-                <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite' }}>
-                  {[...Array(15)].map((_, i) => (
-                    <DollarSign 
-                      key={i}
-                      className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
-                      style={{ 
-                        animationDuration: `${0.5 + (i % 3) * 0.2}s`,
-                        filter: 'drop-shadow(0 0 1px currentColor)'
-                      }}
-                    />
-                  ))}
-                </div>
-                <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite', position: 'absolute', top: 0, left: '100%' }}>
-                  {[...Array(15)].map((_, i) => (
-                    <DollarSign 
-                      key={`dup-${i}`}
-                      className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
-                      style={{ 
-                        animationDuration: `${0.5 + (i % 3) * 0.2}s`,
-                        filter: 'drop-shadow(0 0 1px currentColor)'
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-              
+              </div>  
              {/* Detected Patterns Display */}
               <div className="h-[60px] overflow-y-auto">
                 {detectedPatterns.length === 0 ? (
