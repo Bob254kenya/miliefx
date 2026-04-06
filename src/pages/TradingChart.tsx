@@ -144,10 +144,10 @@ const NotificationPopup = () => {
       setIsVisible(true);
       setIsExiting(false);
       
-      // Auto-hide after 8 seconds if not dismissed
+      // Auto-hide after 8 seconds
       const timeout = setTimeout(() => {
         handleClose();
-      }, 80000);
+      }, 8000); // FIXED: Changed from 80000 to 8000
       
       return () => clearTimeout(timeout);
     };
@@ -400,15 +400,16 @@ const logDebug = (...args: any[]) => {
 
 function waitForNextTick(symbol: string): Promise<{ quote: number }> {
   return new Promise((resolve) => {
+    let unsub: (() => void) | null = null;
     const timeout = setTimeout(() => {
       if (unsub) unsub();
       resolve({ quote: 0 });
     }, 5000);
     
-    const unsub = derivApi.onMessage((data: any) => {
+    unsub = derivApi.onMessage((data: any) => {
       if (data.tick && data.tick.symbol === symbol) { 
         clearTimeout(timeout);
-        unsub(); 
+        if (unsub) unsub(); 
         resolve({ quote: data.tick.quote }); 
       }
     });
@@ -489,7 +490,7 @@ const findSameDirectionMatch = (selectedStrategy: M2RecoveryType): { symbol: str
         symbol: market.symbol,
         contractType: result.contractType,
         tickLength,
-        patternDigits: result.patternDigits
+        patternDigits: result.patternDigits || ''
       };
     }
   }
@@ -528,7 +529,8 @@ export default function ProScannerBot() {
       
       // If we have expected PnL, verify it matches (for logging)
       if (expectedPnl !== undefined) {
-        const balanceChange = newBalance - (localBalanceRef.current - expectedPnl);
+        const previousBalance = localBalanceRef.current - expectedPnl;
+        const balanceChange = newBalance - previousBalance;
         logDebug(`Balance sync complete - New: $${newBalance}, Expected change: $${expectedPnl}, Actual change: $${balanceChange}`);
       } else {
         logDebug(`Balance sync complete - New balance: $${newBalance}`);
@@ -629,6 +631,38 @@ export default function ProScannerBot() {
   const slNotifiedRef = useRef(false);
   const lastPnlRef = useRef(0);
 
+  // Define resubscribeToMarkets before ensureConnection
+  const resubscribeToMarkets = useCallback(async () => {
+    if (!derivApi.isConnected) return false;
+    
+    const results = await Promise.allSettled(
+      SCANNER_MARKETS.map(async (market) => {
+        try {
+          // Unsubscribe first if already subscribed
+          if (subscriptionStatusRef.current.get(market.symbol)) {
+            try {
+              await derivApi.unsubscribeTicks?.(market.symbol as MarketSymbol);
+            } catch (e) {
+              // Ignore unsubscribe errors
+            }
+          }
+          await derivApi.subscribeTicks(market.symbol as MarketSymbol, () => {});
+          subscriptionStatusRef.current.set(market.symbol, true);
+          logDebug(`✅ Subscribed to ${market.symbol}`);
+          return true;
+        } catch (error) {
+          logDebug(`❌ Failed to subscribe to ${market.symbol}:`, error);
+          subscriptionStatusRef.current.set(market.symbol, false);
+          return false;
+        }
+      })
+    );
+    
+    const successCount = results.filter(r => r.status === 'fulfilled' && r.value === true).length;
+    logDebug(`Subscription results: ${successCount}/${SCANNER_MARKETS.length} markets active`);
+    return successCount > 0;
+  }, []);
+
   // Connection management - IMPROVED
   const ensureConnection = useCallback(async (): Promise<boolean> => {
     if (derivApi.isConnected) {
@@ -670,38 +704,6 @@ export default function ProScannerBot() {
     logDebug('Reconnection failed after all attempts');
     return false;
   }, [resubscribeToMarkets]);
-
-  // Subscribe to all markets with retry
-  const resubscribeToMarkets = useCallback(async () => {
-    if (!derivApi.isConnected) return false;
-    
-    const results = await Promise.allSettled(
-      SCANNER_MARKETS.map(async (market) => {
-        try {
-          // Unsubscribe first if already subscribed
-          if (subscriptionStatusRef.current.get(market.symbol)) {
-            try {
-              await derivApi.unsubscribeTicks?.(market.symbol as MarketSymbol);
-            } catch (e) {
-              // Ignore unsubscribe errors
-            }
-          }
-          await derivApi.subscribeTicks(market.symbol as MarketSymbol, () => {});
-          subscriptionStatusRef.current.set(market.symbol, true);
-          logDebug(`✅ Subscribed to ${market.symbol}`);
-          return true;
-        } catch (error) {
-          logDebug(`❌ Failed to subscribe to ${market.symbol}:`, error);
-          subscriptionStatusRef.current.set(market.symbol, false);
-          return false;
-        }
-      })
-    );
-    
-    const successCount = results.filter(r => r.status === 'fulfilled' && r.value === true).length;
-    logDebug(`Subscription results: ${successCount}/${SCANNER_MARKETS.length} markets active`);
-    return successCount > 0;
-  }, []);
 
   // Connection monitoring - IMPROVED
   useEffect(() => {
@@ -2081,7 +2083,6 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
-                      <SelectItem>Over/Under (If last 3 ticks are less than 1 trade over)</SelectItem>
                       <SelectItem value="over0_under9_1">🎯 Over 0 / Under 9 (1 tick)</SelectItem>
                       <SelectItem value="over0_under9_2">🎯 Over 0 / Under 9 (2 ticks)</SelectItem>
                       <SelectItem value="over0_under9_3">🎯 Over 0 / Under 9 (3 ticks)</SelectItem>
@@ -2139,7 +2140,6 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
-                      <SelectItem >Even / Odd (if last 3 are odd trade even)</SelectItem>
                       <SelectItem value="odd_even_3">🔄 Even / Odd (3 ticks)</SelectItem>
                       <SelectItem value="odd_even_4">🔄 Even / Odd (4 ticks)</SelectItem>
                       <SelectItem value="odd_even_5">🔄 Even / Odd (5 ticks)</SelectItem>
@@ -2147,7 +2147,6 @@ export default function ProScannerBot() {
                       <SelectItem value="odd_even_7">🔄 Even / Odd (7 ticks)</SelectItem>
                       <SelectItem value="odd_even_8">🔄 Even / Odd (8 ticks)</SelectItem>
                       <SelectItem value="odd_even_9">🔄 Even / Odd (9 ticks)</SelectItem>
-                      <SelectItem>OVER/UNDER RECOVERY (If last 7 are greater than 5 trade under)</SelectItem>
                       <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                       <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
                       <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
@@ -2155,7 +2154,6 @@ export default function ProScannerBot() {
                       <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
                       <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                       <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
-                      <SelectItem> Same Direction (if the last 3 even trade even) </SelectItem>
                       <SelectItem value="same_direction_3">🔢 Same Direction (3 ticks)</SelectItem>
                       <SelectItem value="same_direction_4">🔢 Same Direction (4 ticks)</SelectItem>
                       <SelectItem value="same_direction_5">🔢 Same Direction (5 ticks)</SelectItem>
@@ -2465,7 +2463,7 @@ export default function ProScannerBot() {
                     <tr>
                       <td colSpan={8} className="text-center text-slate-500 py-12">
                         No trades yet — configure and start the bot
-                       </td>
+                      </td>
                     </tr>
                   ) : logEntries.map(e => (
                     <tr key={e.id} className={`border-t border-slate-700/30 hover:bg-slate-800/30 transition-colors ${
