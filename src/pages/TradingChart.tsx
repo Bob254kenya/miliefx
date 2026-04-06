@@ -2083,7 +2083,6 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
-                       <SelectItem >Over/Under {last digits pattern based} Reversal Direction </SelectItem>
                       <SelectItem value="over0_under9_1">🎯 Over 0 / Under 9 (1 tick)</SelectItem>
                       <SelectItem value="over0_under9_2">🎯 Over 0 / Under 9 (2 ticks)</SelectItem>
                       <SelectItem value="over0_under9_3">🎯 Over 0 / Under 9 (3 ticks)</SelectItem>
@@ -2141,7 +2140,6 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
-                       <SelectItem >🔢 Even/Odd {last digits pattern based} Reversal Direction </SelectItem>
                       <SelectItem value="odd_even_3">🔄 Even / Odd (3 ticks)</SelectItem>
                       <SelectItem value="odd_even_4">🔄 Even / Odd (4 ticks)</SelectItem>
                       <SelectItem value="odd_even_5">🔄 Even / Odd (5 ticks)</SelectItem>
@@ -2149,7 +2147,6 @@ export default function ProScannerBot() {
                       <SelectItem value="odd_even_7">🔄 Even / Odd (7 ticks)</SelectItem>
                       <SelectItem value="odd_even_8">🔄 Even / Odd (8 ticks)</SelectItem>
                       <SelectItem value="odd_even_9">🔄 Even / Odd (9 ticks)</SelectItem>
-                      <SelectItem >🔢 Oer/Under {last digits pattern based} Reversal Direction </SelectItem>
                       <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                       <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
                       <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
@@ -2157,15 +2154,14 @@ export default function ProScannerBot() {
                       <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
                       <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                       <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
-                      <SelectItem >🔢 Even/Odd {last digits pattern based} Same Direction </SelectItem>
                       <SelectItem value="same_direction_3">🔢 Even/Odd (3 ticks)</SelectItem>
-                      <SelectItem value="same_direction_4">🔢 Even/Odd (4 ticks)</SelectItem>
-                      <SelectItem value="same_direction_5">🔢 Even/Odd (5 ticks)</SelectItem>
-                      <SelectItem value="same_direction_6">🔢 Even/Odd (6 ticks)</SelectItem>
-                      <SelectItem value="same_direction_7">🔢 Even/Odd  (7 ticks)</SelectItem>
-                      <SelectItem value="same_direction_8">🔢 Even/Odd (8 ticks)</SelectItem>
-                      <SelectItem value="same_direction_9">🔢 Even/Odd (9 ticks)</SelectItem>
-                      <SelectItem value="same_direction_10">🔢 Even/Odd (10 ticks)</SelectItem>
+                      <SelectItem value="same_direction_4">🔢 Same Direction (4 ticks)</SelectItem>
+                      <SelectItem value="same_direction_5">🔢 Same Direction (5 ticks)</SelectItem>
+                      <SelectItem value="same_direction_6">🔢 Same Direction (6 ticks)</SelectItem>
+                      <SelectItem value="same_direction_7">🔢 Same Direction (7 ticks)</SelectItem>
+                      <SelectItem value="same_direction_8">🔢 Same Direction (8 ticks)</SelectItem>
+                      <SelectItem value="same_direction_9">🔢 Same Direction (9 ticks)</SelectItem>
+                      <SelectItem value="same_direction_10">🔢 Same Direction (10 ticks)</SelectItem>
                     </SelectContent>
                   </Select>
                   {m2RecoveryType !== 'disabled' && (
@@ -2219,13 +2215,13 @@ export default function ProScannerBot() {
             )}
           </div>
 
-          {/* Single Start/Stop Button */}
-          <div className="flex justify-center">
+          {/* Full Width Start/Stop Button */}
+          <div className="w-full">
             <button
               onClick={isRunning ? stopBot : startBot}
               disabled={!isRunning && (!isAuthorized || localBalance < parseFloat(stake))}
               className={`
-                relative w-[1000px] h-14 text-base font-bold rounded-xl transition-all duration-300 ease-out
+                relative w-full h-14 text-base font-bold rounded-xl transition-all duration-300 ease-out
                 overflow-hidden group
                 ${isRunning 
                   ? 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white shadow-lg shadow-red-500/30' 
@@ -2263,7 +2259,7 @@ export default function ProScannerBot() {
                     <svg className="w-5 h-5 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M8 5v14l11-7z" />
                     </svg>
-                    <span className="flex  items-center gap-1">
+                    <span className="flex items-center gap-1">
                       RUN BOT
                       <span className="relative flex h-2 w-2 ml-1">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
@@ -2276,58 +2272,58 @@ export default function ProScannerBot() {
             </button>
           </div>
 
-          {/* Market Scanner Patterns Container */}
-          <div className="flex justify-center">
-            <div className="w-[1000px] bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
-              <div className="p-3 border-b border-slate-700/50">
-                <div className="flex items-center gap-2">
-                  <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
-                    <Scan className="w-3 h-3 text-white" />
+          {/* Market Scanner Patterns Container - Full Width */}
+          <div className="w-full bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
+            <div className="p-3 border-b border-slate-700/50">
+              <div className="flex items-center gap-2">
+                <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
+                  <Scan className="w-3 h-3 text-white" />
+                </div>
+                <h3 className="text-xs font-bold text-slate-200">Market Scanner - Pattern Detection</h3>
+                {scannerActive && (
+                  <div className="flex items-center gap-1 ml-auto">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                    </span>
+                    <span className="text-[8px] text-emerald-400">Active</span>
                   </div>
-                  <h3 className="text-xs font-bold text-slate-200">Market Scanner - Pattern Detection</h3>
-                  {scannerActive && (
-                    <div className="flex items-center gap-1 ml-auto">
-                      <span className="relative flex h-1.5 w-1.5">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                      </span>
-                      <span className="text-[8px] text-emerald-400">Active</span>
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
-              
-              {/* Animated Dollar Icons Row */}
-              <div className="py-2 bg-slate-800/30 overflow-hidden relative">
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10">SCANNING</span>
-                </div>
-                <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite' }}>
-                  {[...Array(15)].map((_, i) => (
-                    <DollarSign 
-                      key={i}
-                      className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
-                      style={{ 
-                        animationDuration: `${0.5 + (i % 3) * 0.2}s`,
-                        filter: 'drop-shadow(0 0 1px currentColor)'
-                      }}
-                    />
-                  ))}
-                </div>
-                <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite', position: 'absolute', top: 0, left: '100%' }}>
-                  {[...Array(15)].map((_, i) => (
-                    <DollarSign 
-                      key={`dup-${i}`}
-                      className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
-                      style={{ 
-                        animationDuration: `${0.5 + (i % 3) * 0.2}s`,
-                        filter: 'drop-shadow(0 0 1px currentColor)'
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>  
-             {/* Detected Patterns Display */}
+            </div>
+            
+            {/* Animated Dollar Icons Row */}
+            <div className="py-2 bg-slate-800/30 overflow-hidden relative">
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10">SCANNING</span>
+              </div>
+              <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite' }}>
+                {[...Array(15)].map((_, i) => (
+                  <DollarSign 
+                    key={i}
+                    className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
+                    style={{ 
+                      animationDuration: `${0.5 + (i % 3) * 0.2}s`,
+                      filter: 'drop-shadow(0 0 1px currentColor)'
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite', position: 'absolute', top: 0, left: '100%' }}>
+                {[...Array(15)].map((_, i) => (
+                  <DollarSign 
+                    key={`dup-${i}`}
+                    className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
+                    style={{ 
+                      animationDuration: `${0.5 + (i % 3) * 0.2}s`,
+                      filter: 'drop-shadow(0 0 1px currentColor)'
+                    }}
+                  />
+                ))}
+              </div>
+            </div>  
+            
+              {/* Detected Patterns Display */}
               <div className="h-[60px] overflow-y-auto">
                 {detectedPatterns.length === 0 ? (
                   <div className="h-full flex items-center justify-center">
