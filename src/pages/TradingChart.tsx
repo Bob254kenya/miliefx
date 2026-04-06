@@ -2083,7 +2083,7 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
-                      <SelectItem >Oer/Under (last digits pattern based ) Reversal Direction</SelectItem>
+                      <SelectItem >Over/Under (last digits pattern based ) Reversal Direction</SelectItem>
                       <SelectItem value="over0_under9_1">🎯 Over 0 / Under 9 (1 tick)</SelectItem>
                       <SelectItem value="over0_under9_2">🎯 Over 0 / Under 9 (2 ticks)</SelectItem>
                       <SelectItem value="over0_under9_3">🎯 Over 0 / Under 9 (3 ticks)</SelectItem>
@@ -2108,7 +2108,7 @@ export default function ProScannerBot() {
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
                       </span>
-                      Scanning ALL markets for fresh patterns...
+                      Scanning ALL markets for fresh patterns...🚀🚀🚀🚀
                     </div>
                   )}
                 </div>
@@ -2129,7 +2129,7 @@ export default function ProScannerBot() {
 
               <div className="space-y-3">
                 <div>
-                  <label className="text-[11px] text-slate-400 mb-1.5 block font-semibold">Recovery Strategy</label>
+                  <label className="text-[11px] text-slate-400 mb-1.5 block font-semibold">Recovery Strategy 🔥</label>
                   <Select value={m2RecoveryType} onValueChange={(v: M2RecoveryType) => {
                     setM2RecoveryType(v);
                     if (v !== 'disabled') {
@@ -2284,14 +2284,14 @@ export default function ProScannerBot() {
                   <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
                     <Scan className="w-3 h-3 text-white" />
                   </div>
-                  <h3 className="text-xs font-bold text-slate-200">Market Scanner - Pattern Detection</h3>
+                  <h3 className="text-xs font-bold text-slate-200">Ramzfx 🔥 Market Scanner - Pattern Detection</h3>
                   {scannerActive && (
                     <div className="flex items-center gap-1 ml-auto">
                       <span className="relative flex h-1.5 w-1.5">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                         <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
                       </span>
-                      <span className="text-[8px] text-emerald-400">Active</span>
+                      <span className="text-[8px] text-emerald-400">Active🚀</span>
                     </div>
                   )}
                 </div>
@@ -2366,7 +2366,7 @@ export default function ProScannerBot() {
                               ))}
                             </div>
                             <Badge className="text-[7px] bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-1 py-0">
-                              FOUND
+                              FOUND 🤷‍♀️
                             </Badge>
                           </div>
                         </div>
@@ -2412,11 +2412,11 @@ export default function ProScannerBot() {
                 <div className="font-mono text-lg font-bold text-emerald-400">{winRate}%</div>
               </div>
               <div className="text-center bg-slate-800/30 rounded-lg p-2">
-                <div className="text-[9px] text-slate-400 mb-1">Wins</div>
+                <div className="text-[9px] text-slate-400 mb-1">Wins💵</div>
                 <div className="font-mono text-lg font-bold text-emerald-400">{wins}</div>
               </div>
               <div className="text-center bg-slate-800/30 rounded-lg p-2">
-                <div className="text-[9px] text-slate-400 mb-1">Losses</div>
+                <div className="text-[9px] text-slate-400 mb-1">Losses😒</div>
                 <div className="font-mono text-lg font-bold text-rose-400">{losses}</div>
               </div>
               <div className="text-center bg-slate-800/30 rounded-lg p-2">
@@ -2426,7 +2426,7 @@ export default function ProScannerBot() {
                 </div>
               </div>
               <div className="text-center bg-slate-800/30 rounded-lg p-2">
-                <div className="text-[9px] text-slate-400 mb-1">Net Profit</div>
+                <div className="text-[9px] text-slate-400 mb-1">Net 💲 Profit</div>
                 <div className={`font-mono text-lg font-bold ${netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                   {netProfit >= 0 ? '+' : ''}{netProfit.toFixed(2)}
                 </div>
