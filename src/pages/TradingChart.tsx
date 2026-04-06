@@ -147,7 +147,7 @@ const NotificationPopup = () => {
       // Auto-hide after 8 seconds
       const timeout = setTimeout(() => {
         handleClose();
-      }, 8000); // FIXED: Changed from 80000 to 8000
+      }, 8000);
       
       return () => clearTimeout(timeout);
     };
@@ -2219,13 +2219,13 @@ export default function ProScannerBot() {
             )}
           </div>
 
-          {/* Single Start/Stop Button */}
-          <div className="flex justify-center">
+          {/* Single Start/Stop Button - CHANGED TO WIDTH 100% */}
+          <div className="flex justify-center w-full">
             <button
               onClick={isRunning ? stopBot : startBot}
               disabled={!isRunning && (!isAuthorized || localBalance < parseFloat(stake))}
               className={`
-                relative w-[600px] h-14 text-base font-bold rounded-xl transition-all duration-300 ease-out
+                relative w-full h-14 text-base font-bold rounded-xl transition-all duration-300 ease-out
                 overflow-hidden group
                 ${isRunning 
                   ? 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white shadow-lg shadow-red-500/30' 
@@ -2263,7 +2263,7 @@ export default function ProScannerBot() {
                     <svg className="w-5 h-5 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M8 5v14l11-7z" />
                     </svg>
-                    <span className="flex  items-center gap-1">
+                    <span className="flex items-center gap-1">
                       RUN BOT
                       <span className="relative flex h-2 w-2 ml-1">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
@@ -2276,119 +2276,117 @@ export default function ProScannerBot() {
             </button>
           </div>
 
-          {/* Market Scanner Patterns Container */}
-          <div className="flex justify-center">
-            <div className="w-[1000px] bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
-              <div className="p-3 border-b border-slate-700/50">
-                <div className="flex items-center gap-2">
-                  <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
-                    <Scan className="w-3 h-3 text-white" />
-                  </div>
-                  <h3 className="text-xs font-bold text-slate-200">Ramzfx 🔥 Market Scanner - Pattern Detection</h3>
-                  {scannerActive && (
-                    <div className="flex items-center gap-1 ml-auto">
-                      <span className="relative flex h-1.5 w-1.5">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                      </span>
-                      <span className="text-[8px] text-emerald-400">Active🚀</span>
-                    </div>
-                  )}
+          {/* Market Scanner Patterns Container - CHANGED TO WIDTH 100% */}
+          <div className="w-full bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
+            <div className="p-3 border-b border-slate-700/50">
+              <div className="flex items-center gap-2">
+                <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
+                  <Scan className="w-3 h-3 text-white" />
                 </div>
-              </div>
-              
-              {/* Animated Dollar Icons Row */}
-              <div className="py-2 bg-slate-800/30 overflow-hidden relative">
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10">SCANNING</span>
-                </div>
-                <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite' }}>
-                  {[...Array(15)].map((_, i) => (
-                    <DollarSign 
-                      key={i}
-                      className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
-                      style={{ 
-                        animationDuration: `${0.5 + (i % 3) * 0.2}s`,
-                        filter: 'drop-shadow(0 0 1px currentColor)'
-                      }}
-                    />
-                  ))}
-                </div>
-                <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite', position: 'absolute', top: 0, left: '100%' }}>
-                  {[...Array(15)].map((_, i) => (
-                    <DollarSign 
-                      key={`dup-${i}`}
-                      className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
-                      style={{ 
-                        animationDuration: `${0.5 + (i % 3) * 0.2}s`,
-                        filter: 'drop-shadow(0 0 1px currentColor)'
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-              
-             {/* Detected Patterns Display */}
-              <div className="h-[60px] overflow-y-auto">
-                {detectedPatterns.length === 0 ? (
-                  <div className="h-full flex items-center justify-center">
-                    {/* Empty - no message shown until patterns found */}
-                  </div>
-                ) : (
-                  <div className="p-2 space-y-1.5">
-                    {detectedPatterns.map((pattern) => (
-                      <div 
-                        key={pattern.timestamp}
-                        className="bg-slate-800/50 rounded-lg p-2 border border-slate-700/50 animate-slideIn"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
-                              <DollarSign className="w-3 h-3 text-amber-400" />
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-mono text-[10px] font-bold text-slate-200">{pattern.symbol}</span>
-                                <Badge className="text-[7px] bg-slate-700/50 text-slate-300 px-1 py-0">{pattern.name}</Badge>
-                              </div>
-                              <div className="text-[8px] text-amber-400">{pattern.patternType}</div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <div className="flex gap-0.5">
-                              {pattern.digits.map((digit, i) => (
-                                <span 
-                                  key={i}
-                                  className="w-5 h-5 rounded bg-slate-700 flex items-center justify-center text-[9px] font-mono font-bold text-cyan-400"
-                                >
-                                  {digit}
-                                </span>
-                              ))}
-                            </div>
-                            <Badge className="text-[7px] bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-1 py-0">
-                              FOUND 🤷‍♀️
-                            </Badge>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                <h3 className="text-xs font-bold text-slate-200">Ramzfx 🔥 Market Scanner - Pattern Detection</h3>
+                {scannerActive && (
+                  <div className="flex items-center gap-1 ml-auto">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                    </span>
+                    <span className="text-[8px] text-emerald-400">Active🚀</span>
                   </div>
                 )}
               </div>
-              
-              {/* Scanning Animation Text */}
-              <div className="p-2 border-t border-slate-700/30">
-                <div className="flex items-center justify-between text-[8px] text-slate-500">
-                  <span className="flex items-center gap-1">
-                    <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
-                    {SCANNER_MARKETS.length} markets
-                  </span>
-                  <span className="font-mono text-[7px]">
-                    M1: {m1StrategyType !== 'disabled' ? getM1DisplayName(m1StrategyType).substring(0, 25) : 'OFF'} 
-                    {' | '}
-                    M2: {m2RecoveryType !== 'disabled' ? getM2DisplayName(m2RecoveryType).substring(0, 25) : 'OFF'}
-                  </span>
+            </div>
+            
+            {/* Animated Dollar Icons Row */}
+            <div className="py-2 bg-slate-800/30 overflow-hidden relative">
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10">SCANNING</span>
+              </div>
+              <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite' }}>
+                {[...Array(15)].map((_, i) => (
+                  <DollarSign 
+                    key={i}
+                    className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
+                    style={{ 
+                      animationDuration: `${0.5 + (i % 3) * 0.2}s`,
+                      filter: 'drop-shadow(0 0 1px currentColor)'
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite', position: 'absolute', top: 0, left: '100%' }}>
+                {[...Array(15)].map((_, i) => (
+                  <DollarSign 
+                    key={`dup-${i}`}
+                    className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
+                    style={{ 
+                      animationDuration: `${0.5 + (i % 3) * 0.2}s`,
+                      filter: 'drop-shadow(0 0 1px currentColor)'
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+            
+            {/* Detected Patterns Display */}
+            <div className="h-[60px] overflow-y-auto">
+              {detectedPatterns.length === 0 ? (
+                <div className="h-full flex items-center justify-center">
+                  {/* Empty - no message shown until patterns found */}
                 </div>
+              ) : (
+                <div className="p-2 space-y-1.5">
+                  {detectedPatterns.map((pattern) => (
+                    <div 
+                      key={pattern.timestamp}
+                      className="bg-slate-800/50 rounded-lg p-2 border border-slate-700/50 animate-slideIn"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
+                            <DollarSign className="w-3 h-3 text-amber-400" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-[10px] font-bold text-slate-200">{pattern.symbol}</span>
+                              <Badge className="text-[7px] bg-slate-700/50 text-slate-300 px-1 py-0">{pattern.name}</Badge>
+                            </div>
+                            <div className="text-[8px] text-amber-400">{pattern.patternType}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex gap-0.5">
+                            {pattern.digits.map((digit, i) => (
+                              <span 
+                                key={i}
+                                className="w-5 h-5 rounded bg-slate-700 flex items-center justify-center text-[9px] font-mono font-bold text-cyan-400"
+                              >
+                                {digit}
+                              </span>
+                            ))}
+                          </div>
+                          <Badge className="text-[7px] bg-emerald-500/20 text-emerald-400 border-emerald-500/30 px-1 py-0">
+                            FOUND 🤷‍♀️
+                          </Badge>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            {/* Scanning Animation Text */}
+            <div className="p-2 border-t border-slate-700/30">
+              <div className="flex items-center justify-between text-[8px] text-slate-500">
+                <span className="flex items-center gap-1">
+                  <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
+                  {SCANNER_MARKETS.length} markets
+                </span>
+                <span className="font-mono text-[7px]">
+                  M1: {m1StrategyType !== 'disabled' ? getM1DisplayName(m1StrategyType).substring(0, 25) : 'OFF'} 
+                  {' | '}
+                  M2: {m2RecoveryType !== 'disabled' ? getM2DisplayName(m2RecoveryType).substring(0, 25) : 'OFF'}
+                </span>
               </div>
             </div>
           </div>
