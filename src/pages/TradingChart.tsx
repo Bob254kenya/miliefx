@@ -1126,10 +1126,10 @@ export default function ProScannerBot() {
         const allEven = last3.every(d => d % 2 === 0);
         
         if (allOdd) {
-          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         if (allEven) {
-          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -1142,10 +1142,10 @@ export default function ProScannerBot() {
         const allEven = last4.every(d => d % 2 === 0);
         
         if (allOdd) {
-          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         if (allEven) {
-          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -1158,10 +1158,10 @@ export default function ProScannerBot() {
         const allEven = last5.every(d => d % 2 === 0);
         
         if (allOdd) {
-          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         if (allEven) {
-          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -1174,10 +1174,10 @@ export default function ProScannerBot() {
         const allEven = last6.every(d => d % 2 === 0);
         
         if (allOdd) {
-          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         if (allEven) {
-          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -1190,10 +1190,10 @@ export default function ProScannerBot() {
         const allEven = last7.every(d => d % 2 === 0);
         
         if (allOdd) {
-          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         if (allEven) {
-          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -1206,10 +1206,10 @@ export default function ProScannerBot() {
         const allEven = last8.every(d => d % 2 === 0);
         
         if (allOdd) {
-          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         if (allEven) {
-          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -1222,10 +1222,10 @@ export default function ProScannerBot() {
         const allEven = last9.every(d => d % 2 === 0);
         
         if (allOdd) {
-          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         if (allEven) {
-          return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
+          return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         return { matched: false };
       }
@@ -2312,7 +2312,7 @@ export default function ProScannerBot() {
                 </div>
               </div>
               
-              {/* Detected Patterns Display */}
+             {/* Detected Patterns Display */}
               <div className="h-[60px] overflow-y-auto">
                 {detectedPatterns.length === 0 ? (
                   <div className="h-full flex items-center justify-center">
