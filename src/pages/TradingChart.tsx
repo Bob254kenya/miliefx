@@ -2133,6 +2133,7 @@ export default function ProScannerBot() {
                       <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
                       <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                       <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
+                       <SelectItem>Same Direction </SelectItem>
                       <SelectItem value="even_odd_3">🔢 All Even → ODD / All Odd → EVEN (3 ticks)</SelectItem>
                       <SelectItem value="even_odd_4">🔢 All Even → ODD / All Odd → EVEN (4 ticks)</SelectItem>
                       <SelectItem value="even_odd_5">🔢 All Even → ODD / All Odd → EVEN (5 ticks)</SelectItem>
