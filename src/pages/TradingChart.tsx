@@ -440,7 +440,9 @@ const getEvenOddRecentDigits = (symbol: string, count: number): number[] => {
   return digits.slice(-count);
 };
 
-// Function to check Even/Odd pattern (completely independent)
+// FIXED: Function to check Even/Odd pattern - CORRECT LOGIC
+// If all digits are EVEN -> bet on ODD (DIGITODD)
+// If all digits are ODD -> bet on EVEN (DIGITEVEN)
 const checkEvenOddPattern = (symbol: string, tickLength: number): { matched: boolean; contractType?: string; patternDigits?: string } => {
   const digits = getEvenOddRecentDigits(symbol, tickLength);
   if (digits.length < tickLength) return { matched: false };
@@ -449,10 +451,10 @@ const checkEvenOddPattern = (symbol: string, tickLength: number): { matched: boo
   const allOdd = digits.every(d => d % 2 !== 0);
   
   if (allEven) {
-    return { matched: true, contractType: 'DIGITODD', patternDigits: digits.join(',') }; // DIGITODD means bet on ODD (since current is EVEN, next should be ODD)
+    return { matched: true, contractType: 'DIGITODD', patternDigits: digits.join(',') };
   }
   if (allOdd) {
-    return { matched: true, contractType: 'DIGITEVEN', patternDigits: digits.join(',') }; // DIGITEVEN means bet on EVEN (since current is ODD, next should be EVEN)
+    return { matched: true, contractType: 'DIGITEVEN', patternDigits: digits.join(',') };
   }
   
   return { matched: false };
@@ -1106,7 +1108,7 @@ export default function ProScannerBot() {
     }
   }, [m1StrategyType, isDataFresh, getRecentDigits]);
 
-  // M2 Pattern Checker - FIXED to include new Even/Odd strategy
+  // M2 Pattern Checker - FIXED to include new Even/Odd strategy with correct logic
   const checkM2Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string; patternDigits?: string } => {
     if (!isDataFresh(symbol)) {
       return { matched: false };
@@ -1341,7 +1343,8 @@ export default function ProScannerBot() {
       }
       
       // ============================================
-      // NEW INDEPENDENT EVEN/ODD STRATEGY CASES
+      // FIXED INDEPENDENT EVEN/ODD STRATEGY CASES
+      // All Even → ODD (DIGITODD) / All Odd → EVEN (DIGITEVEN)
       // ============================================
       case 'even_odd_3':
       case 'even_odd_4':
@@ -1360,9 +1363,11 @@ export default function ProScannerBot() {
         const allOdd = lastNDigits.every(d => d % 2 !== 0);
         
         if (allEven) {
+          // All digits are EVEN -> bet on ODD
           return { matched: true, contractType: 'DIGITODD', patternDigits: patternKey };
         }
         if (allOdd) {
+          // All digits are ODD -> bet on EVEN
           return { matched: true, contractType: 'DIGITEVEN', patternDigits: patternKey };
         }
         return { matched: false };
@@ -2133,7 +2138,6 @@ export default function ProScannerBot() {
                       <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
                       <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                       <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
-                       <SelectItem>Same Direction </SelectItem>
                       <SelectItem value="even_odd_3">🔢 All Even → ODD / All Odd → EVEN (3 ticks)</SelectItem>
                       <SelectItem value="even_odd_4">🔢 All Even → ODD / All Odd → EVEN (4 ticks)</SelectItem>
                       <SelectItem value="even_odd_5">🔢 All Even → ODD / All Odd → EVEN (5 ticks)</SelectItem>
