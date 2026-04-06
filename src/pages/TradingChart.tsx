@@ -2034,7 +2034,7 @@ export default function ProScannerBot() {
                   <h1 className="text-lg font-bold bg-gradient-to-r from-cyan-400 to-blue-400 bg-clip-text text-transparent">
                     Ramzfx Ultimate 2026 Bot
                   </h1>
-                  <p className="text-xs text-slate-400">Ramzfx Advanced Market Scanning & Recovery System</p>
+                  <p className="text-xs text-slate-400">RamzFX Ultimate Market Scanner & Recovery Suite🚀🔥🚀</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -2061,7 +2061,7 @@ export default function ProScannerBot() {
             <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-emerald-500/30 rounded-xl p-4 shadow-xl">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-base font-bold text-emerald-400 flex items-center gap-2">
-                  <Home className="w-4 h-4" /> Market 1 Bot
+                  <Home className="w-4 h-4" /> Market 1 Bot🚀
                 </h3>
                 <div className="flex items-center gap-2">
                   {currentMarket === 1 && isRunning && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
@@ -2119,7 +2119,7 @@ export default function ProScannerBot() {
             <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-fuchsia-500/30 rounded-xl p-4 shadow-xl">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-base font-bold text-fuchsia-400 flex items-center gap-2">
-                  <RefreshCw className="w-4 h-4" /> Market 2 — Recovery Bot
+                  <RefreshCw className="w-4 h-4" /> Market 2 — Recovery Bot🚀
                 </h3>
                 <div className="flex items-center gap-2">
                   {currentMarket === 2 && isRunning && <span className="w-2 h-2 rounded-full bg-fuchsia-400 animate-pulse" />}
@@ -2141,7 +2141,7 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
-                      <SelectItem >🔢Even/Odd (last digits pattern based ) Reversal Direction</SelectItem>
+                      <SelectItem >🔢Even/Odd (last digits pattern based ) Reversal Direction example (if last 3 ticks are odd takes even trade)</SelectItem>
                       <SelectItem value="odd_even_3">🔄 Even / Odd (3 ticks)</SelectItem>
                       <SelectItem value="odd_even_4">🔄 Even / Odd (4 ticks)</SelectItem>
                       <SelectItem value="odd_even_5">🔄 Even / Odd (5 ticks)</SelectItem>
@@ -2149,7 +2149,7 @@ export default function ProScannerBot() {
                       <SelectItem value="odd_even_7">🔄 Even / Odd (7 ticks)</SelectItem>
                       <SelectItem value="odd_even_8">🔄 Even / Odd (8 ticks)</SelectItem>
                       <SelectItem value="odd_even_9">🔄 Even / Odd (9 ticks)</SelectItem>
-                      <SelectItem > Over/Under (last digits pattern based ) Reversal Direction</SelectItem>
+                      <SelectItem > Over/Under (last digits pattern based ) Reversal Direction example (if last 3 ticks are under takes over trade)</SelectItem>
                       <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                       <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
                       <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
@@ -2157,7 +2157,7 @@ export default function ProScannerBot() {
                       <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
                       <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                       <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
-                      <SelectItem >🔢Even/Odd (last digits pattern based ) Same Direction</SelectItem>
+                      <SelectItem >Even/Odd (last digits pattern based ) Same Direction example (if last 3 ticks are odd takes odd trade)</SelectItem>
                       <SelectItem value="same_direction_3">🔢 Even/Odd (3 ticks)</SelectItem>
                       <SelectItem value="same_direction_4">🔢  Even/Odd (4 ticks)</SelectItem>
                       <SelectItem value="same_direction_5">🔢  Even/Odd (5 ticks)</SelectItem>
