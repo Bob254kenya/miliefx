@@ -2083,6 +2083,7 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
+                      <SelectItem >Oer/Under (last digits pattern based ) Reversal Direction</SelectItem>
                       <SelectItem value="over0_under9_1">🎯 Over 0 / Under 9 (1 tick)</SelectItem>
                       <SelectItem value="over0_under9_2">🎯 Over 0 / Under 9 (2 ticks)</SelectItem>
                       <SelectItem value="over0_under9_3">🎯 Over 0 / Under 9 (3 ticks)</SelectItem>
@@ -2140,6 +2141,7 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
+                      <SelectItem >🔢Even/Odd (last digits pattern based ) Reversal Direction</SelectItem>
                       <SelectItem value="odd_even_3">🔄 Even / Odd (3 ticks)</SelectItem>
                       <SelectItem value="odd_even_4">🔄 Even / Odd (4 ticks)</SelectItem>
                       <SelectItem value="odd_even_5">🔄 Even / Odd (5 ticks)</SelectItem>
@@ -2147,6 +2149,7 @@ export default function ProScannerBot() {
                       <SelectItem value="odd_even_7">🔄 Even / Odd (7 ticks)</SelectItem>
                       <SelectItem value="odd_even_8">🔄 Even / Odd (8 ticks)</SelectItem>
                       <SelectItem value="odd_even_9">🔄 Even / Odd (9 ticks)</SelectItem>
+                      <SelectItem > Over/Under (last digits pattern based ) Reversal Direction</SelectItem>
                       <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                       <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
                       <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
@@ -2154,14 +2157,15 @@ export default function ProScannerBot() {
                       <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
                       <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                       <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
-                      <SelectItem value="same_direction_3">🔢 Same Direction (3 ticks)</SelectItem>
-                      <SelectItem value="same_direction_4">🔢 Same Direction (4 ticks)</SelectItem>
-                      <SelectItem value="same_direction_5">🔢 Same Direction (5 ticks)</SelectItem>
-                      <SelectItem value="same_direction_6">🔢 Same Direction (6 ticks)</SelectItem>
-                      <SelectItem value="same_direction_7">🔢 Same Direction (7 ticks)</SelectItem>
-                      <SelectItem value="same_direction_8">🔢 Same Direction (8 ticks)</SelectItem>
-                      <SelectItem value="same_direction_9">🔢 Same Direction (9 ticks)</SelectItem>
-                      <SelectItem value="same_direction_10">🔢 Same Direction (10 ticks)</SelectItem>
+                      <SelectItem >🔢Even/Odd (last digits pattern based ) Same Direction</SelectItem>
+                      <SelectItem value="same_direction_3">🔢 Even/Odd (3 ticks)</SelectItem>
+                      <SelectItem value="same_direction_4">🔢  Even/Odd (4 ticks)</SelectItem>
+                      <SelectItem value="same_direction_5">🔢  Even/Odd (5 ticks)</SelectItem>
+                      <SelectItem value="same_direction_6">🔢  Even/Odd (6 ticks)</SelectItem>
+                      <SelectItem value="same_direction_7">🔢  Even/Odd (7 ticks)</SelectItem>
+                      <SelectItem value="same_direction_8">🔢  Even/Odd (8 ticks)</SelectItem>
+                      <SelectItem value="same_direction_9">🔢  Even/Odd (9 ticks)</SelectItem>
+                      <SelectItem value="same_direction_10">🔢  Even/Odd (10 ticks)</SelectItem>
                     </SelectContent>
                   </Select>
                   {m2RecoveryType !== 'disabled' && (
