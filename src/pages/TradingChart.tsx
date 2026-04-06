@@ -2142,14 +2142,14 @@ export default function ProScannerBot() {
                       <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                       <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
                       <SelectItem> Same Direction (if the last 3 even trade even) </SelectItem>
-                      <SelectItem value="same_direction_3">🔢 Same Direction (EVEN/ODD - 3 ticks)</SelectItem>
-                      <SelectItem value="same_direction_4">🔢 Same Direction (EVEN/ODD - 4 ticks)</SelectItem>
-                      <SelectItem value="same_direction_5">🔢 Same Direction (EVEN/ODD - 5 ticks)</SelectItem>
-                      <SelectItem value="same_direction_6">🔢 Same Direction (EVEN/ODD - 6 ticks)</SelectItem>
-                      <SelectItem value="same_direction_7">🔢 Same Direction (EVEN/ODD - 7 ticks)</SelectItem>
-                      <SelectItem value="same_direction_8">🔢 Same Direction (EVEN/ODD - 8 ticks)</SelectItem>
-                      <SelectItem value="same_direction_9">🔢 Same Direction (EVEN/ODD - 9 ticks)</SelectItem>
-                      <SelectItem value="same_direction_10">🔢 Same Direction (EVEN/ODD - 10 ticks)</SelectItem>
+                      <SelectItem value="same_direction_3">🔢 Same Direction (3 ticks)</SelectItem>
+                      <SelectItem value="same_direction_4">🔢 Same Direction (4 ticks)</SelectItem>
+                      <SelectItem value="same_direction_5">🔢 Same Direction (5 ticks)</SelectItem>
+                      <SelectItem value="same_direction_6">🔢 Same Direction (6 ticks)</SelectItem>
+                      <SelectItem value="same_direction_7">🔢 Same Direction (7 ticks)</SelectItem>
+                      <SelectItem value="same_direction_8">🔢 Same Direction (8 ticks)</SelectItem>
+                      <SelectItem value="same_direction_9">🔢 Same Direction (9 ticks)</SelectItem>
+                      <SelectItem value="same_direction_10">🔢 Same Direction (10 ticks)</SelectItem>
                     </SelectContent>
                   </Select>
                   {m2RecoveryType !== 'disabled' && (
@@ -2451,7 +2451,7 @@ export default function ProScannerBot() {
                     <tr>
                       <td colSpan={8} className="text-center text-slate-500 py-12">
                         No trades yet — configure and start the bot
-                      </td>
+                       </td>
                     </tr>
                   ) : logEntries.map(e => (
                     <tr key={e.id} className={`border-t border-slate-700/30 hover:bg-slate-800/30 transition-colors ${
@@ -2487,7 +2487,7 @@ export default function ProScannerBot() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+               </table>
             </div>
           </div>
         </div>
