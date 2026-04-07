@@ -51,29 +51,323 @@ const FREE_BOT_TEMPLATES: FreeBotTemplate[] = [
     config: {"version":1,"botName":"UNDER 7 BOT","m1":{"enabled":false,"symbol":"1HZ100V","contract":"DIGITOVER","barrier":"1","hookEnabled":false,"virtualLossCount":"1","realCount":"1"},"m2":{"enabled":true,"symbol":"R_100","contract":"DIGITUNDER","barrier":"7","hookEnabled":false,"virtualLossCount":"3","realCount":"2"},"risk":{"stake":"0.5","martingaleOn":true,"martingaleMultiplier":"2.0","martingaleMaxSteps":"5","takeProfit":"10","stopLoss":"5"},"strategy":{"m1Enabled":false,"m2Enabled":true,"m1Mode":"pattern","m2Mode":"digit","m1Pattern":"","m1DigitCondition":"==","m1DigitCompare":"5","m1DigitWindow":"3","m2Pattern":"EEEEEOEO","m2DigitCondition":">=","m2DigitCompare":"8","m2DigitWindow":"3"},"scanner":{"active":true},"turbo":{"enabled":true}},
     description: 'Under 7 digit strategy on Vol 100. Enters when last 3 digits are ≥ 8. Great reversal setup.',
   },
-  // NEW BOTS ADDED BELOW
+  // NEW BOTS - Fixed to match BotConfig type
   {
-    config: {"version":1,"botName":"Over 1 recovery over 5 risk management bot","m1":{"enabled":true,"symbol":"R_10","contract":"DIGITOVER","barrier":"1","hookEnabled":true,"virtualLossCount":"1","realCount":"1"},"m2":{"enabled":true,"symbol":"1HZ10V","contract":"DIGITOVER","barrier":"5","hookEnabled":true,"virtualLossCount":"3","realCount":"3"},"risk":{"stake":"0.35","martingaleOn":true,"martingaleMultiplier":"1.5","martingaleMaxSteps":"5","takeProfit":"2.5","stopLoss":"50"},"strategy":{"m1Enabled":false,"m2Enabled":false,"m1Mode":"pattern","m2Mode":"pattern","m1Pattern":"","m1DigitCondition":"==","m1DigitCompare":"5","m1DigitWindow":"3","m2Pattern":"","m2DigitCondition":"==","m2DigitCompare":"5","m2DigitWindow":"3"},"scanner":{"active":false},"turbo":{"enabled":true}},
+    config: {
+      version: 1,
+      botName: "Over 1 recovery over 5 risk management bot",
+      m1: {
+        enabled: true,
+        symbol: "R_10",
+        contract: "DIGITOVER",
+        barrier: "1",
+        hookEnabled: true,
+        virtualLossCount: "1",
+        realCount: "1"
+      },
+      m2: {
+        enabled: true,
+        symbol: "1HZ10V",
+        contract: "DIGITOVER",
+        barrier: "5",
+        hookEnabled: true,
+        virtualLossCount: "3",
+        realCount: "3"
+      },
+      risk: {
+        stake: "0.35",
+        martingaleOn: true,
+        martingaleMultiplier: "1.5",
+        martingaleMaxSteps: "5",
+        takeProfit: "2.5",
+        stopLoss: "50"
+      },
+      strategy: {
+        m1Enabled: false,
+        m2Enabled: false,
+        m1Mode: "pattern",
+        m2Mode: "pattern",
+        m1Pattern: "",
+        m1DigitCondition: "==",
+        m1DigitCompare: "5",
+        m1DigitWindow: "3",
+        m2Pattern: "",
+        m2DigitCondition: "==",
+        m2DigitCompare: "5",
+        m2DigitWindow: "3"
+      },
+      scanner: {
+        active: false
+      },
+      turbo: {
+        enabled: true
+      }
+    },
     description: 'Risk-managed bot trading Over 1 on R10 with recovery Over 5 on V10. Features 1.5x martingale with 2.5 TP and 50 SL.',
   },
   {
-    config: {"version":1,"botName":"RAMZ ULTIMATE EVEN BOT","m1":{"enabled":true,"symbol":"R_100","contract":"DIGITEVEN","barrier":"5","hookEnabled":false,"virtualLossCount":"3","realCount":"2"},"m2":{"enabled":true,"symbol":"R_50","contract":"DIGITEVEN","barrier":"5","hookEnabled":false,"virtualLossCount":"3","realCount":"2"},"risk":{"stake":"0.6","martingaleOn":true,"martingaleMultiplier":"2.0","martingaleMaxSteps":"5","takeProfit":"5","stopLoss":"30"},"strategy":{"m1Enabled":true,"m2Enabled":true,"m1Mode":"pattern","m2Mode":"pattern","m1Pattern":"OOO","m1DigitCondition":"==","m1DigitCompare":"5","m1DigitWindow":"3","m2Pattern":"EOEOEEE","m2DigitCondition":"==","m2DigitCompare":"5","m2DigitWindow":"3"},"scanner":{"active":true},"turbo":{"enabled":false}},
+    config: {
+      version: 1,
+      botName: "RAMZ ULTIMATE EVEN BOT",
+      m1: {
+        enabled: true,
+        symbol: "R_100",
+        contract: "DIGITEVEN",
+        barrier: "5",
+        hookEnabled: false,
+        virtualLossCount: "3",
+        realCount: "2"
+      },
+      m2: {
+        enabled: true,
+        symbol: "R_50",
+        contract: "DIGITEVEN",
+        barrier: "5",
+        hookEnabled: false,
+        virtualLossCount: "3",
+        realCount: "2"
+      },
+      risk: {
+        stake: "0.6",
+        martingaleOn: true,
+        martingaleMultiplier: "2.0",
+        martingaleMaxSteps: "5",
+        takeProfit: "5",
+        stopLoss: "30"
+      },
+      strategy: {
+        m1Enabled: true,
+        m2Enabled: true,
+        m1Mode: "pattern",
+        m2Mode: "pattern",
+        m1Pattern: "OOO",
+        m1DigitCondition: "==",
+        m1DigitCompare: "5",
+        m1DigitWindow: "3",
+        m2Pattern: "EOEOEEE",
+        m2DigitCondition: "==",
+        m2DigitCompare: "5",
+        m2DigitWindow: "3"
+      },
+      scanner: {
+        active: true
+      },
+      turbo: {
+        enabled: false
+      }
+    },
     description: 'Ultimate Even bot scanning R100 & R50. Uses OOO pattern on M1 and EOEOEEE on M2 with $0.6 stake.',
   },
   {
-    config: {"version":1,"botName":"Over 1 Recovery Odd bot 2026","m1":{"enabled":true,"symbol":"1HZ30V","contract":"DIGITOVER","barrier":"1","hookEnabled":true,"virtualLossCount":"2","realCount":"1"},"m2":{"enabled":true,"symbol":"1HZ100V","contract":"DIGITODD","barrier":"","hookEnabled":true,"virtualLossCount":"3","realCount":"3"},"risk":{"stake":"1","martingaleOn":true,"martingaleMultiplier":"2.0","martingaleMaxSteps":"5","takeProfit":"5","stopLoss":"30"},"strategy":{"m1Enabled":false,"m2Enabled":false,"m1Mode":"pattern","m2Mode":"pattern","m1Pattern":"","m1DigitCondition":"==","m1DigitCompare":"5","m1DigitWindow":"3","m2Pattern":"","m2DigitCondition":"==","m2DigitCompare":"5","m2DigitWindow":"3"},"scanner":{"active":true},"turbo":{"enabled":false}},
+    config: {
+      version: 1,
+      botName: "Over 1 Recovery Odd bot 2026",
+      m1: {
+        enabled: true,
+        symbol: "1HZ30V",
+        contract: "DIGITOVER",
+        barrier: "1",
+        hookEnabled: true,
+        virtualLossCount: "2",
+        realCount: "1"
+      },
+      m2: {
+        enabled: true,
+        symbol: "1HZ100V",
+        contract: "DIGITODD",
+        barrier: "",
+        hookEnabled: true,
+        virtualLossCount: "3",
+        realCount: "3"
+      },
+      risk: {
+        stake: "1",
+        martingaleOn: true,
+        martingaleMultiplier: "2.0",
+        martingaleMaxSteps: "5",
+        takeProfit: "5",
+        stopLoss: "30"
+      },
+      strategy: {
+        m1Enabled: false,
+        m2Enabled: false,
+        m1Mode: "pattern",
+        m2Mode: "pattern",
+        m1Pattern: "",
+        m1DigitCondition: "==",
+        m1DigitCompare: "5",
+        m1DigitWindow: "3",
+        m2Pattern: "",
+        m2DigitCondition: "==",
+        m2DigitCompare: "5",
+        m2DigitWindow: "3"
+      },
+      scanner: {
+        active: true
+      },
+      turbo: {
+        enabled: false
+      }
+    },
     description: 'Recovery bot trading Over 1 on V30 and switching to Odd on V100. Active scanner with $1 stake.',
   },
   {
-    config: {"version":1,"botName":"Over 1 under 8 bot 2026","m1":{"enabled":true,"symbol":"1HZ30V","contract":"DIGITOVER","barrier":"1","hookEnabled":true,"virtualLossCount":"2","realCount":"1"},"m2":{"enabled":true,"symbol":"JD10","contract":"DIGITUNDER","barrier":"8","hookEnabled":true,"virtualLossCount":"2","realCount":"1"},"risk":{"stake":"1","martingaleOn":false,"martingaleMultiplier":"2.0","martingaleMaxSteps":"5","takeProfit":"5","stopLoss":"30"},"strategy":{"m1Enabled":false,"m2Enabled":false,"m1Mode":"pattern","m2Mode":"pattern","m1Pattern":"","m1DigitCondition":"==","m1DigitCompare":"5","m1DigitWindow":"3","m2Pattern":"","m2DigitCondition":"==","m2DigitCompare":"5","m2DigitWindow":"3"},"scanner":{"active":true},"turbo":{"enabled":false}},
+    config: {
+      version: 1,
+      botName: "Over 1 under 8 bot 2026",
+      m1: {
+        enabled: true,
+        symbol: "1HZ30V",
+        contract: "DIGITOVER",
+        barrier: "1",
+        hookEnabled: true,
+        virtualLossCount: "2",
+        realCount: "1"
+      },
+      m2: {
+        enabled: true,
+        symbol: "JD10",
+        contract: "DIGITUNDER",
+        barrier: "8",
+        hookEnabled: true,
+        virtualLossCount: "2",
+        realCount: "1"
+      },
+      risk: {
+        stake: "1",
+        martingaleOn: false,
+        martingaleMultiplier: "2.0",
+        martingaleMaxSteps: "5",
+        takeProfit: "5",
+        stopLoss: "30"
+      },
+      strategy: {
+        m1Enabled: false,
+        m2Enabled: false,
+        m1Mode: "pattern",
+        m2Mode: "pattern",
+        m1Pattern: "",
+        m1DigitCondition: "==",
+        m1DigitCompare: "5",
+        m1DigitWindow: "3",
+        m2Pattern: "",
+        m2DigitCondition: "==",
+        m2DigitCompare: "5",
+        m2DigitWindow: "3"
+      },
+      scanner: {
+        active: true
+      },
+      turbo: {
+        enabled: false
+      }
+    },
     description: 'Dual-market bot trading Over 1 on V30 and Under 8 on JD10. Martingale disabled, scanner active.',
   },
   {
-    config: {"version":1,"botName":"OVER 2 BOT Recovery Over 4","m1":{"enabled":true,"symbol":"1HZ100V","contract":"DIGITOVER","barrier":"1","hookEnabled":true,"virtualLossCount":"1","realCount":"1"},"m2":{"enabled":false,"symbol":"1HZ75V","contract":"DIGITOVER","barrier":"4","hookEnabled":true,"virtualLossCount":"3","realCount":"3"},"risk":{"stake":"0.5","martingaleOn":true,"martingaleMultiplier":"2.0","martingaleMaxSteps":"5","takeProfit":"10","stopLoss":"5"},"strategy":{"m1Enabled":false,"m2Enabled":false,"m1Mode":"pattern","m2Mode":"digit","m1Pattern":"","m1DigitCondition":"==","m1DigitCompare":"5","m1DigitWindow":"3","m2Pattern":"EEEEEOEO","m2DigitCondition":"<=","m2DigitCompare":"2","m2DigitWindow":"4"},"scanner":{"active":true},"turbo":{"enabled":true}},
+    config: {
+      version: 1,
+      botName: "OVER 2 BOT Recovery Over 4",
+      m1: {
+        enabled: true,
+        symbol: "1HZ100V",
+        contract: "DIGITOVER",
+        barrier: "1",
+        hookEnabled: true,
+        virtualLossCount: "1",
+        realCount: "1"
+      },
+      m2: {
+        enabled: false,
+        symbol: "1HZ75V",
+        contract: "DIGITOVER",
+        barrier: "4",
+        hookEnabled: true,
+        virtualLossCount: "3",
+        realCount: "3"
+      },
+      risk: {
+        stake: "0.5",
+        martingaleOn: true,
+        martingaleMultiplier: "2.0",
+        martingaleMaxSteps: "5",
+        takeProfit: "10",
+        stopLoss: "5"
+      },
+      strategy: {
+        m1Enabled: false,
+        m2Enabled: false,
+        m1Mode: "pattern",
+        m2Mode: "digit",
+        m1Pattern: "",
+        m1DigitCondition: "==",
+        m1DigitCompare: "5",
+        m1DigitWindow: "3",
+        m2Pattern: "EEEEEOEO",
+        m2DigitCondition: "<=",
+        m2DigitCompare: "2",
+        m2DigitWindow: "4"
+      },
+      scanner: {
+        active: true
+      },
+      turbo: {
+        enabled: true
+      }
+    },
     description: 'Recovery bot with Over 1 on V100 and digit strategy on V75. Turbo enabled for fast execution.',
   },
   {
-    config: {"version":1,"botName":"Even Odd Bot (EEEEEOO)","m1":{"enabled":true,"symbol":"R_100","contract":"DIGITODD","barrier":"1","hookEnabled":true,"virtualLossCount":"3","realCount":"1"},"m2":{"enabled":true,"symbol":"1HZ75V","contract":"DIGITEVEN","barrier":"4","hookEnabled":false,"virtualLossCount":"3","realCount":"3"},"risk":{"stake":"0.5","martingaleOn":true,"martingaleMultiplier":"2.0","martingaleMaxSteps":"5","takeProfit":"10","stopLoss":"5"},"strategy":{"m1Enabled":false,"m2Enabled":true,"m1Mode":"pattern","m2Mode":"pattern","m1Pattern":"","m1DigitCondition":"==","m1DigitCompare":"5","m1DigitWindow":"3","m2Pattern":"EEEEEOO","m2DigitCondition":"<=","m2DigitCompare":"2","m2DigitWindow":"4"},"scanner":{"active":true},"turbo":{"enabled":true}},
+    config: {
+      version: 1,
+      botName: "Even Odd Bot (EEEEEOO)",
+      m1: {
+        enabled: true,
+        symbol: "R_100",
+        contract: "DIGITODD",
+        barrier: "1",
+        hookEnabled: true,
+        virtualLossCount: "3",
+        realCount: "1"
+      },
+      m2: {
+        enabled: true,
+        symbol: "1HZ75V",
+        contract: "DIGITEVEN",
+        barrier: "4",
+        hookEnabled: false,
+        virtualLossCount: "3",
+        realCount: "3"
+      },
+      risk: {
+        stake: "0.5",
+        martingaleOn: true,
+        martingaleMultiplier: "2.0",
+        martingaleMaxSteps: "5",
+        takeProfit: "10",
+        stopLoss: "5"
+      },
+      strategy: {
+        m1Enabled: false,
+        m2Enabled: true,
+        m1Mode: "pattern",
+        m2Mode: "pattern",
+        m1Pattern: "",
+        m1DigitCondition: "==",
+        m1DigitCompare: "5",
+        m1DigitWindow: "3",
+        m2Pattern: "EEEEEOO",
+        m2DigitCondition: "<=",
+        m2DigitCompare: "2",
+        m2DigitWindow: "4"
+      },
+      scanner: {
+        active: true
+      },
+      turbo: {
+        enabled: true
+      }
+    },
     description: 'Even/Odd hybrid bot. Trades Odd on R100 with recovery on Even V75 using EEEEEOO pattern.',
   },
 ];
@@ -161,7 +455,7 @@ export default function FreeBotTemplatesPage() {
 
             {/* Animated shine effect on hover */}
             <motion.div
-              className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent"
+              className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none"
               whileHover={{ x: "200%", transition: { duration: 0.6, ease: "easeInOut" } }}
             />
 
