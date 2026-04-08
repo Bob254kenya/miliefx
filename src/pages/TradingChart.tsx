@@ -135,6 +135,16 @@ const notificationStyles = `
   50% { opacity: 0.7; transform: scale(1.05); background-color: rgba(16, 185, 129, 0.3); }
 }
 
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes scrollMarkets {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
+}
+
 .animate-fadeIn {
   animation: fadeIn 0.3s ease-out forwards;
 }
@@ -190,6 +200,18 @@ const notificationStyles = `
 
 .animate-blink-green {
   animation: blinkGreen 0.5s ease-in-out 3;
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}
+
+.animate-scroll-markets {
+  animation: scrollMarkets 20s linear infinite;
+}
+
+.animate-scroll-markets-slow {
+  animation: scrollMarkets 30s linear infinite;
 }
 `;
 
@@ -457,6 +479,24 @@ interface DetectedPattern {
   last15Ticks?: number[];
 }
 
+// Market statistics for continuous scanning
+interface MarketStats {
+  symbol: string;
+  name: string;
+  color: string;
+  evenCount: number;
+  oddCount: number;
+  over4Count: number;
+  under5Count: number;
+  totalTicks: number;
+  evenPercentage: number;
+  oddPercentage: number;
+  over4Percentage: number;
+  under5Percentage: number;
+  strength: number;
+  lastUpdate: number;
+}
+
 // Constants
 const MAX_SCAN_ATTEMPTS = 100;
 const SCAN_INTERVAL = 100;
@@ -465,9 +505,11 @@ const DATA_STALENESS_THRESHOLD = 10000;
 const HEARTBEAT_INTERVAL = 30000;
 const DEBUG = true;
 const BALANCE_SYNC_INTERVAL = 1000;
-const IMMEDIATE_BALANCE_SYNC_DELAY = 50; // 50ms delay for immediate balance sync after trade
-const MARKET_SCROLL_INTERVAL = 10000; // 10 seconds for market scrolling animation (increased from 1s)
-const PATTERN_DISPLAY_DURATION = 4000; // 4 seconds to show pattern before clearing
+const IMMEDIATE_BALANCE_SYNC_DELAY = 50;
+const MARKET_SCROLL_INTERVAL = 10000;
+const PATTERN_DISPLAY_DURATION = 4000;
+const STATS_UPDATE_INTERVAL = 1000; // Update stats every second
+const STRONG_MARKET_THRESHOLD = 55; // Market considered strong if percentage > 55%
 
 // Helper function
 const logDebug = (...args: any[]) => {
@@ -492,14 +534,9 @@ function waitForNextTick(symbol: string): Promise<{ quote: number }> {
   });
 }
 
-// ============================================
-// FIXED SAME DIRECTION STRATEGY FOR MARKET 2
-// ============================================
-
-// Independent tick storage for Same Direction strategy (completely separate from existing tickMapRef)
+// Independent tick storage for Same Direction strategy
 const sameDirectionTickMapRef = new Map<string, number[]>();
 
-// Function to update independent tick storage
 const updateSameDirectionTickStorage = (symbol: string, digit: number) => {
   let arr = sameDirectionTickMapRef.get(symbol);
   if (!arr) {
@@ -507,28 +544,19 @@ const updateSameDirectionTickStorage = (symbol: string, digit: number) => {
     sameDirectionTickMapRef.set(symbol, arr);
   }
   arr.push(digit);
-  // Keep only last 15 digits (for displaying last 15 ticks)
   if (arr.length > 15) arr.shift();
 };
 
-// Function to get recent digits from independent storage
 const getSameDirectionRecentDigits = (symbol: string, count: number): number[] => {
   const digits = sameDirectionTickMapRef.get(symbol) || [];
   return digits.slice(-count);
 };
 
-// Function to get last 15 ticks for a symbol
 const getLast15Ticks = (symbol: string): number[] => {
   const digits = sameDirectionTickMapRef.get(symbol) || [];
   return digits.slice(-15);
 };
 
-/**
- * FIXED: Reusable function to get Same Direction trading signal
- * @param ticks - Array of digit numbers (0-9)
- * @param requiredTicks - Number of ticks to analyze (3-10)
- * @returns 'even' | 'odd' | null
- */
 const getSameDirectionSignal = (ticks: number[], requiredTicks: number): 'even' | 'odd' | null => {
   if (ticks.length < requiredTicks) return null;
   
@@ -541,7 +569,6 @@ const getSameDirectionSignal = (ticks: number[], requiredTicks: number): 'even' 
   return null;
 };
 
-// FIXED: Function to check Same Direction pattern with DYNAMIC tick length
 const checkSameDirectionPattern = (symbol: string, requiredTicks: number): { matched: boolean; contractType?: string; patternDigits?: string } => {
   const digits = getSameDirectionRecentDigits(symbol, requiredTicks);
   if (digits.length < requiredTicks) return { matched: false };
@@ -558,9 +585,7 @@ const checkSameDirectionPattern = (symbol: string, requiredTicks: number): { mat
   return { matched: false };
 };
 
-// Function to find Same Direction match across all markets based on the SELECTED strategy
 const findSameDirectionMatch = (selectedStrategy: M2RecoveryType): { symbol: string; contractType: string; tickLength: number; patternDigits: string; last15Ticks: number[] } | null => {
-  // Extract the required tick length from the strategy name
   const tickLength = parseInt(selectedStrategy.split('_')[2]);
   if (isNaN(tickLength) || tickLength < 3 || tickLength > 10) return null;
   
@@ -581,10 +606,8 @@ const findSameDirectionMatch = (selectedStrategy: M2RecoveryType): { symbol: str
   return null;
 };
 
-// Play voice sound for pattern detection
 const playPatternVoice = () => {
   try {
-    // Use Web Audio API for a distinctive "pattern found" sound
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
     const oscillator = audioContext.createOscillator();
     const gainNode = audioContext.createGain();
@@ -605,33 +628,28 @@ export default function ProScannerBot() {
   const { isAuthorized, balance: apiBalance, activeAccount, refreshBalance } = useAuth();
   const { recordLoss } = useLossRequirement();
 
-  // Local balance tracking for immediate updates
+  // Local balance tracking
   const [localBalance, setLocalBalance] = useState(apiBalance);
   const localBalanceRef = useRef(apiBalance);
-  
-  // Track net profit separately for immediate updates
   const [netProfit, setNetProfit] = useState(0);
   const netProfitRef = useRef(0);
-  
-  // Track pending balance sync promises
   const balanceSyncPromiseRef = useRef<Promise<void> | null>(null);
 
-  // IMMEDIATE BALANCE UPDATE FUNCTION - CRITICAL FIX
+  // Market statistics for continuous scanner
+  const [marketStats, setMarketStats] = useState<MarketStats[]>([]);
+  const [strongestMarkets, setStrongestMarkets] = useState<MarketStats[]>([]);
+  const marketTickCountersRef = useRef<Map<string, { even: number; odd: number; over4: number; under5: number; total: number }>>(new Map());
+  const statsIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   const forceImmediateBalanceUpdate = useCallback(async (expectedPnl?: number): Promise<number> => {
     if (!refreshBalance) return localBalanceRef.current;
     
     try {
-      // Force immediate API balance refresh
       await refreshBalance();
-      
-      // Get the new balance
       const newBalance = apiBalance;
-      
-      // Update both state and ref immediately
       setLocalBalance(newBalance);
       localBalanceRef.current = newBalance;
       
-      // If we have expected PnL, verify it matches (for logging)
       if (expectedPnl !== undefined) {
         const previousBalance = localBalanceRef.current - expectedPnl;
         const balanceChange = newBalance - previousBalance;
@@ -647,7 +665,7 @@ export default function ProScannerBot() {
     }
   }, [apiBalance, refreshBalance]);
 
-  // Sync local balance with API balance with immediate effect
+  // Sync local balance with API balance
   useEffect(() => {
     const syncBalance = async () => {
       if (refreshBalance) {
@@ -660,17 +678,113 @@ export default function ProScannerBot() {
     };
     
     syncBalance();
-    
     const interval = setInterval(syncBalance, BALANCE_SYNC_INTERVAL);
     return () => clearInterval(interval);
   }, [apiBalance, refreshBalance]);
 
-  // Update local balance instantly when API balance changes
   useEffect(() => {
     setLocalBalance(apiBalance);
     localBalanceRef.current = apiBalance;
     logDebug(`Balance updated instantly: $${apiBalance}`);
   }, [apiBalance]);
+
+  // Update market statistics from tick data
+  const updateMarketStats = useCallback((symbol: string, digit: number) => {
+    const counter = marketTickCountersRef.current.get(symbol);
+    if (!counter) {
+      marketTickCountersRef.current.set(symbol, { even: 0, odd: 0, over4: 0, under5: 0, total: 0 });
+    }
+    
+    const current = marketTickCountersRef.current.get(symbol)!;
+    current.total++;
+    
+    if (digit % 2 === 0) {
+      current.even++;
+    } else {
+      current.odd++;
+    }
+    
+    if (digit >= 5) {
+      current.over4++;
+    }
+    if (digit <= 4) {
+      current.under5++;
+    }
+    
+    // Calculate percentages and update stats
+    const evenPercentage = (current.even / current.total) * 100;
+    const oddPercentage = (current.odd / current.total) * 100;
+    const over4Percentage = (current.over4 / current.total) * 100;
+    const under5Percentage = (current.under5 / current.total) * 100;
+    
+    // Calculate market strength (higher percentage means stronger trend)
+    // For even/odd: strength is max(even%, odd%)
+    // For over/under: strength is max(over4%, under5%)
+    const directionStrength = Math.max(evenPercentage, oddPercentage);
+    const barrierStrength = Math.max(over4Percentage, under5Percentage);
+    const strength = Math.max(directionStrength, barrierStrength);
+    
+    const marketInfo = SCANNER_MARKETS.find(m => m.symbol === symbol);
+    if (marketInfo) {
+      setMarketStats(prev => {
+        const existing = prev.find(s => s.symbol === symbol);
+        if (existing) {
+          return prev.map(s => s.symbol === symbol ? {
+            ...s,
+            evenCount: current.even,
+            oddCount: current.odd,
+            over4Count: current.over4,
+            under5Count: current.under5,
+            totalTicks: current.total,
+            evenPercentage,
+            oddPercentage,
+            over4Percentage,
+            under5Percentage,
+            strength,
+            lastUpdate: Date.now()
+          } : s);
+        } else {
+          return [...prev, {
+            symbol,
+            name: marketInfo.name,
+            color: marketInfo.color,
+            evenCount: current.even,
+            oddCount: current.odd,
+            over4Count: current.over4,
+            under5Count: current.under5,
+            totalTicks: current.total,
+            evenPercentage,
+            oddPercentage,
+            over4Percentage,
+            under5Percentage,
+            strength,
+            lastUpdate: Date.now()
+          }];
+        }
+      });
+    }
+  }, []);
+
+  // Calculate strongest markets every second
+  const updateStrongestMarkets = useCallback(() => {
+    setMarketStats(currentStats => {
+      const sorted = [...currentStats].sort((a, b) => b.strength - a.strength);
+      const strong = sorted.filter(m => m.strength >= STRONG_MARKET_THRESHOLD && m.totalTicks >= 100);
+      setStrongestMarkets(strong.slice(0, 5));
+      return currentStats;
+    });
+  }, []);
+
+  // Start/stop stats calculation
+  useEffect(() => {
+    statsIntervalRef.current = setInterval(() => {
+      updateStrongestMarkets();
+    }, STATS_UPDATE_INTERVAL);
+    
+    return () => {
+      if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
+    };
+  }, [updateStrongestMarkets]);
 
   /* ── Market 1 config ── */
   const [m1Enabled, setM1Enabled] = useState(true);
@@ -678,7 +792,7 @@ export default function ProScannerBot() {
 
   /* ── Market 2 config ── */
   const [m2Enabled, setM2Enabled] = useState(true);
-  const [m2RecoveryType, setM2RecoveryType] = useState<M2RecoveryType>('same_direction_4'); // Changed default to new Same Direction strategy
+  const [m2RecoveryType, setM2RecoveryType] = useState<M2RecoveryType>('same_direction_4');
 
   /* ── Risk ── */
   const [stake, setStake] = useState('0.6');
@@ -707,6 +821,10 @@ export default function ProScannerBot() {
   const [scannerMarkers, setScannerMarkers] = useState<typeof SCANNER_MARKETS>([]);
   const scannerIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
+  
+  // Continuous scrolling animation ref
+  const scrollingContainerRef = useRef<HTMLDivElement>(null);
+  const [scrollSpeed, setScrollSpeed] = useState<'normal' | 'slow'>('normal');
 
   /* ── Bot state ── */
   const [botStatus, setBotStatus] = useState<BotStatus>('idle');
@@ -721,26 +839,20 @@ export default function ProScannerBot() {
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const logIdRef = useRef(0);
   
-  // Track last trade timestamp per symbol to prevent multiple trades on same pattern
+  // Track last trade timestamp per symbol
   const lastTradeTimeRef = useRef<Map<string, number>>(new Map());
-  // Track last pattern digits to avoid re-trading same pattern
   const lastPatternDigitsRef = useRef<Map<string, string>>(new Map());
-  // Track overall last trade time to prevent rapid successive trades
   const lastTradeOverallRef = useRef<number>(0);
-  // Track last tick timestamp per symbol
   const lastTickTimeRef = useRef<Map<string, number>>(new Map());
-  // Track subscription status
   const subscriptionStatusRef = useRef<Map<string, boolean>>(new Map());
-  // Track connection retry count
   const connectionRetryCountRef = useRef<number>(0);
   const MAX_CONNECTION_RETRIES = 3;
-  // Track if we're currently reconnecting to avoid loops
   const isReconnectingRef = useRef(false);
 
   /* ── Tick data ── */
   const tickMapRef = useRef<Map<string, number[]>>(new Map());
 
-  // Track if TP/SL notifications have been shown for current session
+  // Track if TP/SL notifications have been shown
   const tpNotifiedRef = useRef(false);
   const slNotifiedRef = useRef(false);
   const lastPnlRef = useRef(0);
@@ -755,7 +867,6 @@ export default function ProScannerBot() {
     }
   }, [activePattern]);
 
-  // Clear trade result after display duration
   useEffect(() => {
     if (tradeResult) {
       const timer = setTimeout(() => {
@@ -767,7 +878,6 @@ export default function ProScannerBot() {
 
   // Initialize scanner voice
   useEffect(() => {
-    // Create a simple beep/voice sound using Web Audio API
     const initVoice = () => {
       try {
         const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -780,7 +890,6 @@ export default function ProScannerBot() {
         gainNode.gain.value = 0;
         oscillator.start();
         
-        // Store for later use
         voiceAudioRef.current = {
           play: () => {
             gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
@@ -799,56 +908,67 @@ export default function ProScannerBot() {
     };
   }, []);
 
-  // Start scanner animation when bot starts - FASTER SCROLLING (10 second interval)
+  // Continuous market scanner animation - runs regardless of bot state
   useEffect(() => {
-    if (isRunning) {
-      setIsScannerVoiceActive(true);
-      // Shuffle markets for random display
-      const shuffled = [...SCANNER_MARKETS];
-      for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-      }
-      setScannerMarkers(shuffled);
-      
-      // Rotate markets every 10 seconds for slower scrolling
-      scannerIntervalRef.current = setInterval(() => {
-        setScannerMarkers(prev => {
-          if (prev.length === 0) return [...SCANNER_MARKETS];
-          // Rotate: move first to end
-          const newMarkers = [...prev];
-          const first = newMarkers.shift();
-          if (first) newMarkers.push(first);
-          return newMarkers;
-        });
-      }, MARKET_SCROLL_INTERVAL);
-    } else {
-      setIsScannerVoiceActive(false);
-      if (scannerIntervalRef.current) {
-        clearInterval(scannerIntervalRef.current);
-        scannerIntervalRef.current = null;
-      }
-      setScannerMarkers([]);
+    // Initialize market stats
+    const initialStats: MarketStats[] = SCANNER_MARKETS.map(market => ({
+      symbol: market.symbol,
+      name: market.name,
+      color: market.color,
+      evenCount: 0,
+      oddCount: 0,
+      over4Count: 0,
+      under5Count: 0,
+      totalTicks: 0,
+      evenPercentage: 0,
+      oddPercentage: 0,
+      over4Percentage: 0,
+      under5Percentage: 0,
+      strength: 0,
+      lastUpdate: Date.now()
+    }));
+    setMarketStats(initialStats);
+    
+    // Shuffle markets for random display
+    const shuffled = [...SCANNER_MARKETS];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
     }
+    setScannerMarkers(shuffled);
+    
+    // Rotate markets every 10 seconds for slower scrolling (always active)
+    scannerIntervalRef.current = setInterval(() => {
+      setScannerMarkers(prev => {
+        if (prev.length === 0) return [...SCANNER_MARKETS];
+        const newMarkers = [...prev];
+        const first = newMarkers.shift();
+        if (first) newMarkers.push(first);
+        return newMarkers;
+      });
+    }, MARKET_SCROLL_INTERVAL);
     
     return () => {
       if (scannerIntervalRef.current) clearInterval(scannerIntervalRef.current);
     };
+  }, []);
+
+  // Update scanner voice state based on bot running
+  useEffect(() => {
+    setIsScannerVoiceActive(isRunning);
   }, [isRunning]);
 
-  // Define resubscribeToMarkets before ensureConnection
   const resubscribeToMarkets = useCallback(async () => {
     if (!derivApi.isConnected) return false;
     
     const results = await Promise.allSettled(
       SCANNER_MARKETS.map(async (market) => {
         try {
-          // Unsubscribe first if already subscribed
           if (subscriptionStatusRef.current.get(market.symbol)) {
             try {
               await derivApi.unsubscribeTicks?.(market.symbol as MarketSymbol);
             } catch (e) {
-              // Ignore unsubscribe errors
+              // Ignore
             }
           }
           await derivApi.subscribeTicks(market.symbol as MarketSymbol, () => {});
@@ -868,10 +988,8 @@ export default function ProScannerBot() {
     return successCount > 0;
   }, []);
 
-  // Enhanced connection management with auto-reconnect and data freshness check
   const ensureConnection = useCallback(async (): Promise<boolean> => {
     if (derivApi.isConnected) {
-      // Verify data is flowing by checking a few markets
       let hasFreshData = false;
       for (const market of SCANNER_MARKETS.slice(0, 5)) {
         const lastTickTime = lastTickTimeRef.current.get(market.symbol);
@@ -888,18 +1006,14 @@ export default function ProScannerBot() {
       } else {
         logDebug('Connection active but no fresh data, attempting resubscription...');
         await resubscribeToMarkets();
-        // Wait a moment for data to arrive
         await new Promise(r => setTimeout(r, 2000));
         
-        // Check again
         for (const market of SCANNER_MARKETS.slice(0, 5)) {
           const lastTickTime = lastTickTimeRef.current.get(market.symbol);
           if (lastTickTime && Date.now() - lastTickTime < DATA_STALENESS_THRESHOLD) {
             return true;
           }
         }
-        // Still no data, force reconnect
-        logDebug('No fresh data after resubscription, forcing reconnect');
         derivApi.disconnect?.();
       }
     }
@@ -920,7 +1034,6 @@ export default function ProScannerBot() {
         
         if (derivApi.isConnected) {
           await resubscribeToMarkets();
-          // Wait for initial ticks to arrive
           await new Promise(r => setTimeout(r, 3000));
           setBotStatus(runningRef.current ? 'trading_m1' : 'idle');
           connectionRetryCountRef.current = 0;
@@ -940,13 +1053,12 @@ export default function ProScannerBot() {
     return false;
   }, [resubscribeToMarkets]);
 
-  // Enhanced connection monitoring with auto-reconnect
+  // Enhanced connection monitoring
   useEffect(() => {
     let connectionChecker: NodeJS.Timeout;
     let dataStalenessChecker: NodeJS.Timeout;
     
     if (isRunning) {
-      // Check connection status periodically
       connectionChecker = setInterval(() => {
         if (!derivApi.isConnected && !isReconnectingRef.current) {
           logDebug('Connection lost, attempting to reconnect...');
@@ -954,7 +1066,6 @@ export default function ProScannerBot() {
         }
       }, CONNECTION_CHECK_INTERVAL);
       
-      // Check data staleness and auto-resubscribe
       dataStalenessChecker = setInterval(() => {
         if (derivApi.isConnected && !isReconnectingRef.current) {
           let staleCount = 0;
@@ -964,7 +1075,6 @@ export default function ProScannerBot() {
               staleCount++;
             }
           }
-          // If more than 50% of markets have stale data, resubscribe
           if (staleCount > SCANNER_MARKETS.length / 2) {
             logDebug(`Data staleness detected (${staleCount}/${SCANNER_MARKETS.length} markets stale), resubscribing...`);
             resubscribeToMarkets().catch(console.error);
@@ -992,7 +1102,6 @@ export default function ProScannerBot() {
     return () => clearInterval(heartbeat);
   }, [isRunning]);
 
-  // Define stopBot before using it
   const stopBot = useCallback(() => {
     runningRef.current = false;
     setIsRunning(false);
@@ -1001,7 +1110,7 @@ export default function ProScannerBot() {
     logDebug('Bot stopped by user');
   }, []);
 
-  // Initial subscription and tick handler - IMPROVED with independent Same Direction storage
+  // Initial subscription and tick handler - includes market stats update
   useEffect(() => {
     let active = true;
     let reconnectTimeout: NodeJS.Timeout;
@@ -1032,6 +1141,9 @@ export default function ProScannerBot() {
       
       lastTickTimeRef.current.set(sym, Date.now());
       
+      // Update market statistics for continuous scanner
+      updateMarketStats(sym, digit);
+      
       // Update existing tick storage
       const map = tickMapRef.current;
       let arr = map.get(sym);
@@ -1042,12 +1154,9 @@ export default function ProScannerBot() {
       arr.push(digit);
       if (arr.length > 200) arr.shift();
       
-      // ============================================
-      // INDEPENDENT SAME DIRECTION TICK STORAGE UPDATE
-      // ============================================
+      // Independent Same Direction tick storage
       updateSameDirectionTickStorage(sym, digit);
       
-      // Mark subscription as active if we receive data
       if (!subscriptionStatusRef.current.get(sym)) {
         subscriptionStatusRef.current.set(sym, true);
       }
@@ -1064,7 +1173,7 @@ export default function ProScannerBot() {
         derivApi.unsubscribeTicks?.(m.symbol as MarketSymbol).catch(() => {});
       });
     };
-  }, [resubscribeToMarkets]);
+  }, [resubscribeToMarkets, updateMarketStats]);
 
   // Monitor TP/SL and show notifications
   useEffect(() => {
@@ -1072,21 +1181,18 @@ export default function ProScannerBot() {
     const slValue = parseFloat(stopLoss);
     const prevPnl = lastPnlRef.current;
     
-    // Check for TP hit (when profit crosses from below TP to above or equal TP)
     if (netProfit >= tpValue && prevPnl < tpValue && netProfit > 0) {
       showTPNotification('tp', `Take Profit Target Hit!`, netProfit);
       tpNotifiedRef.current = true;
       slNotifiedRef.current = false;
     }
     
-    // Check for SL hit (when loss crosses from above SL to below or equal -SL)
     if (netProfit <= -slValue && prevPnl > -slValue && netProfit < 0) {
       showTPNotification('sl', `Stop Loss Target Hit!`, Math.abs(netProfit));
       slNotifiedRef.current = true;
       tpNotifiedRef.current = false;
     }
     
-    // Reset flags when profit is between TP and SL
     if (netProfit > -slValue && netProfit < tpValue) {
       tpNotifiedRef.current = false;
       slNotifiedRef.current = false;
@@ -1095,7 +1201,6 @@ export default function ProScannerBot() {
     lastPnlRef.current = netProfit;
   }, [netProfit, takeProfit, stopLoss]);
 
-  // Check if data is fresh
   const isDataFresh = useCallback((symbol: string): boolean => {
     const lastTickTime = lastTickTimeRef.current.get(symbol);
     if (!lastTickTime) {
@@ -1105,7 +1210,6 @@ export default function ProScannerBot() {
     const isFresh = Date.now() - lastTickTime < DATA_STALENESS_THRESHOLD;
     if (!isFresh) {
       logDebug(`Stale data for ${symbol}, last tick: ${new Date(lastTickTime).toISOString()}`);
-      // Try to resubscribe to stale market
       if (derivApi.isConnected) {
         derivApi.subscribeTicks(symbol as MarketSymbol, () => {}).catch(() => {});
       }
@@ -1113,13 +1217,12 @@ export default function ProScannerBot() {
     return isFresh;
   }, []);
 
-  // Helper to get recent digits for a symbol
   const getRecentDigits = useCallback((symbol: string, count: number): number[] => {
     const digits = tickMapRef.current.get(symbol) || [];
     return digits.slice(-count);
   }, []);
 
-  // M1 Pattern Checker - FIXED to check all markets properly
+  // M1 Pattern Checker
   const checkM1Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string; patternDigits?: string } => {
     if (!isDataFresh(symbol)) {
       return { matched: false };
@@ -1383,7 +1486,7 @@ export default function ProScannerBot() {
     }
   }, [m1StrategyType, isDataFresh, getRecentDigits]);
 
-  // M2 Pattern Checker - FIXED to include new Same Direction strategy with correct dynamic logic
+  // M2 Pattern Checker
   const checkM2Pattern = useCallback((symbol: string): { matched: boolean; contractType?: string; barrier?: string; patternDigits?: string } => {
     if (!isDataFresh(symbol)) {
       return { matched: false };
@@ -1617,10 +1720,6 @@ export default function ProScannerBot() {
         return { matched: false };
       }
       
-      // ============================================
-      // FIXED INDEPENDENT SAME DIRECTION STRATEGY CASES
-      // Now dynamically checks the correct number of ticks based on strategy
-      // ============================================
       case 'same_direction_3':
       case 'same_direction_4':
       case 'same_direction_5':
@@ -1662,35 +1761,26 @@ export default function ProScannerBot() {
       last15Ticks: last15Ticks || [...digits]
     };
     setDetectedPatterns(prev => [newPattern, ...prev].slice(0, 10));
-    // Also set as active pattern for display
     setActivePattern(newPattern);
-    // Play voice sound for pattern detection
     if (isScannerVoiceActive) {
       playPatternVoice();
     }
-    // Auto-remove after 5 seconds
     setTimeout(() => {
       setDetectedPatterns(prev => prev.filter(p => p.timestamp !== newPattern.timestamp));
     }, 5000);
   }, [isScannerVoiceActive]);
 
-  // Update pattern with trade result
   const updatePatternResult = useCallback((symbol: string, result: 'Win' | 'Loss', pnl: number, stakeAmount: number) => {
     setActivePattern(prev => prev && prev.symbol === symbol ? { ...prev, result, pnl, stake: stakeAmount } : prev);
     setTradeResult({ result, pnl });
   }, []);
 
-  // Find M1 match across ALL markets - FIXED to properly check each market
   const findM1Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string; digitsArray: number[]; last15Ticks: number[] } | null => {
-    // CRITICAL FIX: Only allow trade if 2 seconds have passed since last trade
     if (Date.now() - lastTradeOverallRef.current < 2000) return null;
     
-    // Shuffle markets for fair distribution? No, scan in order but log which we check
     for (const market of SCANNER_MARKETS) {
-      // Skip if market has no data or subscription issue
       const hasSubscription = subscriptionStatusRef.current.get(market.symbol);
       if (!hasSubscription) {
-        // Try to resubscribe if needed
         if (derivApi.isConnected) {
           derivApi.subscribeTicks(market.symbol as MarketSymbol, () => {}).catch(() => {});
         }
@@ -1699,18 +1789,16 @@ export default function ProScannerBot() {
       
       const result = checkM1Pattern(market.symbol);
       if (result.matched && result.contractType && result.patternDigits) {
-        const digits = getRecentDigits(market.symbol, 8); // Get last 8 digits
+        const digits = getRecentDigits(market.symbol, 8);
         const last15Ticks = getLast15Ticks(market.symbol);
         addDetectedPattern(market.symbol, market.name, `M1: ${m1StrategyType}`, digits, result.contractType, last15Ticks);
         
-        // Check for duplicate pattern on same symbol
         const lastPattern = lastPatternDigitsRef.current.get(market.symbol);
         if (lastPattern === result.patternDigits) {
           logDebug(`[M1] Skipping duplicate pattern for ${market.symbol}: ${result.patternDigits}`);
           continue;
         }
         
-        // Check cooldown for this specific symbol (30 seconds)
         const lastTrade = lastTradeTimeRef.current.get(market.symbol) || 0;
         if (Date.now() - lastTrade < 30000) {
           logDebug(`[M1] Cooldown active for ${market.symbol}, last trade: ${new Date(lastTrade).toLocaleTimeString()}`);
@@ -1732,16 +1820,12 @@ export default function ProScannerBot() {
     return null;
   }, [checkM1Pattern, m1StrategyType, addDetectedPattern, getRecentDigits]);
 
-  // Find M2 match across ALL markets - MODIFIED to support new Same Direction strategy with dynamic tick length
   const findM2Match = useCallback((): { symbol: string; contractType: string; barrier?: string; patternDigits: string; digitsArray: number[]; last15Ticks: number[] } | null => {
-    // CRITICAL FIX: Only allow trade if 2 seconds have passed since last trade
     if (Date.now() - lastTradeOverallRef.current < 2000) return null;
     
-    // Check if using new Same Direction strategy
     const isSameDirectionStrategy = m2RecoveryType.startsWith('same_direction_');
     
     if (isSameDirectionStrategy) {
-      // Use independent Same Direction pattern detection with the SELECTED strategy
       const match = findSameDirectionMatch(m2RecoveryType);
       if (match) {
         const market = SCANNER_MARKETS.find(m => m.symbol === match.symbol);
@@ -1775,7 +1859,6 @@ export default function ProScannerBot() {
       return null;
     }
     
-    // Use existing pattern detection for other strategies
     for (const market of SCANNER_MARKETS) {
       const hasSubscription = subscriptionStatusRef.current.get(market.symbol);
       if (!hasSubscription) {
@@ -1787,7 +1870,7 @@ export default function ProScannerBot() {
       
       const result = checkM2Pattern(market.symbol);
       if (result.matched && result.contractType && result.patternDigits) {
-        const digits = getRecentDigits(market.symbol, 8); // Get last 8 digits
+        const digits = getRecentDigits(market.symbol, 8);
         const last15Ticks = getLast15Ticks(market.symbol);
         addDetectedPattern(market.symbol, market.name, `M2: ${m2RecoveryType}`, digits, result.contractType, last15Ticks);
         
@@ -1836,9 +1919,7 @@ export default function ProScannerBot() {
     netProfitRef.current = 0;
   }, []);
 
-  // IMMEDIATE balance update function - CRITICAL FIX
   const updateBalanceAndProfit = useCallback(async (pnl: number, contractId?: string): Promise<{ newProfit: number; newBalance: number }> => {
-    // First, immediately update local state for UI responsiveness
     const newProfit = netProfitRef.current + pnl;
     const newBalance = localBalanceRef.current + pnl;
     
@@ -1850,23 +1931,15 @@ export default function ProScannerBot() {
     
     logDebug(`Immediate UI update - P&L: ${pnl}, New Profit: ${newProfit}, New Balance: ${newBalance}`);
     
-    // CRITICAL: Force immediate API balance sync after trade completion
-    // This ensures the next trade uses the most up-to-date balance
     if (refreshBalance) {
       try {
-        // Short delay to allow API to process the contract result
         await new Promise(resolve => setTimeout(resolve, IMMEDIATE_BALANCE_SYNC_DELAY));
-        
-        // Force refresh balance from API
         await refreshBalance();
-        
-        // Update local state with API balance
         const apiBal = apiBalance;
         if (Math.abs(apiBal - localBalanceRef.current) > 0.01) {
           logDebug(`Balance discrepancy detected - Local: $${localBalanceRef.current}, API: $${apiBal}. Syncing...`);
           setLocalBalance(apiBal);
           localBalanceRef.current = apiBal;
-          // Adjust net profit to match actual balance
           const adjustedProfit = apiBal - (localBalanceRef.current - pnl);
           setNetProfit(adjustedProfit);
           netProfitRef.current = adjustedProfit;
@@ -1909,7 +1982,6 @@ export default function ProScannerBot() {
     setTotalStaked(prev => prev + cStake);
     setCurrentStakeState(cStake);
 
-    // CRITICAL FIX: Immediately record the pattern and trade time to prevent duplicates
     lastPatternDigitsRef.current.set(tradeSymbol, patternDigits);
     lastTradeTimeRef.current.set(tradeSymbol, Date.now());
     lastTradeOverallRef.current = Date.now();
@@ -1949,10 +2021,8 @@ export default function ProScannerBot() {
       const won = result.status === 'won';
       const pnl = result.profit;
       
-      // Update pattern with trade result
       updatePatternResult(tradeSymbol, won ? 'Win' : 'Loss', pnl, cStake);
       
-      // CRITICAL FIX: IMMEDIATE BALANCE UPDATE - Sync with API right after trade result
       const { newProfit, newBalance } = await updateBalanceAndProfit(pnl, contractId);
       updatedNetProfit = newProfit;
       updatedLocalBalance = newBalance;
@@ -2086,10 +2156,8 @@ export default function ProScannerBot() {
     slNotifiedRef.current = false;
     lastPnlRef.current = 0;
 
-    // Force immediate balance sync before starting
     await forceImmediateBalanceUpdate();
     
-    // Reset local balance and net profit to current API balance
     const startBalance = localBalanceRef.current;
     setLocalBalance(startBalance);
     setNetProfit(0);
@@ -2312,8 +2380,15 @@ export default function ProScannerBot() {
     }
   };
 
-  // Determine if there are any detected patterns to show the scanner sections
   const hasDetectedPatterns = detectedPatterns.length > 0;
+
+  // Helper to get market strength display
+  const getStrengthDisplay = (strength: number) => {
+    if (strength >= 70) return { text: 'VERY STRONG', color: 'text-emerald-400', bg: 'bg-emerald-500/20' };
+    if (strength >= 55) return { text: 'STRONG', color: 'text-cyan-400', bg: 'bg-cyan-500/20' };
+    if (strength >= 40) return { text: 'MODERATE', color: 'text-amber-400', bg: 'bg-amber-500/20' };
+    return { text: 'WEAK', color: 'text-slate-400', bg: 'bg-slate-500/20' };
+  };
 
   return (
     <>
@@ -2352,7 +2427,86 @@ export default function ProScannerBot() {
             </div>
           </div>
 
-          {/* Markets Row - Horizontal (M1 and M2) - NOW FIRST */}
+          {/* Strongest Markets Banner - Continuous Scanner Results */}
+          <div className="bg-gradient-to-r from-amber-900/30 to-amber-800/30 backdrop-blur-sm border border-amber-500/30 rounded-xl p-3 shadow-xl">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="p-1 bg-amber-500/20 rounded-lg">
+                <TrendingUp className="w-3 h-3 text-amber-400" />
+              </div>
+              <h3 className="text-xs font-bold text-amber-400">🔥 STRONGEST MARKETS (Last 1000+ Ticks)</h3>
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-[8px] text-slate-400">Even/Odd % | Over/Under %</span>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setScrollSpeed('normal')}
+                    className={`text-[8px] px-1.5 py-0.5 rounded ${scrollSpeed === 'normal' ? 'bg-amber-500/30 text-amber-400' : 'bg-slate-700/50 text-slate-400'}`}
+                  >
+                    Normal
+                  </button>
+                  <button
+                    onClick={() => setScrollSpeed('slow')}
+                    className={`text-[8px] px-1.5 py-0.5 rounded ${scrollSpeed === 'slow' ? 'bg-amber-500/30 text-amber-400' : 'bg-slate-700/50 text-slate-400'}`}
+                  >
+                    Slow
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="overflow-hidden relative">
+              <div className={`flex gap-3 ${scrollSpeed === 'normal' ? 'animate-scroll-markets' : 'animate-scroll-markets-slow'}`}>
+                {[...strongestMarkets, ...strongestMarkets].map((market, idx) => (
+                  <div
+                    key={`${market.symbol}-${idx}`}
+                    className="flex-shrink-0 bg-slate-800/50 rounded-lg p-2 min-w-[200px] border border-amber-500/20"
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <div className={`w-6 h-6 rounded-full bg-gradient-to-r ${market.color} flex items-center justify-center`}>
+                          <DollarSign className="w-3 h-3 text-white" />
+                        </div>
+                        <div>
+                          <span className="font-mono text-xs font-bold text-slate-200">{market.symbol}</span>
+                          <span className="text-[8px] text-slate-400 ml-1">{market.name}</span>
+                        </div>
+                      </div>
+                      <div className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${getStrengthDisplay(market.strength).bg} ${getStrengthDisplay(market.strength).color}`}>
+                        {getStrengthDisplay(market.strength).text}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[9px]">
+                      <div>
+                        <span className="text-slate-400">Even:</span>
+                        <span className="text-emerald-400 ml-1 font-bold">{market.evenPercentage.toFixed(1)}%</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Odd:</span>
+                        <span className="text-fuchsia-400 ml-1 font-bold">{market.oddPercentage.toFixed(1)}%</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Over 4:</span>
+                        <span className="text-cyan-400 ml-1 font-bold">{market.over4Percentage.toFixed(1)}%</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400">Under 5:</span>
+                        <span className="text-amber-400 ml-1 font-bold">{market.under5Percentage.toFixed(1)}%</span>
+                      </div>
+                    </div>
+                    <div className="mt-1 h-1 bg-slate-700 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all duration-300"
+                        style={{ width: `${market.strength}%` }}
+                      />
+                    </div>
+                    <div className="text-[7px] text-slate-500 text-center mt-1">
+                      {market.totalTicks} ticks analyzed
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Markets Row - Horizontal (M1 and M2) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {/* Market 1 */}
             <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-emerald-500/30 rounded-xl p-4 shadow-xl">
@@ -2380,7 +2534,7 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
-                      <SelectItem >Over/Under (last digits pattern based ) Reversal Direction</SelectItem>
+                      <SelectItem disabled>Over/Under (last digits pattern based) Reversal Direction</SelectItem>
                       <SelectItem value="over0_under9_1">🎯 Over 0 / Under 9 (1 tick)</SelectItem>
                       <SelectItem value="over0_under9_2">🎯 Over 0 / Under 9 (2 ticks)</SelectItem>
                       <SelectItem value="over0_under9_3">🎯 Over 0 / Under 9 (3 ticks)</SelectItem>
@@ -2438,7 +2592,7 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
-                      <SelectItem >🔢Even/Odd (last digits pattern based ) Reversal Direction example (if last 3 ticks are odd takes even trade)</SelectItem>
+                      <SelectItem disabled>Even/Odd (last digits pattern based) Reversal Direction</SelectItem>
                       <SelectItem value="odd_even_3">🔄 Even / Odd (3 ticks)</SelectItem>
                       <SelectItem value="odd_even_4">🔄 Even / Odd (4 ticks)</SelectItem>
                       <SelectItem value="odd_even_5">🔄 Even / Odd (5 ticks)</SelectItem>
@@ -2446,7 +2600,7 @@ export default function ProScannerBot() {
                       <SelectItem value="odd_even_7">🔄 Even / Odd (7 ticks)</SelectItem>
                       <SelectItem value="odd_even_8">🔄 Even / Odd (8 ticks)</SelectItem>
                       <SelectItem value="odd_even_9">🔄 Even / Odd (9 ticks)</SelectItem>
-                      <SelectItem > Over/Under (last digits pattern based ) Reversal Direction example (if last 3 ticks are under takes over trade)</SelectItem>
+                      <SelectItem disabled>Over/Under (last digits pattern based) Reversal Direction</SelectItem>
                       <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                       <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
                       <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
@@ -2454,15 +2608,15 @@ export default function ProScannerBot() {
                       <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
                       <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                       <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
-                      <SelectItem >Even/Odd (last digits pattern based ) Same Direction example (if last 3 ticks are odd takes odd trade)</SelectItem>
+                      <SelectItem disabled>Even/Odd (last digits pattern based) Same Direction</SelectItem>
                       <SelectItem value="same_direction_3">🔢 Even/Odd (3 ticks)</SelectItem>
-                      <SelectItem value="same_direction_4">🔢  Even/Odd (4 ticks)</SelectItem>
-                      <SelectItem value="same_direction_5">🔢  Even/Odd (5 ticks)</SelectItem>
-                      <SelectItem value="same_direction_6">🔢  Even/Odd (6 ticks)</SelectItem>
-                      <SelectItem value="same_direction_7">🔢  Even/Odd (7 ticks)</SelectItem>
-                      <SelectItem value="same_direction_8">🔢  Even/Odd (8 ticks)</SelectItem>
-                      <SelectItem value="same_direction_9">🔢  Even/Odd (9 ticks)</SelectItem>
-                      <SelectItem value="same_direction_10">🔢  Even/Odd (10 ticks)</SelectItem>
+                      <SelectItem value="same_direction_4">🔢 Even/Odd (4 ticks)</SelectItem>
+                      <SelectItem value="same_direction_5">🔢 Even/Odd (5 ticks)</SelectItem>
+                      <SelectItem value="same_direction_6">🔢 Even/Odd (6 ticks)</SelectItem>
+                      <SelectItem value="same_direction_7">🔢 Even/Odd (7 ticks)</SelectItem>
+                      <SelectItem value="same_direction_8">🔢 Even/Odd (8 ticks)</SelectItem>
+                      <SelectItem value="same_direction_9">🔢 Even/Odd (9 ticks)</SelectItem>
+                      <SelectItem value="same_direction_10">🔢 Even/Odd (10 ticks)</SelectItem>
                     </SelectContent>
                   </Select>
                   {m2RecoveryType !== 'disabled' && (
@@ -2479,7 +2633,7 @@ export default function ProScannerBot() {
             </div>
           </div>
 
-          {/* Risk Management - Bot Configuration (NOW CENTERED) */}
+          {/* Risk Management - Bot Configuration */}
           <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl p-4 shadow-xl">
             <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2 mb-3">
               <Shield className="w-4 h-4 text-amber-400" /> Bot Configuration 🚦
@@ -2516,7 +2670,7 @@ export default function ProScannerBot() {
             )}
           </div>
 
-          {/* TWO DIVS SIDE BY SIDE - 50% width each - Pattern Detection and Live Markets */}
+          {/* TWO DIVS SIDE BY SIDE - Pattern Detection and Live Markets */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {/* Pattern Detection Container */}
             <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
@@ -2621,7 +2775,7 @@ export default function ProScannerBot() {
               </div>
             </div>
 
-            {/* Live Markets Scanner Container */}
+            {/* Live Markets Scanner Container - CONTINUOUS SCROLLING */}
             <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
               <div className="p-3 border-b border-slate-700/50 bg-slate-800/30">
                 <div className="flex items-center justify-between">
@@ -2640,110 +2794,113 @@ export default function ProScannerBot() {
                     )}
                     <div className="flex items-center gap-1">
                       <span className="relative flex h-1.5 w-1.5">
-                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isRunning ? 'bg-emerald-400' : 'bg-slate-500'} opacity-75`}></span>
-                        <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${isRunning ? 'bg-emerald-500' : 'bg-slate-600'}`}></span>
+                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isRunning ? 'bg-emerald-400' : 'bg-emerald-400'} opacity-75`}></span>
+                        <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${isRunning ? 'bg-emerald-500' : 'bg-emerald-500'}`}></span>
                       </span>
-                      <span className="text-[8px] text-slate-400 font-bold">{isRunning ? 'ACTIVE' : 'INACTIVE'}</span>
+                      <span className="text-[8px] text-slate-400 font-bold">CONTINUOUS SCANNING</span>
                     </div>
                   </div>
                 </div>
               </div>
               
-              {/* Animated Scrolling Markets Container - Bottom to Top */}
-              <div className="relative h-[200px] overflow-hidden bg-slate-900/50">
-                {isRunning && scannerMarkers.length > 0 ? (
+              {/* Animated Scrolling Markets Container - Continuous scrolling even when bot is off */}
+              <div className="relative h-[400px] overflow-hidden bg-slate-900/50">
+                {scannerMarkers.length > 0 ? (
                   <div className="absolute inset-0">
-                    {/* Voice wave overlay */}
-                    <div className="absolute inset-0 pointer-events-none z-10">
-                      <div className={`absolute inset-0 bg-gradient-to-t from-emerald-500/0 via-emerald-500/5 to-transparent ${isScannerVoiceActive ? 'animate-pulse' : ''}`} />
-                    </div>
+                    {/* Voice wave overlay when bot is running */}
+                    {isRunning && (
+                      <div className="absolute inset-0 pointer-events-none z-10">
+                        <div className={`absolute inset-0 bg-gradient-to-t from-emerald-500/0 via-emerald-500/5 to-transparent ${isScannerVoiceActive ? 'animate-pulse' : ''}`} />
+                      </div>
+                    )}
                     
-                    {/* Scrolling items - bottom to top animation (10 second interval) */}
-                    <div className="absolute bottom-0 left-0 right-0 animate-scroll-up-fast" style={{ animationDuration: '10s' }}>
-                      {[...scannerMarkers, ...scannerMarkers].map((market, idx) => (
-                        <div 
-                          key={`${market.symbol}-${idx}`}
-                          className={`mx-2 mb-2 rounded-lg overflow-hidden shadow-lg transform transition-all duration-300 hover:scale-[1.02] animate-fadeInUp`}
-                          style={{ animationDelay: `${idx * 0.05}s` }}
-                        >
-                          <div className={`bg-gradient-to-r ${market.color} p-2 flex items-center justify-between`}>
-                            <div className="flex items-center gap-2">
-                              <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
-                                <DollarSign className="w-3 h-3 text-white" />
-                              </div>
-                              <div>
-                                <span className="font-mono text-xs font-bold text-white">{market.symbol}</span>
-                                <span className="text-[8px] text-white/70 ml-1">{market.name}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="flex gap-0.5">
-                                {[...Array(3)].map((_, i) => (
-                                  <div 
-                                    key={i}
-                                    className="w-4 h-4 rounded bg-white/20 flex items-center justify-center"
-                                    style={{ animationDelay: `${i * 0.1}s` }}
-                                  >
-                                    <span className="text-[8px] text-white font-bold animate-pulse">•</span>
+                    {/* Scrolling items - continuous smooth scrolling (10-30 second interval based on speed setting) */}
+                    <div 
+                      className={`absolute left-0 right-0 ${scrollSpeed === 'normal' ? 'animate-scroll-markets' : 'animate-scroll-markets-slow'}`}
+                      style={{ animationDuration: scrollSpeed === 'normal' ? '20s' : '30s' }}
+                    >
+                      {[...scannerMarkers, ...scannerMarkers].map((market, idx) => {
+                        const stats = marketStats.find(s => s.symbol === market.symbol);
+                        const strengthInfo = stats ? getStrengthDisplay(stats.strength) : { text: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
+                        
+                        return (
+                          <div 
+                            key={`${market.symbol}-${idx}`}
+                            className={`mx-2 mb-2 rounded-lg overflow-hidden shadow-lg transform transition-all duration-300 hover:scale-[1.02] animate-fadeInUp`}
+                            style={{ animationDelay: `${idx * 0.05}s` }}
+                          >
+                            <div className={`bg-gradient-to-r ${market.color} p-3`}>
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                                    <DollarSign className="w-4 h-4 text-white" />
                                   </div>
-                                ))}
+                                  <div>
+                                    <span className="font-mono text-sm font-bold text-white">{market.symbol}</span>
+                                    <span className="text-[9px] text-white/70 ml-1">{market.name}</span>
+                                  </div>
+                                </div>
+                                <div className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${strengthInfo.bg} ${strengthInfo.color}`}>
+                                  {strengthInfo.text}
+                                </div>
                               </div>
-                              <Badge className="text-[7px] bg-white/20 text-white border-none px-1.5 py-0 font-bold">
-                                SCANNING
-                              </Badge>
+                              
+                              {/* Statistics for this market */}
+                              {stats && stats.totalTicks > 0 ? (
+                                <div className="grid grid-cols-2 gap-2 text-[9px] text-white/80">
+                                  <div className="flex items-center justify-between">
+                                    <span>Even:</span>
+                                    <span className="font-bold text-white">{stats.evenPercentage.toFixed(1)}%</span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span>Odd:</span>
+                                    <span className="font-bold text-white">{stats.oddPercentage.toFixed(1)}%</span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span>Over 4:</span>
+                                    <span className="font-bold text-white">{stats.over4Percentage.toFixed(1)}%</span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span>Under 5:</span>
+                                    <span className="font-bold text-white">{stats.under5Percentage.toFixed(1)}%</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="text-[8px] text-white/60 text-center py-1">
+                                  Waiting for tick data...
+                                </div>
+                              )}
+                              
+                              {/* Strength bar */}
+                              {stats && stats.totalTicks > 0 && (
+                                <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
+                                  <div 
+                                    className="h-full bg-white rounded-full transition-all duration-500"
+                                    style={{ width: `${stats.strength}%` }}
+                                  />
+                                </div>
+                              )}
+                              
+                              {/* Tick counter */}
+                              {stats && stats.totalTicks > 0 && (
+                                <div className="text-[7px] text-white/50 text-right mt-1">
+                                  {stats.totalTicks} ticks analyzed
+                                </div>
+                              )}
                             </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                    
-                    {/* Duplicate for seamless loop (10 second interval) */}
-                    <div className="absolute bottom-0 left-0 right-0 animate-scroll-up-fast" style={{ animationDuration: '10s', top: '100%' }}>
-                      {[...scannerMarkers, ...scannerMarkers].map((market, idx) => (
-                        <div 
-                          key={`dup-${market.symbol}-${idx}`}
-                          className={`mx-2 mb-2 rounded-lg overflow-hidden shadow-lg transform transition-all duration-300 hover:scale-[1.02] animate-fadeInUp`}
-                          style={{ animationDelay: `${idx * 0.05}s` }}
-                        >
-                          <div className={`bg-gradient-to-r ${market.color} p-2 flex items-center justify-between`}>
-                            <div className="flex items-center gap-2">
-                              <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
-                                <DollarSign className="w-3 h-3 text-white" />
-                              </div>
-                              <div>
-                                <span className="font-mono text-xs font-bold text-white">{market.symbol}</span>
-                                <span className="text-[8px] text-white/70 ml-1">{market.name}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="flex gap-0.5">
-                                {[...Array(3)].map((_, i) => (
-                                  <div 
-                                    key={i}
-                                    className="w-4 h-4 rounded bg-white/20 flex items-center justify-center"
-                                    style={{ animationDelay: `${i * 0.1}s` }}
-                                  >
-                                    <span className="text-[8px] text-white font-bold animate-pulse">•</span>
-                                  </div>
-                                ))}
-                              </div>
-                              <Badge className="text-[7px] bg-white/20 text-white border-none px-1.5 py-0 font-bold">
-                                SCANNING
-                              </Badge>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ) : (
                   <div className="h-full flex items-center justify-center">
                     <div className="text-center">
                       <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-slate-800 flex items-center justify-center">
-                        <Scan className="w-6 h-6 text-slate-600" />
+                        <Scan className="w-6 h-6 text-slate-600 animate-pulse" />
                       </div>
-                      <p className="text-[10px] text-slate-500 font-semibold">Press RUN BOT to start scanning markets</p>
-                      <p className="text-[8px] text-slate-600 mt-1">All {SCANNER_MARKETS.length} markets will appear here with animations</p>
+                      <p className="text-[10px] text-slate-500 font-semibold">Loading market data...</p>
+                      <p className="text-[8px] text-slate-600 mt-1">Analyzing {SCANNER_MARKETS.length} markets in real-time</p>
                     </div>
                   </div>
                 )}
@@ -2757,14 +2914,17 @@ export default function ProScannerBot() {
                     {SCANNER_MARKETS.length} markets monitored
                   </span>
                   <span className="font-mono font-bold">
-                    {isRunning ? '🔄 Scanning in progress...' : '⏸ Scanner idle'}
+                    {marketStats.filter(m => m.totalTicks >= 100).length} markets have 100+ ticks
+                  </span>
+                  <span className="font-mono text-emerald-400">
+                    {strongestMarkets.length} strong markets
                   </span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* NEW: Active Pattern Display - Shows current pattern being traded */}
+          {/* NEW: Active Pattern Display */}
           {activePattern && (
             <div className={`w-full bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-sm rounded-xl shadow-2xl overflow-hidden border-2 ${activePattern.result === 'Win' ? 'border-emerald-500/50 animate-blink-green' : activePattern.result === 'Loss' ? 'border-rose-500/50 animate-blink-red' : 'border-amber-500/50'} transition-all duration-300`}>
               <div className="p-4">
@@ -2971,7 +3131,7 @@ export default function ProScannerBot() {
                     <tr>
                       <td colSpan={8} className="text-center text-slate-500 py-12">
                         No trades yet — configure and start the bot
-                       </td>
+                      </td>
                     </tr>
                   ) : logEntries.map(e => (
                     <tr key={e.id} className={`border-t border-slate-700/30 hover:bg-slate-800/30 transition-colors ${
