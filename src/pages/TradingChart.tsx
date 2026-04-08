@@ -629,10 +629,10 @@ export default function ProScannerBot() {
   const { isAuthorized, balance: apiBalance, activeAccount, refreshBalance } = useAuth();
   const { recordLoss } = useLossRequirement();
 
-  // ADDED: Toggle states for UI sections
-  const [showPatternDetection, setShowPatternDetection] = useState(false); // CHANGED: default to hidden
-  const [showLiveMarkets, setShowLiveMarkets] = useState(true);
-  const [showStrongestMarkets, setShowStrongestMarkets] = useState(false); // CHANGED: default to hidden
+  // ADDED: Toggle states for UI sections (DEFAULT: Pattern Detection HIDDEN, Strongest Markets HIDDEN, Live Markets ALWAYS visible)
+  const [showPatternDetection, setShowPatternDetection] = useState(false); // CHANGED: default false (HIDDEN)
+  const [showLiveMarkets, setShowLiveMarkets] = useState(true); // ALWAYS visible by default
+  const [showStrongestMarkets, setShowStrongestMarkets] = useState(false); // CHANGED: default false (HIDDEN)
 
   // Local balance tracking
   const [localBalance, setLocalBalance] = useState(apiBalance);
@@ -2409,14 +2409,14 @@ export default function ProScannerBot() {
     return { text: 'WEAK', color: 'text-slate-400', bg: 'bg-slate-500/20' };
   };
 
-  // Helper to get signal display color and label
+  // Helper to get signal display color and label (UPDATED: EVEN/OVER = green, ODD/UNDER = red)
   const getSignalDisplay = (signal: string | null) => {
     if (!signal) return { label: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
     switch (signal) {
       case 'EVEN': return { label: 'EVEN', color: 'text-emerald-400', bg: 'bg-emerald-500/20' };
-      case 'ODD': return { label: 'ODD', color: 'text-rose-400', bg: 'bg-rose-500/20' };
+      case 'ODD': return { label: 'ODD', color: 'text-red-400', bg: 'bg-red-500/20' };
       case 'OVER': return { label: 'OVER', color: 'text-emerald-400', bg: 'bg-emerald-500/20' };
-      case 'UNDER': return { label: 'UNDER', color: 'text-rose-400', bg: 'bg-rose-500/20' };
+      case 'UNDER': return { label: 'UNDER', color: 'text-red-400', bg: 'bg-red-500/20' };
       default: return { label: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
     }
   };
@@ -2468,9 +2468,6 @@ export default function ProScannerBot() {
               </div>
             </div>
           </div>
-
-          {/* UPDATED: Toggle Controls Row - Moved to respective containers */}
-          {/* This row has been removed. Toggles are now in their respective containers below */}
 
           {/* Markets Row - Horizontal (M1 and M2) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -2636,12 +2633,37 @@ export default function ProScannerBot() {
             )}
           </div>
 
+          {/* ADDED: Global Toggle Row for Pattern Detection and Strongest Markets */}
+          <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl p-3 shadow-xl flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-400 font-semibold">Pattern Detection:</span>
+                <Switch 
+                  checked={showPatternDetection} 
+                  onCheckedChange={setShowPatternDetection} 
+                  className="data-[state=checked]:bg-emerald-500"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-400 font-semibold">Strongest Markets:</span>
+                <Switch 
+                  checked={showStrongestMarkets} 
+                  onCheckedChange={setShowStrongestMarkets} 
+                  className="data-[state=checked]:bg-emerald-500"
+                />
+              </div>
+            </div>
+            <div className="text-[8px] text-slate-500 font-mono">
+              Live Markets always visible
+            </div>
+          </div>
+
           {/* UPDATED: TWO DIVS SIDE BY SIDE - Pattern Detection and Live Markets (Conditional) */}
           <div className={`grid ${getPatternLiveGridClass()} gap-3`}>
-            {/* Pattern Detection Container - Conditional */}
+            {/* Pattern Detection Container - Conditional (UPDATED: reduced height by 30px) */}
             {showPatternDetection && (
-              <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
-                <div className="p-3 border-b border-slate-700/50 flex items-center justify-between">
+              <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl h-[370px] flex flex-col">
+                <div className="p-3 border-b border-slate-700/50 flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-2">
                     <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
                       <Scan className="w-3 h-3 text-white" />
@@ -2668,7 +2690,7 @@ export default function ProScannerBot() {
                 </div>
                 
                 {/* Animated Dollar Icons Row */}
-                <div className="py-2 bg-slate-800/30 overflow-hidden relative">
+                <div className="py-2 bg-slate-800/30 overflow-hidden relative shrink-0">
                   <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10 font-bold">PATTERN DETECTION</span>
                   </div>
@@ -2698,8 +2720,8 @@ export default function ProScannerBot() {
                   </div>
                 </div>
                 
-                {/* Detected Patterns Display - REDUCED HEIGHT by 30px (was 200px, now 170px) */}
-                <div className="h-[170px] overflow-y-auto">
+                {/* Detected Patterns Display (UPDATED: height adjusted) */}
+                <div className="flex-1 overflow-y-auto min-h-0">
                   {detectedPatterns.length === 0 ? (
                     <div className="h-full flex items-center justify-center">
                       <p className="text-[10px] text-slate-500 font-semibold">Waiting for pattern detection...</p>
@@ -2751,10 +2773,10 @@ export default function ProScannerBot() {
               </div>
             )}
 
-            {/* Live Markets Scanner Container - CONTINUOUS SCROLLING - Conditional */}
+            {/* Live Markets Scanner Container - CONTINUOUS SCROLLING - Conditional (UPDATED: reduced height by 30px, fixed font colors) */}
             {showLiveMarkets && (
-              <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
-                <div className="p-3 border-b border-slate-700/50 bg-slate-800/30 flex items-center justify-between">
+              <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden h-[400px] flex flex-col">
+                <div className="p-3 border-b border-slate-700/50 bg-slate-800/30 flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-2">
                     <div className={`p-1.5 rounded-lg ${isRunning ? 'bg-gradient-to-br from-emerald-500 to-green-600 animate-pulse-slow' : 'bg-gradient-to-br from-slate-600 to-slate-700'}`}>
                       <Scan className="w-3 h-3 text-white" />
@@ -2801,8 +2823,8 @@ export default function ProScannerBot() {
                   </div>
                 </div>
                 
-                {/* Animated Scrolling Markets Container - Continuous scrolling even when bot is off - REDUCED HEIGHT by 30px (was 400px, now 370px) */}
-                <div className="relative h-[370px] overflow-hidden bg-slate-900/50">
+                {/* Animated Scrolling Markets Container - Continuous scrolling even when bot is off (UPDATED: fixed font colors - no white text) */}
+                <div className="relative flex-1 overflow-hidden bg-slate-900/50 min-h-0">
                   {scannerMarkers.length > 0 ? (
                     <div className="absolute inset-0">
                       {/* Voice wave overlay when bot is running */}
@@ -2821,7 +2843,7 @@ export default function ProScannerBot() {
                           const stats = marketStats.find(s => s.symbol === market.symbol);
                           const strengthInfo = stats ? getStrengthDisplay(stats.strength) : { text: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
                           
-                          // UPDATED: Get signal info for live markets display with improved colors for trading
+                          // UPDATED: Get signal info for live markets display (EVEN/OVER = green, ODD/UNDER = red)
                           const signalInfo = stats ? getSignalDisplay(stats.dominantSignal) : { label: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
                           
                           return (
@@ -2846,28 +2868,28 @@ export default function ProScannerBot() {
                                   </div>
                                 </div>
                                 
-                                {/* UPDATED: Statistics for this market with improved colors for trading */}
+                                {/* UPDATED: Statistics for this market with improved colors - NO WHITE TEXT */}
                                 {stats && stats.totalTicks > 0 ? (
                                   <div className="grid grid-cols-2 gap-2 text-[9px]">
                                     <div className="flex items-center justify-between">
-                                      <span className="text-white/70">Even:</span>
-                                      <span className={`font-bold ${stats.dominantSignal === 'EVEN' ? 'text-emerald-400 animate-pulse' : 'text-emerald-400/80'}`}>{stats.evenPercentage.toFixed(1)}%</span>
+                                      <span className="text-slate-300">Even:</span>
+                                      <span className={`font-bold ${stats.evenPercentage > 50 ? 'text-emerald-400' : 'text-slate-400'}`}>{stats.evenPercentage.toFixed(1)}%</span>
                                     </div>
                                     <div className="flex items-center justify-between">
-                                      <span className="text-white/70">Odd:</span>
-                                      <span className={`font-bold ${stats.dominantSignal === 'ODD' ? 'text-rose-400 animate-pulse' : 'text-rose-400/80'}`}>{stats.oddPercentage.toFixed(1)}%</span>
+                                      <span className="text-slate-300">Odd:</span>
+                                      <span className={`font-bold ${stats.oddPercentage > 50 ? 'text-red-400' : 'text-slate-400'}`}>{stats.oddPercentage.toFixed(1)}%</span>
                                     </div>
                                     <div className="flex items-center justify-between">
-                                      <span className="text-white/70">Over 4:</span>
-                                      <span className={`font-bold ${stats.dominantSignal === 'OVER' ? 'text-emerald-400 animate-pulse' : 'text-emerald-400/80'}`}>{stats.over4Percentage.toFixed(1)}%</span>
+                                      <span className="text-slate-300">Over 4:</span>
+                                      <span className={`font-bold ${stats.over4Percentage > 50 ? 'text-emerald-400' : 'text-slate-400'}`}>{stats.over4Percentage.toFixed(1)}%</span>
                                     </div>
                                     <div className="flex items-center justify-between">
-                                      <span className="text-white/70">Under 5:</span>
-                                      <span className={`font-bold ${stats.dominantSignal === 'UNDER' ? 'text-rose-400 animate-pulse' : 'text-rose-400/80'}`}>{stats.under5Percentage.toFixed(1)}%</span>
+                                      <span className="text-slate-300">Under 5:</span>
+                                      <span className={`font-bold ${stats.under5Percentage > 50 ? 'text-red-400' : 'text-slate-400'}`}>{stats.under5Percentage.toFixed(1)}%</span>
                                     </div>
                                   </div>
                                 ) : (
-                                  <div className="text-[8px] text-white/60 text-center py-1">
+                                  <div className="text-[8px] text-slate-400 text-center py-1">
                                     Waiting for tick data...
                                   </div>
                                 )}
@@ -2885,7 +2907,7 @@ export default function ProScannerBot() {
                                       <div className={`text-[7px] font-bold px-1.5 py-0.5 rounded ${signalInfo.bg} ${signalInfo.color}`}>
                                         SIGNAL: {signalInfo.label}
                                       </div>
-                                      <div className="text-[7px] text-white/50">
+                                      <div className="text-[7px] text-slate-400">
                                         {stats.totalTicks} ticks
                                       </div>
                                     </div>
@@ -2911,7 +2933,7 @@ export default function ProScannerBot() {
                 </div>
                 
                 {/* Scanner info footer */}
-                <div className="p-2 border-t border-slate-700/30 bg-slate-800/20">
+                <div className="p-2 border-t border-slate-700/30 bg-slate-800/20 shrink-0">
                   <div className="flex items-center justify-between text-[8px] text-slate-500 font-semibold">
                     <span className="flex items-center gap-1">
                       <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -2929,7 +2951,7 @@ export default function ProScannerBot() {
             )}
           </div>
 
-          {/* UPDATED: Strongest Markets Banner - Conditionally Rendered with its own toggle button */}
+          {/* UPDATED: Strongest Markets Banner - Conditionally Rendered with its own toggle button (UPDATED: fixed signal display) */}
           {showStrongestMarkets && (
             <div className="bg-gradient-to-r from-amber-900/30 to-amber-800/30 backdrop-blur-sm border border-amber-500/30 rounded-xl p-3 shadow-xl">
               <div className="flex items-center justify-between mb-2">
@@ -2951,7 +2973,29 @@ export default function ProScannerBot() {
               <div className="overflow-hidden relative">
                 <div className={`flex gap-3 ${scrollSpeed === 'normal' ? 'animate-scroll-markets' : 'animate-scroll-markets-slow'}`}>
                   {[...strongestMarkets, ...strongestMarkets].map((market, idx) => {
-                    const signalInfo = getSignalDisplay(market.dominantSignal);
+                    // UPDATED: Get EXACT signal based on logic (EVEN/ODD/OVER/UNDER)
+                    let exactSignal: string | null = null;
+                    let signalColor = 'text-slate-400';
+                    let signalBg = 'bg-slate-500/20';
+                    
+                    if (market.dominantSignal === 'EVEN') {
+                      exactSignal = 'EVEN';
+                      signalColor = 'text-emerald-400';
+                      signalBg = 'bg-emerald-500/20';
+                    } else if (market.dominantSignal === 'ODD') {
+                      exactSignal = 'ODD';
+                      signalColor = 'text-red-400';
+                      signalBg = 'bg-red-500/20';
+                    } else if (market.dominantSignal === 'OVER') {
+                      exactSignal = 'OVER';
+                      signalColor = 'text-emerald-400';
+                      signalBg = 'bg-emerald-500/20';
+                    } else if (market.dominantSignal === 'UNDER') {
+                      exactSignal = 'UNDER';
+                      signalColor = 'text-red-400';
+                      signalBg = 'bg-red-500/20';
+                    }
+                    
                     return (
                       <div
                         key={`${market.symbol}-${idx}`}
@@ -2978,7 +3022,7 @@ export default function ProScannerBot() {
                           </div>
                           <div>
                             <span className="text-slate-400">Odd:</span>
-                            <span className="text-rose-400 ml-1 font-bold">{market.oddPercentage.toFixed(1)}%</span>
+                            <span className="text-red-400 ml-1 font-bold">{market.oddPercentage.toFixed(1)}%</span>
                           </div>
                           <div>
                             <span className="text-slate-400">Over 4:</span>
@@ -2986,7 +3030,7 @@ export default function ProScannerBot() {
                           </div>
                           <div>
                             <span className="text-slate-400">Under 5:</span>
-                            <span className="text-rose-400 ml-1 font-bold">{market.under5Percentage.toFixed(1)}%</span>
+                            <span className="text-red-400 ml-1 font-bold">{market.under5Percentage.toFixed(1)}%</span>
                           </div>
                         </div>
                         <div className="mt-1 h-1 bg-slate-700 rounded-full overflow-hidden">
@@ -2995,11 +3039,17 @@ export default function ProScannerBot() {
                             style={{ width: `${market.strength}%` }}
                           />
                         </div>
-                        {/* UPDATED: Real signal display */}
+                        {/* UPDATED: Real signal display with exact signal */}
                         <div className="mt-1 flex items-center justify-between">
-                          <div className={`text-[7px] font-bold px-1.5 py-0.5 rounded ${signalInfo.bg} ${signalInfo.color}`}>
-                            SIGNAL: {signalInfo.label}
-                          </div>
+                          {exactSignal ? (
+                            <div className={`text-[7px] font-bold px-1.5 py-0.5 rounded ${signalBg} ${signalColor}`}>
+                              SIGNAL: {exactSignal}
+                            </div>
+                          ) : (
+                            <div className="text-[7px] font-bold px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-400">
+                              SIGNAL: ANALYZING
+                            </div>
+                          )}
                           <div className="text-[7px] text-slate-500">
                             {market.totalTicks} ticks
                           </div>
@@ -3219,7 +3269,7 @@ export default function ProScannerBot() {
                     <tr>
                       <td colSpan={8} className="text-center text-slate-500 py-12">
                         No trades yet — configure and start the bot
-                      </td>
+                       </td>
                     </tr>
                   ) : logEntries.map(e => (
                     <tr key={e.id} className={`border-t border-slate-700/30 hover:bg-slate-800/30 transition-colors ${
