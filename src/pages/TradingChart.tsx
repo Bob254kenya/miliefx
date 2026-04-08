@@ -222,20 +222,18 @@ export const showTPNotification = (type: 'tp' | 'sl', message: string, amount?: 
   }
 };
 
-// Compact Notification Component (300px x 200px)
+// Compact Notification Component
 const NotificationPopup = () => {
   const [notification, setNotification] = useState<{ type: 'tp' | 'sl'; message: string; amount?: number } | null>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
 
-  // Register callback for TP/SL events
   useEffect(() => {
     (window as any).showTPNotification = (type: 'tp' | 'sl', message: string, amount?: number) => {
       setNotification({ type, message, amount });
       setIsVisible(true);
       setIsExiting(false);
       
-      // Auto-hide after 8 seconds
       const timeout = setTimeout(() => {
         handleClose();
       }, 8000);
@@ -262,7 +260,6 @@ const NotificationPopup = () => {
   const isTP = notification.type === 'tp';
   const amount = notification.amount;
 
-  // Generate animated background icons (compact version)
   const backgroundIcons = () => {
     const icons = [];
     const iconCount = 12;
@@ -479,7 +476,6 @@ interface DetectedPattern {
   last15Ticks?: number[];
 }
 
-// Market statistics for continuous scanning
 interface MarketStats {
   symbol: string;
   name: string;
@@ -495,7 +491,7 @@ interface MarketStats {
   under5Percentage: number;
   strength: number;
   lastUpdate: number;
-  dominantSignal: 'EVEN' | 'ODD' | 'OVER' | 'UNDER' | null; // ADDED: real signal for strongest markets
+  dominantSignal: 'EVEN' | 'ODD' | 'OVER' | 'UNDER' | null;
 }
 
 // Constants
@@ -507,12 +503,11 @@ const HEARTBEAT_INTERVAL = 30000;
 const DEBUG = true;
 const BALANCE_SYNC_INTERVAL = 1000;
 const IMMEDIATE_BALANCE_SYNC_DELAY = 50;
-const MARKET_SCROLL_INTERVAL = 25000; // UPDATED: increased to 25 seconds for smoother rotation
+const MARKET_SCROLL_INTERVAL = 25000;
 const PATTERN_DISPLAY_DURATION = 4000;
-const STATS_UPDATE_INTERVAL = 1000; // Update stats every second
-const STRONG_MARKET_THRESHOLD = 55; // Market considered strong if percentage > 55%
+const STATS_UPDATE_INTERVAL = 1000;
+const STRONG_MARKET_THRESHOLD = 55;
 
-// Helper function
 const logDebug = (...args: any[]) => {
   if (DEBUG) console.log('[DEBUG]', new Date().toISOString(), ...args);
 };
@@ -535,7 +530,6 @@ function waitForNextTick(symbol: string): Promise<{ quote: number }> {
   });
 }
 
-// Independent tick storage for Same Direction strategy
 const sameDirectionTickMapRef = new Map<string, number[]>();
 
 const updateSameDirectionTickStorage = (symbol: string, digit: number) => {
@@ -629,10 +623,10 @@ export default function ProScannerBot() {
   const { isAuthorized, balance: apiBalance, activeAccount, refreshBalance } = useAuth();
   const { recordLoss } = useLossRequirement();
 
-  // ADDED: Toggle states for UI sections (DEFAULT: Pattern Detection HIDDEN, Strongest Markets HIDDEN, Live Markets HIDDEN)
-  const [showPatternDetection, setShowPatternDetection] = useState(false); // CHANGED: default false (HIDDEN)
-  const [showLiveMarkets, setShowLiveMarkets] = useState(false); // CHANGED: default false (HIDDEN)
-  const [showStrongestMarkets, setShowStrongestMarkets] = useState(false); // CHANGED: default false (HIDDEN)
+  // Toggle states for UI sections
+  const [showPatternDetection, setShowPatternDetection] = useState(false);
+  const [showLiveMarkets, setShowLiveMarkets] = useState(false);
+  const [showStrongestMarkets, setShowStrongestMarkets] = useState(false);
 
   // Local balance tracking
   const [localBalance, setLocalBalance] = useState(apiBalance);
@@ -641,7 +635,7 @@ export default function ProScannerBot() {
   const netProfitRef = useRef(0);
   const balanceSyncPromiseRef = useRef<Promise<void> | null>(null);
 
-  // Market statistics for continuous scanner
+  // Market statistics
   const [marketStats, setMarketStats] = useState<MarketStats[]>([]);
   const [strongestMarkets, setStrongestMarkets] = useState<MarketStats[]>([]);
   const marketTickCountersRef = useRef<Map<string, { even: number; odd: number; over4: number; under5: number; total: number }>>(new Map());
@@ -717,20 +711,15 @@ export default function ProScannerBot() {
       current.under5++;
     }
     
-    // Calculate percentages and update stats
     const evenPercentage = (current.even / current.total) * 100;
     const oddPercentage = (current.odd / current.total) * 100;
     const over4Percentage = (current.over4 / current.total) * 100;
     const under5Percentage = (current.under5 / current.total) * 100;
     
-    // Calculate market strength (higher percentage means stronger trend)
-    // For even/odd: strength is max(even%, odd%)
-    // For over/under: strength is max(over4%, under5%)
     const directionStrength = Math.max(evenPercentage, oddPercentage);
     const barrierStrength = Math.max(over4Percentage, under5Percentage);
     const strength = Math.max(directionStrength, barrierStrength);
     
-    // ADDED: Determine the dominant signal for the market
     let dominantSignal: 'EVEN' | 'ODD' | 'OVER' | 'UNDER' | null = null;
     if (strength >= STRONG_MARKET_THRESHOLD) {
       if (directionStrength >= barrierStrength) {
@@ -783,7 +772,6 @@ export default function ProScannerBot() {
     }
   }, []);
 
-  // Calculate strongest markets every second
   const updateStrongestMarkets = useCallback(() => {
     setMarketStats(currentStats => {
       const sorted = [...currentStats].sort((a, b) => b.strength - a.strength);
@@ -793,7 +781,6 @@ export default function ProScannerBot() {
     });
   }, []);
 
-  // Start/stop stats calculation
   useEffect(() => {
     statsIntervalRef.current = setInterval(() => {
       updateStrongestMarkets();
@@ -840,9 +827,8 @@ export default function ProScannerBot() {
   const scannerIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
   
-  // Continuous scrolling animation ref
   const scrollingContainerRef = useRef<HTMLDivElement>(null);
-  const [scrollSpeed, setScrollSpeed] = useState<'normal' | 'slow'>('slow'); // CHANGED: default to 'slow' for slower scrolling
+  const [scrollSpeed, setScrollSpeed] = useState<'normal' | 'slow'>('slow');
 
   /* ── Bot state ── */
   const [botStatus, setBotStatus] = useState<BotStatus>('idle');
@@ -857,7 +843,6 @@ export default function ProScannerBot() {
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const logIdRef = useRef(0);
   
-  // Track last trade timestamp per symbol
   const lastTradeTimeRef = useRef<Map<string, number>>(new Map());
   const lastPatternDigitsRef = useRef<Map<string, string>>(new Map());
   const lastTradeOverallRef = useRef<number>(0);
@@ -867,15 +852,12 @@ export default function ProScannerBot() {
   const MAX_CONNECTION_RETRIES = 3;
   const isReconnectingRef = useRef(false);
 
-  /* ── Tick data ── */
   const tickMapRef = useRef<Map<string, number[]>>(new Map());
 
-  // Track if TP/SL notifications have been shown
   const tpNotifiedRef = useRef(false);
   const slNotifiedRef = useRef(false);
   const lastPnlRef = useRef(0);
 
-  // Clear active pattern after display duration
   useEffect(() => {
     if (activePattern) {
       const timer = setTimeout(() => {
@@ -894,7 +876,6 @@ export default function ProScannerBot() {
     }
   }, [tradeResult]);
 
-  // Initialize scanner voice
   useEffect(() => {
     const initVoice = () => {
       try {
@@ -926,9 +907,7 @@ export default function ProScannerBot() {
     };
   }, []);
 
-  // Continuous market scanner animation - runs regardless of bot state
   useEffect(() => {
-    // Initialize market stats
     const initialStats: MarketStats[] = SCANNER_MARKETS.map(market => ({
       symbol: market.symbol,
       name: market.name,
@@ -948,7 +927,6 @@ export default function ProScannerBot() {
     }));
     setMarketStats(initialStats);
     
-    // Shuffle markets for random display
     const shuffled = [...SCANNER_MARKETS];
     for (let i = shuffled.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -956,7 +934,6 @@ export default function ProScannerBot() {
     }
     setScannerMarkers(shuffled);
     
-    // UPDATED: Rotate markets every 25 seconds for slower scrolling (always active)
     scannerIntervalRef.current = setInterval(() => {
       setScannerMarkers(prev => {
         if (prev.length === 0) return [...SCANNER_MARKETS];
@@ -972,43 +949,15 @@ export default function ProScannerBot() {
     };
   }, []);
 
-  // Update scanner voice state based on bot running
   useEffect(() => {
     setIsScannerVoiceActive(isRunning);
   }, [isRunning]);
 
-  const resubscribeToMarkets = useCallback(async () => {
-    if (!derivApi.isConnected) return false;
-    
-    const results = await Promise.allSettled(
-      SCANNER_MARKETS.map(async (market) => {
-        try {
-          if (subscriptionStatusRef.current.get(market.symbol)) {
-            try {
-              await derivApi.unsubscribeTicks?.(market.symbol as MarketSymbol);
-            } catch (e) {
-              // Ignore
-            }
-          }
-          await derivApi.subscribeTicks(market.symbol as MarketSymbol, () => {});
-          subscriptionStatusRef.current.set(market.symbol, true);
-          logDebug(`✅ Subscribed to ${market.symbol}`);
-          return true;
-        } catch (error) {
-          logDebug(`❌ Failed to subscribe to ${market.symbol}:`, error);
-          subscriptionStatusRef.current.set(market.symbol, false);
-          return false;
-        }
-      })
-    );
-    
-    const successCount = results.filter(r => r.status === 'fulfilled' && r.value === true).length;
-    logDebug(`Subscription results: ${successCount}/${SCANNER_MARKETS.length} markets active`);
-    return successCount > 0;
-  }, []);
-
+  // IMPROVED CONNECTION MANAGEMENT
   const ensureConnection = useCallback(async (): Promise<boolean> => {
+    // Check if already connected and has fresh data
     if (derivApi.isConnected) {
+      // Verify we're getting fresh data
       let hasFreshData = false;
       for (const market of SCANNER_MARKETS.slice(0, 5)) {
         const lastTickTime = lastTickTimeRef.current.get(market.symbol);
@@ -1023,20 +972,39 @@ export default function ProScannerBot() {
         isReconnectingRef.current = false;
         return true;
       } else {
-        logDebug('Connection active but no fresh data, attempting resubscription...');
-        await resubscribeToMarkets();
-        await new Promise(r => setTimeout(r, 2000));
+        logDebug('Connection active but no fresh data, resubscribing...');
+        // Resubscribe to all markets
+        await Promise.allSettled(
+          SCANNER_MARKETS.map(async (market) => {
+            try {
+              if (subscriptionStatusRef.current.get(market.symbol)) {
+                await derivApi.unsubscribeTicks?.(market.symbol as MarketSymbol);
+              }
+              await derivApi.subscribeTicks(market.symbol as MarketSymbol, () => {});
+              subscriptionStatusRef.current.set(market.symbol, true);
+            } catch (e) {
+              logDebug(`Failed to resubscribe to ${market.symbol}:`, e);
+            }
+          })
+        );
         
+        // Wait for data to come in
+        await new Promise(r => setTimeout(r, 3000));
+        
+        // Verify we have data now
         for (const market of SCANNER_MARKETS.slice(0, 5)) {
           const lastTickTime = lastTickTimeRef.current.get(market.symbol);
           if (lastTickTime && Date.now() - lastTickTime < DATA_STALENESS_THRESHOLD) {
             return true;
           }
         }
+        
+        // Still no data, disconnect and reconnect
         derivApi.disconnect?.();
       }
     }
 
+    // Prevent multiple reconnection attempts
     if (isReconnectingRef.current) {
       logDebug('Already reconnecting, skipping...');
       return false;
@@ -1048,11 +1016,31 @@ export default function ProScannerBot() {
     for (let i = 0; i < MAX_CONNECTION_RETRIES; i++) {
       try {
         logDebug(`Connection attempt ${i + 1}/${MAX_CONNECTION_RETRIES}`);
+        
+        // Disconnect if already connected
+        if (derivApi.isConnected) {
+          derivApi.disconnect?.();
+          await new Promise(r => setTimeout(r, 1000));
+        }
+        
         await derivApi.connect();
         await new Promise(r => setTimeout(r, 2000));
         
         if (derivApi.isConnected) {
-          await resubscribeToMarkets();
+          // Subscribe to all markets
+          await Promise.allSettled(
+            SCANNER_MARKETS.map(async (market) => {
+              try {
+                await derivApi.subscribeTicks(market.symbol as MarketSymbol, () => {});
+                subscriptionStatusRef.current.set(market.symbol, true);
+                logDebug(`✅ Subscribed to ${market.symbol}`);
+              } catch (error) {
+                logDebug(`❌ Failed to subscribe to ${market.symbol}:`, error);
+                subscriptionStatusRef.current.set(market.symbol, false);
+              }
+            })
+          );
+          
           await new Promise(r => setTimeout(r, 3000));
           setBotStatus(runningRef.current ? 'trading_m1' : 'idle');
           connectionRetryCountRef.current = 0;
@@ -1070,23 +1058,28 @@ export default function ProScannerBot() {
     isReconnectingRef.current = false;
     logDebug('Reconnection failed after all attempts');
     return false;
-  }, [resubscribeToMarkets]);
+  }, []);
 
-  // Enhanced connection monitoring
+  // Improved connection monitoring
   useEffect(() => {
     let connectionChecker: NodeJS.Timeout;
     let dataStalenessChecker: NodeJS.Timeout;
     
     if (isRunning) {
-      connectionChecker = setInterval(() => {
+      connectionChecker = setInterval(async () => {
         if (!derivApi.isConnected && !isReconnectingRef.current) {
           logDebug('Connection lost, attempting to reconnect...');
-          ensureConnection().catch(console.error);
+          const reconnected = await ensureConnection();
+          if (!reconnected && runningRef.current) {
+            // If reconnection fails and bot should be running, stop the bot
+            logDebug('Failed to reconnect, stopping bot...');
+            stopBot();
+          }
         }
       }, CONNECTION_CHECK_INTERVAL);
       
-      dataStalenessChecker = setInterval(() => {
-        if (derivApi.isConnected && !isReconnectingRef.current) {
+      dataStalenessChecker = setInterval(async () => {
+        if (derivApi.isConnected && !isReconnectingRef.current && runningRef.current) {
           let staleCount = 0;
           for (const market of SCANNER_MARKETS) {
             const lastTickTime = lastTickTimeRef.current.get(market.symbol);
@@ -1095,8 +1088,8 @@ export default function ProScannerBot() {
             }
           }
           if (staleCount > SCANNER_MARKETS.length / 2) {
-            logDebug(`Data staleness detected (${staleCount}/${SCANNER_MARKETS.length} markets stale), resubscribing...`);
-            resubscribeToMarkets().catch(console.error);
+            logDebug(`Data staleness detected (${staleCount}/${SCANNER_MARKETS.length} markets stale), refreshing subscriptions...`);
+            await ensureConnection();
           }
         }
       }, 10000);
@@ -1106,15 +1099,16 @@ export default function ProScannerBot() {
       if (connectionChecker) clearInterval(connectionChecker);
       if (dataStalenessChecker) clearInterval(dataStalenessChecker);
     };
-  }, [isRunning, ensureConnection, resubscribeToMarkets]);
+  }, [isRunning, ensureConnection]);
 
   // Heartbeat mechanism
   useEffect(() => {
     if (!derivApi.isConnected || !isRunning) return;
     
     const heartbeat = setInterval(() => {
-      if (!derivApi.isConnected) {
-        if (isRunning) stopBot();
+      if (!derivApi.isConnected && runningRef.current) {
+        logDebug('Heartbeat failed, stopping bot...');
+        stopBot();
       }
     }, HEARTBEAT_INTERVAL);
     
@@ -1122,14 +1116,21 @@ export default function ProScannerBot() {
   }, [isRunning]);
 
   const stopBot = useCallback(() => {
+    logDebug('Stopping bot...');
     runningRef.current = false;
     setIsRunning(false);
     setBotStatus('idle');
     setIsScannerVoiceActive(false);
-    logDebug('Bot stopped by user');
+    
+    // Clear any pending timeouts/intervals
+    if (statsIntervalRef.current) {
+      clearInterval(statsIntervalRef.current);
+    }
+    
+    logDebug('Bot stopped successfully');
   }, []);
 
-  // Initial subscription and tick handler - includes market stats update
+  // Initial subscription and tick handler
   useEffect(() => {
     let active = true;
     let reconnectTimeout: NodeJS.Timeout;
@@ -1143,7 +1144,17 @@ export default function ProScannerBot() {
         }
       }
       if (active && derivApi.isConnected) {
-        await resubscribeToMarkets();
+        await Promise.allSettled(
+          SCANNER_MARKETS.map(async (market) => {
+            try {
+              await derivApi.subscribeTicks(market.symbol as MarketSymbol, () => {});
+              subscriptionStatusRef.current.set(market.symbol, true);
+            } catch (error) {
+              logDebug(`Failed to subscribe to ${market.symbol}:`, error);
+              subscriptionStatusRef.current.set(market.symbol, false);
+            }
+          })
+        );
       }
     };
     
@@ -1159,11 +1170,8 @@ export default function ProScannerBot() {
       }
       
       lastTickTimeRef.current.set(sym, Date.now());
-      
-      // Update market statistics for continuous scanner
       updateMarketStats(sym, digit);
       
-      // Update existing tick storage
       const map = tickMapRef.current;
       let arr = map.get(sym);
       if (!arr) {
@@ -1173,7 +1181,6 @@ export default function ProScannerBot() {
       arr.push(digit);
       if (arr.length > 200) arr.shift();
       
-      // Independent Same Direction tick storage
       updateSameDirectionTickStorage(sym, digit);
       
       if (!subscriptionStatusRef.current.get(sym)) {
@@ -1192,7 +1199,7 @@ export default function ProScannerBot() {
         derivApi.unsubscribeTicks?.(m.symbol as MarketSymbol).catch(() => {});
       });
     };
-  }, [resubscribeToMarkets, updateMarketStats]);
+  }, [updateMarketStats]);
 
   // Monitor TP/SL and show notifications
   useEffect(() => {
@@ -1223,15 +1230,11 @@ export default function ProScannerBot() {
   const isDataFresh = useCallback((symbol: string): boolean => {
     const lastTickTime = lastTickTimeRef.current.get(symbol);
     if (!lastTickTime) {
-      logDebug(`No data for ${symbol}`);
       return false;
     }
     const isFresh = Date.now() - lastTickTime < DATA_STALENESS_THRESHOLD;
-    if (!isFresh) {
-      logDebug(`Stale data for ${symbol}, last tick: ${new Date(lastTickTime).toISOString()}`);
-      if (derivApi.isConnected) {
-        derivApi.subscribeTicks(symbol as MarketSymbol, () => {}).catch(() => {});
-      }
+    if (!isFresh && derivApi.isConnected) {
+      derivApi.subscribeTicks(symbol as MarketSymbol, () => {}).catch(() => {});
     }
     return isFresh;
   }, []);
@@ -2146,21 +2149,30 @@ export default function ProScannerBot() {
   }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, activeAccount, recordLoss, ensureConnection, updateBalanceAndProfit, updatePatternResult]);
 
   const startBot = useCallback(async () => {
-    if (!isAuthorized || isRunning) return;
+    if (!isAuthorized || isRunning) {
+      logDebug('Cannot start: not authorized or already running');
+      return;
+    }
+    
+    logDebug('Starting bot...');
     
     const connected = await ensureConnection();
     if (!connected) {
+      logDebug('Failed to establish connection');
       return;
     }
     
     const baseStake = parseFloat(stake);
     if (baseStake < 0.35) { 
+      logDebug('Stake too low, minimum 0.35');
       return; 
     }
     if (!m1Enabled && !m2Enabled) { 
+      logDebug('Both markets disabled');
       return; 
     }
 
+    // Reset all state before starting
     setIsRunning(true);
     runningRef.current = true;
     setCurrentMarket(1);
@@ -2184,6 +2196,7 @@ export default function ProScannerBot() {
     setWins(0);
     setLosses(0);
     setTotalStaked(0);
+    setLogEntries([]); // Clear old logs
 
     let cStake = baseStake;
     let mStep = 0;
@@ -2193,9 +2206,12 @@ export default function ProScannerBot() {
     let waitingForPatternAfterLoss = false;
 
     while (runningRef.current) {
+      // Check connection status before each trade attempt
       if (!derivApi.isConnected) {
+        logDebug('Connection lost during trading, attempting reconnect...');
         const reconnected = await ensureConnection();
         if (!reconnected) {
+          logDebug('Failed to reconnect, stopping bot');
           break;
         }
       }
@@ -2320,7 +2336,10 @@ export default function ProScannerBot() {
       mStep = result.mStep;
       inRecovery = result.inRecovery;
 
-      if (result.shouldBreak) break;
+      if (result.shouldBreak) {
+        logDebug('Break condition met, stopping bot');
+        break;
+      }
 
       await new Promise(r => setTimeout(r, 1000));
     }
@@ -2401,7 +2420,6 @@ export default function ProScannerBot() {
 
   const hasDetectedPatterns = detectedPatterns.length > 0;
 
-  // Helper to get market strength display
   const getStrengthDisplay = (strength: number) => {
     if (strength >= 70) return { text: 'VERY STRONG', color: 'text-emerald-400', bg: 'bg-emerald-500/20' };
     if (strength >= 55) return { text: 'STRONG', color: 'text-cyan-400', bg: 'bg-cyan-500/20' };
@@ -2409,7 +2427,6 @@ export default function ProScannerBot() {
     return { text: 'WEAK', color: 'text-slate-400', bg: 'bg-slate-500/20' };
   };
 
-  // Helper to get signal display color and label (UPDATED: EVEN/OVER = green, ODD/UNDER = red)
   const getSignalDisplay = (signal: string | null) => {
     if (!signal) return { label: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
     switch (signal) {
@@ -2421,12 +2438,10 @@ export default function ProScannerBot() {
     }
   };
 
-  // UPDATED: Determine layout based on visible sections
   const isPatternVisible = showPatternDetection;
   const isLiveMarketsVisible = showLiveMarkets;
   const isStrongestVisible = showStrongestMarkets;
 
-  // UPDATED: Conditional grid classes for Pattern + Live Markets section
   const getPatternLiveGridClass = () => {
     if (isPatternVisible && isLiveMarketsVisible) return 'grid-cols-1 lg:grid-cols-2';
     return 'grid-cols-1';
@@ -2633,7 +2648,7 @@ export default function ProScannerBot() {
             )}
           </div>
 
-          {/* ADDED: Global Toggle Row for Pattern Detection, Live Markets, and Strongest Markets */}
+          {/* Global Toggle Row */}
           <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl p-3 shadow-xl flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
@@ -2666,11 +2681,11 @@ export default function ProScannerBot() {
             </div>
           </div>
 
-          {/* UPDATED: TWO DIVS SIDE BY SIDE - Pattern Detection and Live Markets (Conditional) */}
+          {/* Pattern Detection and Live Markets - UPDATED with same height as Trade Report */}
           <div className={`grid ${getPatternLiveGridClass()} gap-3`}>
-            {/* Pattern Detection Container - Conditional (UPDATED: reduced height by 30px) */}
+            {/* Pattern Detection Container - Height reduced to match Trade Report */}
             {showPatternDetection && (
-              <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl h-[370px] flex flex-col">
+              <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl h-[300px] flex flex-col">
                 <div className="p-3 border-b border-slate-700/50 flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-2">
                     <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
@@ -2687,7 +2702,6 @@ export default function ProScannerBot() {
                       </div>
                     )}
                   </div>
-                  {/* ADDED: Toggle button inside Pattern Detection container */}
                   <button
                     onClick={() => setShowPatternDetection(false)}
                     className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800/50 text-slate-400 hover:text-red-400 transition-colors"
@@ -2728,7 +2742,7 @@ export default function ProScannerBot() {
                   </div>
                 </div>
                 
-                {/* Detected Patterns Display (UPDATED: height adjusted) */}
+                {/* Detected Patterns Display */}
                 <div className="flex-1 overflow-y-auto min-h-0">
                   {detectedPatterns.length === 0 ? (
                     <div className="h-full flex items-center justify-center">
@@ -2781,7 +2795,7 @@ export default function ProScannerBot() {
               </div>
             )}
 
-            {/* Live Markets Scanner Container - CONTINUOUS SCROLLING - Conditional (UPDATED: increased font sizes and colors) */}
+            {/* Live Markets Scanner Container */}
             {showLiveMarkets && (
               <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-emerald-500/30 rounded-xl shadow-xl overflow-hidden h-[400px] flex flex-col">
                 <div className="p-3 border-b border-slate-700/50 bg-slate-800/30 flex items-center justify-between shrink-0">
@@ -2794,7 +2808,6 @@ export default function ProScannerBot() {
                     </h3>
                   </div>
                   <div className="flex items-center gap-3">
-                    {/* UPDATED: Scroll speed toggle inside Live Markets container */}
                     <div className="flex gap-1">
                       <button
                         onClick={() => setScrollSpeed('normal')}
@@ -2822,7 +2835,6 @@ export default function ProScannerBot() {
                       </span>
                       <span className="text-[9px] text-emerald-400 font-bold">LIVE</span>
                     </div>
-                    {/* ADDED: Toggle button inside Live Markets container */}
                     <button
                       onClick={() => setShowLiveMarkets(false)}
                       className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800/50 text-slate-400 hover:text-red-400 transition-colors"
@@ -2833,18 +2845,16 @@ export default function ProScannerBot() {
                   </div>
                 </div>
                 
-                {/* Animated Scrolling Markets Container - Continuous scrolling even when bot is off (UPDATED: fixed font colors - no white text) */}
+                {/* Animated Scrolling Markets Container */}
                 <div className="relative flex-1 overflow-hidden bg-slate-900/50 min-h-0">
                   {scannerMarkers.length > 0 ? (
                     <div className="absolute inset-0">
-                      {/* Voice wave overlay when bot is running */}
                       {isRunning && (
                         <div className="absolute inset-0 pointer-events-none z-10">
                           <div className={`absolute inset-0 bg-gradient-to-t from-emerald-500/0 via-emerald-500/5 to-transparent ${isScannerVoiceActive ? 'animate-pulse' : ''}`} />
                         </div>
                       )}
                       
-                      {/* Scrolling items - continuous smooth scrolling */}
                       <div 
                         className={`absolute left-0 right-0 ${scrollSpeed === 'normal' ? 'animate-scroll-markets' : 'animate-scroll-markets-slow'}`}
                         style={{ animationDuration: scrollSpeed === 'normal' ? '20s' : '45s' }}
@@ -2852,8 +2862,6 @@ export default function ProScannerBot() {
                         {[...scannerMarkers, ...scannerMarkers].map((market, idx) => {
                           const stats = marketStats.find(s => s.symbol === market.symbol);
                           const strengthInfo = stats ? getStrengthDisplay(stats.strength) : { text: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
-                          
-                          // UPDATED: Get signal info for live markets display (EVEN/OVER = green, ODD/UNDER = red)
                           const signalInfo = stats ? getSignalDisplay(stats.dominantSignal) : { label: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
                           
                           return (
@@ -2878,7 +2886,6 @@ export default function ProScannerBot() {
                                   </div>
                                 </div>
                                 
-                                {/* UPDATED: Statistics for this market with improved colors - NO WHITE TEXT */}
                                 {stats && stats.totalTicks > 0 ? (
                                   <div className="grid grid-cols-2 gap-2 text-[11px]">
                                     <div className="flex items-center justify-between">
@@ -2904,7 +2911,6 @@ export default function ProScannerBot() {
                                   </div>
                                 )}
                                 
-                                {/* UPDATED: Strength bar and signal display */}
                                 {stats && stats.totalTicks > 0 && (
                                   <>
                                     <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
@@ -2942,7 +2948,6 @@ export default function ProScannerBot() {
                   )}
                 </div>
                 
-                {/* Scanner info footer */}
                 <div className="p-2 border-t border-slate-700/30 bg-slate-800/20 shrink-0">
                   <div className="flex items-center justify-between text-[9px] text-slate-500 font-semibold">
                     <span className="flex items-center gap-1">
@@ -2961,7 +2966,7 @@ export default function ProScannerBot() {
             )}
           </div>
 
-          {/* UPDATED: Strongest Markets Banner - Conditionally Rendered with its own toggle button (UPDATED: fixed signal display) */}
+          {/* Strongest Markets Banner */}
           {showStrongestMarkets && (
             <div className="bg-gradient-to-r from-amber-900/30 to-amber-800/30 backdrop-blur-sm border border-amber-500/30 rounded-xl p-3 shadow-xl">
               <div className="flex items-center justify-between mb-2">
@@ -2971,7 +2976,6 @@ export default function ProScannerBot() {
                   </div>
                   <h3 className="text-xs font-bold text-amber-400">🔥 STRONGEST MARKETS (Last 1000+ Ticks)</h3>
                 </div>
-                {/* ADDED: Toggle button inside Strongest Markets container */}
                 <button
                   onClick={() => setShowStrongestMarkets(false)}
                   className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800/50 text-slate-400 hover:text-red-400 transition-colors"
@@ -2983,7 +2987,6 @@ export default function ProScannerBot() {
               <div className="overflow-hidden relative">
                 <div className={`flex gap-3 ${scrollSpeed === 'normal' ? 'animate-scroll-markets' : 'animate-scroll-markets-slow'}`}>
                   {[...strongestMarkets, ...strongestMarkets].map((market, idx) => {
-                    // UPDATED: Get EXACT signal based on logic (EVEN/ODD/OVER/UNDER)
                     let exactSignal: string | null = null;
                     let signalColor = 'text-slate-400';
                     let signalBg = 'bg-slate-500/20';
@@ -3049,7 +3052,6 @@ export default function ProScannerBot() {
                             style={{ width: `${market.strength}%` }}
                           />
                         </div>
-                        {/* UPDATED: Real signal display with exact signal */}
                         <div className="mt-1 flex items-center justify-between">
                           {exactSignal ? (
                             <div className={`text-[7px] font-bold px-1.5 py-0.5 rounded ${signalBg} ${signalColor}`}>
@@ -3072,7 +3074,7 @@ export default function ProScannerBot() {
             </div>
           )}
 
-          {/* NEW: Active Pattern Display */}
+          {/* Active Pattern Display */}
           {activePattern && (
             <div className={`w-full bg-gradient-to-br from-slate-900/95 to-slate-800/95 backdrop-blur-sm rounded-xl shadow-2xl overflow-hidden border-2 ${activePattern.result === 'Win' ? 'border-emerald-500/50 animate-blink-green' : activePattern.result === 'Loss' ? 'border-rose-500/50 animate-blink-red' : 'border-amber-500/50'} transition-all duration-300`}>
               <div className="p-4">
@@ -3113,7 +3115,6 @@ export default function ProScannerBot() {
                   </div>
                 </div>
                 
-                {/* Last 15 Ticks Display */}
                 <div className="bg-slate-800/50 rounded-lg p-3 mb-3">
                   <div className="text-[8px] text-slate-400 mb-2 text-center font-semibold">LAST 15 TICKS PATTERN</div>
                   <div className="flex flex-wrap justify-center gap-1">
@@ -3189,7 +3190,7 @@ export default function ProScannerBot() {
             </div>
           </div>
 
-          {/* SINGLE Start/Stop Button Below Trade Report */}
+          {/* Start/Stop Button */}
           <div className="flex justify-center w-full">
             <button
               onClick={isRunning ? stopBot : startBot}
@@ -3246,7 +3247,7 @@ export default function ProScannerBot() {
             </button>
           </div>
 
-           {/* Activity Log - Full Width */}
+          {/* Activity Log - Full Width */}
           <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
             <div className="px-4 py-3 border-b border-slate-700/50 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
@@ -3260,7 +3261,7 @@ export default function ProScannerBot() {
                 <Trash2 className="w-3.5 h-3.5" />
               </Button>
             </div>
-            <div className="max-h-[500px] overflow-auto">
+            <div className="max-h-[300px] overflow-auto">
               <table className="w-full text-[11px]">
                 <thead className="text-[10px] text-slate-400 bg-slate-800/50 sticky top-0">
                   <tr>
@@ -3321,7 +3322,6 @@ export default function ProScannerBot() {
         </div>
       </div>
       
-      {/* Compact Centered Notification Popup */}
       <NotificationPopup />
     </>
   );
