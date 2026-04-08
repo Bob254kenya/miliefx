@@ -222,7 +222,7 @@ export const showTPNotification = (type: 'tp' | 'sl', message: string, amount?: 
   }
 };
 
-// Compact Notification Component (300px x 200px)
+// Compact Notification Component
 const NotificationPopup = () => {
   const [notification, setNotification] = useState<{ type: 'tp' | 'sl'; message: string; amount?: number } | null>(null);
   const [isVisible, setIsVisible] = useState(false);
@@ -508,8 +508,8 @@ const BALANCE_SYNC_INTERVAL = 1000;
 const IMMEDIATE_BALANCE_SYNC_DELAY = 50;
 const MARKET_SCROLL_INTERVAL = 10000;
 const PATTERN_DISPLAY_DURATION = 4000;
-const STATS_UPDATE_INTERVAL = 1000; // Update stats every second
-const STRONG_MARKET_THRESHOLD = 55; // Market considered strong if percentage > 55%
+const STATS_UPDATE_INTERVAL = 1000;
+const STRONG_MARKET_THRESHOLD = 55;
 
 // Helper function
 const logDebug = (...args: any[]) => {
@@ -721,9 +721,7 @@ export default function ProScannerBot() {
     const over4Percentage = (current.over4 / current.total) * 100;
     const under5Percentage = (current.under5 / current.total) * 100;
     
-    // Calculate market strength (higher percentage means stronger trend)
-    // For even/odd: strength is max(even%, odd%)
-    // For over/under: strength is max(over4%, under5%)
+    // Calculate market strength
     const directionStrength = Math.max(evenPercentage, oddPercentage);
     const barrierStrength = Math.max(over4Percentage, under5Percentage);
     const strength = Math.max(directionStrength, barrierStrength);
@@ -824,7 +822,7 @@ export default function ProScannerBot() {
   const [isScannerVoiceActive, setIsScannerVoiceActive] = useState(false);
   const [scannerMarkers, setScannerMarkers] = useState<typeof SCANNER_MARKETS>([]);
   const scannerIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
+  const voiceAudioRef = useRef<any>(null);
   
   // Continuous scrolling animation ref
   const scrollingContainerRef = useRef<HTMLDivElement>(null);
@@ -879,38 +877,6 @@ export default function ProScannerBot() {
       return () => clearTimeout(timer);
     }
   }, [tradeResult]);
-
-  // Initialize scanner voice
-  useEffect(() => {
-    const initVoice = () => {
-      try {
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const oscillator = audioContext.createOscillator();
-        const gainNode = audioContext.createGain();
-        oscillator.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-        oscillator.type = 'sine';
-        oscillator.frequency.value = 880;
-        gainNode.gain.value = 0;
-        oscillator.start();
-        
-        voiceAudioRef.current = {
-          play: () => {
-            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 0.5);
-          }
-        } as any;
-      } catch (e) {
-        console.log('Audio not supported');
-      }
-    };
-    
-    initVoice();
-    
-    return () => {
-      if (scannerIntervalRef.current) clearInterval(scannerIntervalRef.current);
-    };
-  }, []);
 
   // Continuous market scanner animation - runs regardless of bot state
   useEffect(() => {
@@ -2538,7 +2504,6 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
-                      <SelectItem disabled>Over/Under (last digits pattern based) Reversal Direction</SelectItem>
                       <SelectItem value="over0_under9_1">🎯 Over 0 / Under 9 (1 tick)</SelectItem>
                       <SelectItem value="over0_under9_2">🎯 Over 0 / Under 9 (2 ticks)</SelectItem>
                       <SelectItem value="over0_under9_3">🎯 Over 0 / Under 9 (3 ticks)</SelectItem>
@@ -2596,7 +2561,6 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
-                      <SelectItem disabled>Even/Odd (last digits pattern based) Reversal Direction</SelectItem>
                       <SelectItem value="odd_even_3">🔄 Even / Odd (3 ticks)</SelectItem>
                       <SelectItem value="odd_even_4">🔄 Even / Odd (4 ticks)</SelectItem>
                       <SelectItem value="odd_even_5">🔄 Even / Odd (5 ticks)</SelectItem>
@@ -2604,7 +2568,6 @@ export default function ProScannerBot() {
                       <SelectItem value="odd_even_7">🔄 Even / Odd (7 ticks)</SelectItem>
                       <SelectItem value="odd_even_8">🔄 Even / Odd (8 ticks)</SelectItem>
                       <SelectItem value="odd_even_9">🔄 Even / Odd (9 ticks)</SelectItem>
-                      <SelectItem disabled>Over/Under (last digits pattern based) Reversal Direction</SelectItem>
                       <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                       <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
                       <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
@@ -2612,7 +2575,6 @@ export default function ProScannerBot() {
                       <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
                       <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                       <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
-                      <SelectItem disabled>Even/Odd (last digits pattern based) Same Direction</SelectItem>
                       <SelectItem value="same_direction_3">🔢 Even/Odd (3 ticks)</SelectItem>
                       <SelectItem value="same_direction_4">🔢 Even/Odd (4 ticks)</SelectItem>
                       <SelectItem value="same_direction_5">🔢 Even/Odd (5 ticks)</SelectItem>
