@@ -630,9 +630,9 @@ export default function ProScannerBot() {
   const { recordLoss } = useLossRequirement();
 
   // ADDED: Toggle states for UI sections
-  const [showPatternDetection, setShowPatternDetection] = useState(true);
+  const [showPatternDetection, setShowPatternDetection] = useState(false); // CHANGED: default to hidden
   const [showLiveMarkets, setShowLiveMarkets] = useState(true);
-  const [showStrongestMarkets, setShowStrongestMarkets] = useState(true);
+  const [showStrongestMarkets, setShowStrongestMarkets] = useState(false); // CHANGED: default to hidden
 
   // Local balance tracking
   const [localBalance, setLocalBalance] = useState(apiBalance);
@@ -2414,9 +2414,9 @@ export default function ProScannerBot() {
     if (!signal) return { label: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
     switch (signal) {
       case 'EVEN': return { label: 'EVEN', color: 'text-emerald-400', bg: 'bg-emerald-500/20' };
-      case 'ODD': return { label: 'ODD', color: 'text-red-400', bg: 'bg-red-500/20' };
+      case 'ODD': return { label: 'ODD', color: 'text-rose-400', bg: 'bg-rose-500/20' };
       case 'OVER': return { label: 'OVER', color: 'text-emerald-400', bg: 'bg-emerald-500/20' };
-      case 'UNDER': return { label: 'UNDER', color: 'text-red-400', bg: 'bg-red-500/20' };
+      case 'UNDER': return { label: 'UNDER', color: 'text-rose-400', bg: 'bg-rose-500/20' };
       default: return { label: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
     }
   };
@@ -2698,8 +2698,8 @@ export default function ProScannerBot() {
                   </div>
                 </div>
                 
-                {/* Detected Patterns Display */}
-                <div className="h-[200px] overflow-y-auto">
+                {/* Detected Patterns Display - REDUCED HEIGHT by 30px (was 200px, now 170px) */}
+                <div className="h-[170px] overflow-y-auto">
                   {detectedPatterns.length === 0 ? (
                     <div className="h-full flex items-center justify-center">
                       <p className="text-[10px] text-slate-500 font-semibold">Waiting for pattern detection...</p>
@@ -2801,8 +2801,8 @@ export default function ProScannerBot() {
                   </div>
                 </div>
                 
-                {/* Animated Scrolling Markets Container - Continuous scrolling even when bot is off */}
-                <div className="relative h-[400px] overflow-hidden bg-slate-900/50">
+                {/* Animated Scrolling Markets Container - Continuous scrolling even when bot is off - REDUCED HEIGHT by 30px (was 400px, now 370px) */}
+                <div className="relative h-[370px] overflow-hidden bg-slate-900/50">
                   {scannerMarkers.length > 0 ? (
                     <div className="absolute inset-0">
                       {/* Voice wave overlay when bot is running */}
@@ -2821,7 +2821,7 @@ export default function ProScannerBot() {
                           const stats = marketStats.find(s => s.symbol === market.symbol);
                           const strengthInfo = stats ? getStrengthDisplay(stats.strength) : { text: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
                           
-                          // UPDATED: Get signal info for live markets display
+                          // UPDATED: Get signal info for live markets display with improved colors for trading
                           const signalInfo = stats ? getSignalDisplay(stats.dominantSignal) : { label: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
                           
                           return (
@@ -2846,24 +2846,24 @@ export default function ProScannerBot() {
                                   </div>
                                 </div>
                                 
-                                {/* UPDATED: Statistics for this market with improved colors */}
+                                {/* UPDATED: Statistics for this market with improved colors for trading */}
                                 {stats && stats.totalTicks > 0 ? (
                                   <div className="grid grid-cols-2 gap-2 text-[9px]">
                                     <div className="flex items-center justify-between">
                                       <span className="text-white/70">Even:</span>
-                                      <span className={`font-bold text-emerald-400`}>{stats.evenPercentage.toFixed(1)}%</span>
+                                      <span className={`font-bold ${stats.dominantSignal === 'EVEN' ? 'text-emerald-400 animate-pulse' : 'text-emerald-400/80'}`}>{stats.evenPercentage.toFixed(1)}%</span>
                                     </div>
                                     <div className="flex items-center justify-between">
                                       <span className="text-white/70">Odd:</span>
-                                      <span className={`font-bold text-red-400`}>{stats.oddPercentage.toFixed(1)}%</span>
+                                      <span className={`font-bold ${stats.dominantSignal === 'ODD' ? 'text-rose-400 animate-pulse' : 'text-rose-400/80'}`}>{stats.oddPercentage.toFixed(1)}%</span>
                                     </div>
                                     <div className="flex items-center justify-between">
                                       <span className="text-white/70">Over 4:</span>
-                                      <span className={`font-bold text-emerald-400`}>{stats.over4Percentage.toFixed(1)}%</span>
+                                      <span className={`font-bold ${stats.dominantSignal === 'OVER' ? 'text-emerald-400 animate-pulse' : 'text-emerald-400/80'}`}>{stats.over4Percentage.toFixed(1)}%</span>
                                     </div>
                                     <div className="flex items-center justify-between">
                                       <span className="text-white/70">Under 5:</span>
-                                      <span className={`font-bold text-red-400`}>{stats.under5Percentage.toFixed(1)}%</span>
+                                      <span className={`font-bold ${stats.dominantSignal === 'UNDER' ? 'text-rose-400 animate-pulse' : 'text-rose-400/80'}`}>{stats.under5Percentage.toFixed(1)}%</span>
                                     </div>
                                   </div>
                                 ) : (
@@ -2978,7 +2978,7 @@ export default function ProScannerBot() {
                           </div>
                           <div>
                             <span className="text-slate-400">Odd:</span>
-                            <span className="text-red-400 ml-1 font-bold">{market.oddPercentage.toFixed(1)}%</span>
+                            <span className="text-rose-400 ml-1 font-bold">{market.oddPercentage.toFixed(1)}%</span>
                           </div>
                           <div>
                             <span className="text-slate-400">Over 4:</span>
@@ -2986,7 +2986,7 @@ export default function ProScannerBot() {
                           </div>
                           <div>
                             <span className="text-slate-400">Under 5:</span>
-                            <span className="text-red-400 ml-1 font-bold">{market.under5Percentage.toFixed(1)}%</span>
+                            <span className="text-rose-400 ml-1 font-bold">{market.under5Percentage.toFixed(1)}%</span>
                           </div>
                         </div>
                         <div className="mt-1 h-1 bg-slate-700 rounded-full overflow-hidden">
