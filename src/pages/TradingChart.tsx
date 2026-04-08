@@ -868,12 +868,40 @@ export default function ProScannerBot() {
     return successCount > 0;
   }, []);
 
-  // Connection management - IMPROVED
+  // Enhanced connection management with auto-reconnect and data freshness check
   const ensureConnection = useCallback(async (): Promise<boolean> => {
     if (derivApi.isConnected) {
-      connectionRetryCountRef.current = 0;
-      isReconnectingRef.current = false;
-      return true;
+      // Verify data is flowing by checking a few markets
+      let hasFreshData = false;
+      for (const market of SCANNER_MARKETS.slice(0, 5)) {
+        const lastTickTime = lastTickTimeRef.current.get(market.symbol);
+        if (lastTickTime && Date.now() - lastTickTime < DATA_STALENESS_THRESHOLD) {
+          hasFreshData = true;
+          break;
+        }
+      }
+      
+      if (hasFreshData) {
+        connectionRetryCountRef.current = 0;
+        isReconnectingRef.current = false;
+        return true;
+      } else {
+        logDebug('Connection active but no fresh data, attempting resubscription...');
+        await resubscribeToMarkets();
+        // Wait a moment for data to arrive
+        await new Promise(r => setTimeout(r, 2000));
+        
+        // Check again
+        for (const market of SCANNER_MARKETS.slice(0, 5)) {
+          const lastTickTime = lastTickTimeRef.current.get(market.symbol);
+          if (lastTickTime && Date.now() - lastTickTime < DATA_STALENESS_THRESHOLD) {
+            return true;
+          }
+        }
+        // Still no data, force reconnect
+        logDebug('No fresh data after resubscription, forcing reconnect');
+        derivApi.disconnect?.();
+      }
     }
 
     if (isReconnectingRef.current) {
@@ -892,6 +920,8 @@ export default function ProScannerBot() {
         
         if (derivApi.isConnected) {
           await resubscribeToMarkets();
+          // Wait for initial ticks to arrive
+          await new Promise(r => setTimeout(r, 3000));
           setBotStatus(runningRef.current ? 'trading_m1' : 'idle');
           connectionRetryCountRef.current = 0;
           isReconnectingRef.current = false;
@@ -910,23 +940,44 @@ export default function ProScannerBot() {
     return false;
   }, [resubscribeToMarkets]);
 
-  // Connection monitoring - IMPROVED
+  // Enhanced connection monitoring with auto-reconnect
   useEffect(() => {
     let connectionChecker: NodeJS.Timeout;
+    let dataStalenessChecker: NodeJS.Timeout;
     
     if (isRunning) {
+      // Check connection status periodically
       connectionChecker = setInterval(() => {
         if (!derivApi.isConnected && !isReconnectingRef.current) {
           logDebug('Connection lost, attempting to reconnect...');
           ensureConnection().catch(console.error);
         }
       }, CONNECTION_CHECK_INTERVAL);
+      
+      // Check data staleness and auto-resubscribe
+      dataStalenessChecker = setInterval(() => {
+        if (derivApi.isConnected && !isReconnectingRef.current) {
+          let staleCount = 0;
+          for (const market of SCANNER_MARKETS) {
+            const lastTickTime = lastTickTimeRef.current.get(market.symbol);
+            if (!lastTickTime || Date.now() - lastTickTime > DATA_STALENESS_THRESHOLD) {
+              staleCount++;
+            }
+          }
+          // If more than 50% of markets have stale data, resubscribe
+          if (staleCount > SCANNER_MARKETS.length / 2) {
+            logDebug(`Data staleness detected (${staleCount}/${SCANNER_MARKETS.length} markets stale), resubscribing...`);
+            resubscribeToMarkets().catch(console.error);
+          }
+        }
+      }, 10000);
     }
     
     return () => {
       if (connectionChecker) clearInterval(connectionChecker);
+      if (dataStalenessChecker) clearInterval(dataStalenessChecker);
     };
-  }, [isRunning, ensureConnection]);
+  }, [isRunning, ensureConnection, resubscribeToMarkets]);
 
   // Heartbeat mechanism
   useEffect(() => {
@@ -2465,258 +2516,253 @@ export default function ProScannerBot() {
             )}
           </div>
 
-          {/* THREE DIVS HORIZONTAL LAYOUT - Conditionally show when pattern detected */}
-          {hasDetectedPatterns && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-              {/* Detected Pattern Container */}
-              <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
-                <div className="p-3 border-b border-slate-700/50">
+          {/* TWO DIVS SIDE BY SIDE - 50% width each - Pattern Detection and Live Markets */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {/* Pattern Detection Container */}
+            <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
+              <div className="p-3 border-b border-slate-700/50">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
+                    <Scan className="w-3 h-3 text-white" />
+                  </div>
+                  <h3 className="text-sm font-bold text-amber-400">🔍 Ramzfx 🔥 Market Scanner - Pattern Detection</h3>
+                  {scannerActive && isRunning && (
+                    <div className="flex items-center gap-1 ml-auto">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                      </span>
+                      <span className="text-[8px] text-emerald-400 font-bold">Active🚀</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+              
+              {/* Animated Dollar Icons Row */}
+              <div className="py-2 bg-slate-800/30 overflow-hidden relative">
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10 font-bold">PATTERN DETECTION</span>
+                </div>
+                <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite' }}>
+                  {[...Array(15)].map((_, i) => (
+                    <DollarSign 
+                      key={i}
+                      className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
+                      style={{ 
+                        animationDuration: `${0.5 + (i % 3) * 0.2}s`,
+                        filter: 'drop-shadow(0 0 1px currentColor)'
+                      }}
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite', position: 'absolute', top: 0, left: '100%' }}>
+                  {[...Array(15)].map((_, i) => (
+                    <DollarSign 
+                      key={`dup-${i}`}
+                      className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
+                      style={{ 
+                        animationDuration: `${0.5 + (i % 3) * 0.2}s`,
+                        filter: 'drop-shadow(0 0 1px currentColor)'
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+              
+              {/* Detected Patterns Display */}
+              <div className="h-[200px] overflow-y-auto">
+                {detectedPatterns.length === 0 ? (
+                  <div className="h-full flex items-center justify-center">
+                    <p className="text-[10px] text-slate-500 font-semibold">Waiting for pattern detection...</p>
+                  </div>
+                ) : (
+                  <div className="p-2 space-y-1.5">
+                    {detectedPatterns.map((pattern) => (
+                      <div 
+                        key={pattern.timestamp}
+                        className="bg-slate-800/50 rounded-lg p-2 border border-slate-700/50 animate-slideIn"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
+                              <DollarSign className="w-3 h-3 text-amber-400" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono text-[11px] font-bold text-slate-200">{pattern.symbol}</span>
+                                <Badge className="text-[8px] bg-slate-700/50 text-slate-300 px-1 py-0 font-semibold">{pattern.name}</Badge>
+                              </div>
+                              <div className="text-[9px] text-amber-400 font-bold">{pattern.patternType}</div>
+                              {pattern.contractType && (
+                                <div className="text-[8px] text-cyan-400 font-semibold">Contract: {pattern.contractType.replace('DIGIT', '')}</div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="flex gap-0.5">
+                              {(pattern.last15Ticks || pattern.digits).slice(-8).map((digit, i) => (
+                                <span 
+                                  key={i}
+                                  className="w-5 h-5 rounded bg-slate-700 flex items-center justify-center text-[10px] font-mono font-bold text-cyan-400"
+                                >
+                                  {digit}
+                                </span>
+                              ))}
+                            </div>
+                            <Badge className={`text-[8px] px-1 py-0 font-bold ${pattern.result === 'Win' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : pattern.result === 'Loss' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'}`}>
+                              {pattern.result ? (pattern.result === 'Win' ? `WIN +$${pattern.pnl?.toFixed(2)}` : `LOSS $${pattern.pnl?.toFixed(2)}`) : 'FOUND 🤷‍♀️'}
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Live Markets Scanner Container */}
+            <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
+              <div className="p-3 border-b border-slate-700/50 bg-slate-800/30">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
+                    <div className={`p-1.5 rounded-lg ${isRunning ? 'bg-gradient-to-br from-emerald-500 to-green-600 animate-pulse-slow' : 'bg-gradient-to-br from-slate-600 to-slate-700'}`}>
                       <Scan className="w-3 h-3 text-white" />
                     </div>
-                    <h3 className="text-xs font-bold text-slate-200">Ramzfx 🔥 Market Scanner - Pattern Detection</h3>
-                    {scannerActive && isRunning && (
-                      <div className="flex items-center gap-1 ml-auto">
-                        <span className="relative flex h-1.5 w-1.5">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                        </span>
-                        <span className="text-[8px] text-emerald-400">Active🚀</span>
+                    <h3 className="text-sm font-bold text-emerald-400">📡 Ramzfx 🔥 Market Scanner - Live Markets</h3>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isScannerVoiceActive && (
+                      <div className="flex items-center gap-1">
+                        <Volume2 className="w-3 h-3 text-emerald-400 animate-voice-wave" />
+                        <span className="text-[8px] text-emerald-400 font-mono font-bold">SCANNING VOICE ACTIVE</span>
                       </div>
                     )}
-                  </div>
-                </div>
-                
-                {/* Animated Dollar Icons Row */}
-                <div className="py-2 bg-slate-800/30 overflow-hidden relative">
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10">PATTERN DETECTION</span>
-                  </div>
-                  <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite' }}>
-                    {[...Array(15)].map((_, i) => (
-                      <DollarSign 
-                        key={i}
-                        className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
-                        style={{ 
-                          animationDuration: `${0.5 + (i % 3) * 0.2}s`,
-                          filter: 'drop-shadow(0 0 1px currentColor)'
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite', position: 'absolute', top: 0, left: '100%' }}>
-                    {[...Array(15)].map((_, i) => (
-                      <DollarSign 
-                        key={`dup-${i}`}
-                        className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
-                        style={{ 
-                          animationDuration: `${0.5 + (i % 3) * 0.2}s`,
-                          filter: 'drop-shadow(0 0 1px currentColor)'
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-                
-                {/* Detected Patterns Display */}
-                <div className="h-[180px] overflow-y-auto">
-                  {detectedPatterns.length === 0 ? (
-                    <div className="h-full flex items-center justify-center">
-                      <p className="text-[9px] text-slate-500">Waiting for pattern detection...</p>
+                    <div className="flex items-center gap-1">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isRunning ? 'bg-emerald-400' : 'bg-slate-500'} opacity-75`}></span>
+                        <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${isRunning ? 'bg-emerald-500' : 'bg-slate-600'}`}></span>
+                      </span>
+                      <span className="text-[8px] text-slate-400 font-bold">{isRunning ? 'ACTIVE' : 'INACTIVE'}</span>
                     </div>
-                  ) : (
-                    <div className="p-2 space-y-1.5">
-                      {detectedPatterns.map((pattern) => (
+                  </div>
+                </div>
+              </div>
+              
+              {/* Animated Scrolling Markets Container - Bottom to Top */}
+              <div className="relative h-[200px] overflow-hidden bg-slate-900/50">
+                {isRunning && scannerMarkers.length > 0 ? (
+                  <div className="absolute inset-0">
+                    {/* Voice wave overlay */}
+                    <div className="absolute inset-0 pointer-events-none z-10">
+                      <div className={`absolute inset-0 bg-gradient-to-t from-emerald-500/0 via-emerald-500/5 to-transparent ${isScannerVoiceActive ? 'animate-pulse' : ''}`} />
+                    </div>
+                    
+                    {/* Scrolling items - bottom to top animation (10 second interval) */}
+                    <div className="absolute bottom-0 left-0 right-0 animate-scroll-up-fast" style={{ animationDuration: '10s' }}>
+                      {[...scannerMarkers, ...scannerMarkers].map((market, idx) => (
                         <div 
-                          key={pattern.timestamp}
-                          className="bg-slate-800/50 rounded-lg p-2 border border-slate-700/50 animate-slideIn"
+                          key={`${market.symbol}-${idx}`}
+                          className={`mx-2 mb-2 rounded-lg overflow-hidden shadow-lg transform transition-all duration-300 hover:scale-[1.02] animate-fadeInUp`}
+                          style={{ animationDelay: `${idx * 0.05}s` }}
                         >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
-                                <DollarSign className="w-3 h-3 text-amber-400" />
+                          <div className={`bg-gradient-to-r ${market.color} p-2 flex items-center justify-between`}>
+                            <div className="flex items-center gap-2">
+                              <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+                                <DollarSign className="w-3 h-3 text-white" />
                               </div>
                               <div>
-                                <div className="flex items-center gap-1.5">
-                                  <span className="font-mono text-[10px] font-bold text-slate-200">{pattern.symbol}</span>
-                                  <Badge className="text-[7px] bg-slate-700/50 text-slate-300 px-1 py-0">{pattern.name}</Badge>
-                                </div>
-                                <div className="text-[8px] text-amber-400">{pattern.patternType}</div>
-                                {pattern.contractType && (
-                                  <div className="text-[7px] text-cyan-400">Contract: {pattern.contractType.replace('DIGIT', '')}</div>
-                                )}
+                                <span className="font-mono text-xs font-bold text-white">{market.symbol}</span>
+                                <span className="text-[8px] text-white/70 ml-1">{market.name}</span>
                               </div>
                             </div>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-2">
                               <div className="flex gap-0.5">
-                                {(pattern.last15Ticks || pattern.digits).slice(-8).map((digit, i) => (
-                                  <span 
+                                {[...Array(3)].map((_, i) => (
+                                  <div 
                                     key={i}
-                                    className="w-5 h-5 rounded bg-slate-700 flex items-center justify-center text-[9px] font-mono font-bold text-cyan-400"
+                                    className="w-4 h-4 rounded bg-white/20 flex items-center justify-center"
+                                    style={{ animationDelay: `${i * 0.1}s` }}
                                   >
-                                    {digit}
-                                  </span>
+                                    <span className="text-[8px] text-white font-bold animate-pulse">•</span>
+                                  </div>
                                 ))}
                               </div>
-                              <Badge className={`text-[7px] px-1 py-0 ${pattern.result === 'Win' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : pattern.result === 'Loss' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'}`}>
-                                {pattern.result ? (pattern.result === 'Win' ? `WIN +$${pattern.pnl?.toFixed(2)}` : `LOSS $${pattern.pnl?.toFixed(2)}`) : 'FOUND 🤷‍♀️'}
+                              <Badge className="text-[7px] bg-white/20 text-white border-none px-1.5 py-0 font-bold">
+                                SCANNING
                               </Badge>
                             </div>
                           </div>
                         </div>
                       ))}
                     </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Ramzfx 🔥 Market Scanner - Live Markets Container */}
-              <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
-                <div className="p-3 border-b border-slate-700/50 bg-slate-800/30">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className={`p-1.5 rounded-lg ${isRunning ? 'bg-gradient-to-br from-emerald-500 to-green-600 animate-pulse-slow' : 'bg-gradient-to-br from-slate-600 to-slate-700'}`}>
-                        <Scan className="w-3 h-3 text-white" />
-                      </div>
-                      <h3 className="text-xs font-bold text-slate-200">Ramzfx 🔥 Market Scanner - Live Markets</h3>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {isScannerVoiceActive && (
-                        <div className="flex items-center gap-1">
-                          <Volume2 className="w-3 h-3 text-emerald-400 animate-voice-wave" />
-                          <span className="text-[8px] text-emerald-400 font-mono">SCANNING VOICE ACTIVE</span>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-1">
-                        <span className="relative flex h-1.5 w-1.5">
-                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isRunning ? 'bg-emerald-400' : 'bg-slate-500'} opacity-75`}></span>
-                          <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${isRunning ? 'bg-emerald-500' : 'bg-slate-600'}`}></span>
-                        </span>
-                        <span className="text-[8px] text-slate-400">{isRunning ? 'ACTIVE' : 'INACTIVE'}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Animated Scrolling Markets Container - Bottom to Top */}
-                <div className="relative h-[180px] overflow-hidden bg-slate-900/50">
-                  {isRunning && scannerMarkers.length > 0 ? (
-                    <div className="absolute inset-0">
-                      {/* Voice wave overlay */}
-                      <div className="absolute inset-0 pointer-events-none z-10">
-                        <div className={`absolute inset-0 bg-gradient-to-t from-emerald-500/0 via-emerald-500/5 to-transparent ${isScannerVoiceActive ? 'animate-pulse' : ''}`} />
-                      </div>
-                      
-                      {/* Scrolling items - bottom to top animation (10 second interval) */}
-                      <div className="absolute bottom-0 left-0 right-0 animate-scroll-up-fast" style={{ animationDuration: '10s' }}>
-                        {[...scannerMarkers, ...scannerMarkers].map((market, idx) => (
-                          <div 
-                            key={`${market.symbol}-${idx}`}
-                            className={`mx-2 mb-2 rounded-lg overflow-hidden shadow-lg transform transition-all duration-300 hover:scale-[1.02] animate-fadeInUp`}
-                            style={{ animationDelay: `${idx * 0.05}s` }}
-                          >
-                            <div className={`bg-gradient-to-r ${market.color} p-2 flex items-center justify-between`}>
-                              <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
-                                  <DollarSign className="w-3 h-3 text-white" />
-                                </div>
-                                <div>
-                                  <span className="font-mono text-xs font-bold text-white">{market.symbol}</span>
-                                  <span className="text-[8px] text-white/70 ml-1">{market.name}</span>
-                                </div>
+                    
+                    {/* Duplicate for seamless loop (10 second interval) */}
+                    <div className="absolute bottom-0 left-0 right-0 animate-scroll-up-fast" style={{ animationDuration: '10s', top: '100%' }}>
+                      {[...scannerMarkers, ...scannerMarkers].map((market, idx) => (
+                        <div 
+                          key={`dup-${market.symbol}-${idx}`}
+                          className={`mx-2 mb-2 rounded-lg overflow-hidden shadow-lg transform transition-all duration-300 hover:scale-[1.02] animate-fadeInUp`}
+                          style={{ animationDelay: `${idx * 0.05}s` }}
+                        >
+                          <div className={`bg-gradient-to-r ${market.color} p-2 flex items-center justify-between`}>
+                            <div className="flex items-center gap-2">
+                              <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+                                <DollarSign className="w-3 h-3 text-white" />
                               </div>
-                              <div className="flex items-center gap-2">
-                                <div className="flex gap-0.5">
-                                  {[...Array(3)].map((_, i) => (
-                                    <div 
-                                      key={i}
-                                      className="w-4 h-4 rounded bg-white/20 flex items-center justify-center"
-                                      style={{ animationDelay: `${i * 0.1}s` }}
-                                    >
-                                      <span className="text-[8px] text-white font-bold animate-pulse">•</span>
-                                    </div>
-                                  ))}
-                                </div>
-                                <Badge className="text-[7px] bg-white/20 text-white border-none px-1.5 py-0">
-                                  SCANNING
-                                </Badge>
+                              <div>
+                                <span className="font-mono text-xs font-bold text-white">{market.symbol}</span>
+                                <span className="text-[8px] text-white/70 ml-1">{market.name}</span>
                               </div>
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                      
-                      {/* Duplicate for seamless loop (10 second interval) */}
-                      <div className="absolute bottom-0 left-0 right-0 animate-scroll-up-fast" style={{ animationDuration: '10s', top: '100%' }}>
-                        {[...scannerMarkers, ...scannerMarkers].map((market, idx) => (
-                          <div 
-                            key={`dup-${market.symbol}-${idx}`}
-                            className={`mx-2 mb-2 rounded-lg overflow-hidden shadow-lg transform transition-all duration-300 hover:scale-[1.02] animate-fadeInUp`}
-                            style={{ animationDelay: `${idx * 0.05}s` }}
-                          >
-                            <div className={`bg-gradient-to-r ${market.color} p-2 flex items-center justify-between`}>
-                              <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
-                                  <DollarSign className="w-3 h-3 text-white" />
-                                </div>
-                                <div>
-                                  <span className="font-mono text-xs font-bold text-white">{market.symbol}</span>
-                                  <span className="text-[8px] text-white/70 ml-1">{market.name}</span>
-                                </div>
+                            <div className="flex items-center gap-2">
+                              <div className="flex gap-0.5">
+                                {[...Array(3)].map((_, i) => (
+                                  <div 
+                                    key={i}
+                                    className="w-4 h-4 rounded bg-white/20 flex items-center justify-center"
+                                    style={{ animationDelay: `${i * 0.1}s` }}
+                                  >
+                                    <span className="text-[8px] text-white font-bold animate-pulse">•</span>
+                                  </div>
+                                ))}
                               </div>
-                              <div className="flex items-center gap-2">
-                                <div className="flex gap-0.5">
-                                  {[...Array(3)].map((_, i) => (
-                                    <div 
-                                      key={i}
-                                      className="w-4 h-4 rounded bg-white/20 flex items-center justify-center"
-                                      style={{ animationDelay: `${i * 0.1}s` }}
-                                    >
-                                      <span className="text-[8px] text-white font-bold animate-pulse">•</span>
-                                    </div>
-                                  ))}
-                                </div>
-                                <Badge className="text-[7px] bg-white/20 text-white border-none px-1.5 py-0">
-                                  SCANNING
-                                </Badge>
-                              </div>
+                              <Badge className="text-[7px] bg-white/20 text-white border-none px-1.5 py-0 font-bold">
+                                SCANNING
+                              </Badge>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="h-full flex items-center justify-center">
-                      <div className="text-center">
-                        <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-slate-800 flex items-center justify-center">
-                          <Scan className="w-6 h-6 text-slate-600" />
                         </div>
-                        <p className="text-[10px] text-slate-500">Press RUN BOT to start scanning markets</p>
-                        <p className="text-[8px] text-slate-600 mt-1">All {SCANNER_MARKETS.length} markets will appear here with animations</p>
-                      </div>
+                      ))}
                     </div>
-                  )}
-                </div>
-                
-                {/* Scanner info footer */}
-                <div className="p-2 border-t border-slate-700/30 bg-slate-800/20">
-                  <div className="flex items-center justify-between text-[8px] text-slate-500">
-                    <span className="flex items-center gap-1">
-                      <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
-                      {SCANNER_MARKETS.length} markets monitored
-                    </span>
-                    <span className="font-mono">
-                      {isRunning ? '🔄 Scanning in progress...' : '⏸ Scanner idle'}
-                    </span>
                   </div>
+                ) : (
+                  <div className="h-full flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-slate-800 flex items-center justify-center">
+                        <Scan className="w-6 h-6 text-slate-600" />
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-semibold">Press RUN BOT to start scanning markets</p>
+                      <p className="text-[8px] text-slate-600 mt-1">All {SCANNER_MARKETS.length} markets will appear here with animations</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {/* Scanner info footer */}
+              <div className="p-2 border-t border-slate-700/30 bg-slate-800/20">
+                <div className="flex items-center justify-between text-[8px] text-slate-500 font-semibold">
+                  <span className="flex items-center gap-1">
+                    <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
+                    {SCANNER_MARKETS.length} markets monitored
+                  </span>
+                  <span className="font-mono font-bold">
+                    {isRunning ? '🔄 Scanning in progress...' : '⏸ Scanner idle'}
+                  </span>
                 </div>
               </div>
-
-              {/* Empty div for spacing in 3-col layout */}
-              <div className="hidden lg:block"></div>
             </div>
-          )}
+          </div>
 
           {/* NEW: Active Pattern Display - Shows current pattern being traded */}
           {activePattern && (
@@ -2737,7 +2783,7 @@ export default function ProScannerBot() {
                     </div>
                   </div>
                   {activePattern.contractType && (
-                    <Badge className="text-[10px] bg-cyan-500/20 text-cyan-400 border-cyan-500/30">
+                    <Badge className="text-[10px] bg-cyan-500/20 text-cyan-400 border-cyan-500/30 font-bold">
                       {activePattern.contractType.replace('DIGIT', '')}
                     </Badge>
                   )}
@@ -2745,23 +2791,23 @@ export default function ProScannerBot() {
                 
                 <div className="grid grid-cols-2 gap-4 mb-3">
                   <div className="bg-slate-800/50 rounded-lg p-2">
-                    <div className="text-[8px] text-slate-400 mb-1">Market / Symbol</div>
+                    <div className="text-[8px] text-slate-400 mb-1 font-semibold">Market / Symbol</div>
                     <div className="flex items-center gap-1">
-                      <Badge className="text-[9px] bg-slate-700/50 text-slate-300">
+                      <Badge className="text-[9px] bg-slate-700/50 text-slate-300 font-bold">
                         {activePattern.symbol}
                       </Badge>
                       <span className="text-[10px] text-slate-400">{activePattern.name}</span>
                     </div>
                   </div>
                   <div className="bg-slate-800/50 rounded-lg p-2">
-                    <div className="text-[8px] text-slate-400 mb-1">Strategy</div>
-                    <div className="text-[9px] font-mono text-amber-400">{activePattern.patternType}</div>
+                    <div className="text-[8px] text-slate-400 mb-1 font-semibold">Strategy</div>
+                    <div className="text-[9px] font-mono text-amber-400 font-bold">{activePattern.patternType}</div>
                   </div>
                 </div>
                 
                 {/* Last 15 Ticks Display */}
                 <div className="bg-slate-800/50 rounded-lg p-3 mb-3">
-                  <div className="text-[8px] text-slate-400 mb-2 text-center">LAST 15 TICKS PATTERN</div>
+                  <div className="text-[8px] text-slate-400 mb-2 text-center font-semibold">LAST 15 TICKS PATTERN</div>
                   <div className="flex flex-wrap justify-center gap-1">
                     {(activePattern.last15Ticks || activePattern.digits).slice(-15).map((digit, i) => (
                       <div 
@@ -2779,11 +2825,11 @@ export default function ProScannerBot() {
                 {activePattern.result && (
                   <div className={`rounded-lg p-3 text-center ${activePattern.result === 'Win' ? 'bg-emerald-500/20' : 'bg-rose-500/20'}`}>
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-slate-400">Stake</span>
+                      <span className="text-[10px] text-slate-400 font-semibold">Stake</span>
                       <span className="text-sm font-mono font-bold text-slate-200">${activePattern.stake?.toFixed(2)}</span>
                     </div>
                     <div className="flex items-center justify-between mt-1">
-                      <span className="text-[10px] text-slate-400">Result</span>
+                      <span className="text-[10px] text-slate-400 font-semibold">Result</span>
                       <span className={`text-sm font-mono font-bold ${activePattern.result === 'Win' ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {activePattern.result === 'Win' ? '+' : ''}{activePattern.pnl?.toFixed(2)}
                       </span>
@@ -2805,29 +2851,29 @@ export default function ProScannerBot() {
             </div>
             <div className="grid grid-cols-6 gap-3">
               <div className="text-center bg-slate-800/30 rounded-lg p-2">
-                <div className="text-[9px] text-slate-400 mb-1">Total Trades</div>
+                <div className="text-[9px] text-slate-400 mb-1 font-semibold">Total Trades</div>
                 <div className="font-mono text-lg font-bold text-slate-200">{wins + losses}</div>
               </div>
               <div className="text-center bg-slate-800/30 rounded-lg p-2">
-                <div className="text-[9px] text-slate-400 mb-1">Win Rate</div>
+                <div className="text-[9px] text-slate-400 mb-1 font-semibold">Win Rate</div>
                 <div className="font-mono text-lg font-bold text-emerald-400">{winRate}%</div>
               </div>
               <div className="text-center bg-slate-800/30 rounded-lg p-2">
-                <div className="text-[9px] text-slate-400 mb-1">Wins💵</div>
+                <div className="text-[9px] text-slate-400 mb-1 font-semibold">Wins💵</div>
                 <div className="font-mono text-lg font-bold text-emerald-400">{wins}</div>
               </div>
               <div className="text-center bg-slate-800/30 rounded-lg p-2">
-                <div className="text-[9px] text-slate-400 mb-1">Losses😒</div>
+                <div className="text-[9px] text-slate-400 mb-1 font-semibold">Losses😒</div>
                 <div className="font-mono text-lg font-bold text-rose-400">{losses}</div>
               </div>
               <div className="text-center bg-slate-800/30 rounded-lg p-2">
-                <div className="text-[9px] text-slate-400 mb-1">Total Staked</div>
+                <div className="text-[9px] text-slate-400 mb-1 font-semibold">Total Staked</div>
                 <div className="font-mono text-lg font-bold text-amber-400">
                   ${totalStaked.toFixed(2)}
                 </div>
               </div>
               <div className="text-center bg-slate-800/30 rounded-lg p-2">
-                <div className="text-[9px] text-slate-400 mb-1">Net 💲 Profit</div>
+                <div className="text-[9px] text-slate-400 mb-1 font-semibold">Net 💲 Profit</div>
                 <div className={`font-mono text-lg font-bold ${netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                   {netProfit >= 0 ? '+' : ''}{netProfit.toFixed(2)}
                 </div>
@@ -2865,7 +2911,7 @@ export default function ProScannerBot() {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
-                    <span className="flex items-center gap-1">
+                    <span className="flex items-center gap-1 font-bold">
                       STOP BOT
                       <span className="flex gap-0.5 ml-1">
                         <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
@@ -2879,7 +2925,7 @@ export default function ProScannerBot() {
                     <svg className="w-5 h-5 transition-transform group-hover:scale-110" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M8 5v14l11-7z" />
                     </svg>
-                    <span className="flex items-center gap-1">
+                    <span className="flex items-center gap-1 font-bold">
                       RUN BOT
                       <span className="relative flex h-2 w-2 ml-1">
                         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
@@ -2892,7 +2938,7 @@ export default function ProScannerBot() {
             </button>
           </div>
 
-          {/* Activity Log - Full Width */}
+           {/* Activity Log - Full Width */}
           <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
             <div className="px-4 py-3 border-b border-slate-700/50 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
