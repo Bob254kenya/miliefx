@@ -207,11 +207,11 @@ const notificationStyles = `
 }
 
 .animate-scroll-markets {
-  animation: scrollMarkets 25s linear infinite;
+  animation: scrollMarkets 250s linear infinite;
 }
 
 .animate-scroll-markets-slow {
-  animation: scrollMarkets 30s linear infinite;
+  animation: scrollMarkets 300s linear infinite;
 }
 `;
 
