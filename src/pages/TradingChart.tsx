@@ -207,11 +207,11 @@ const notificationStyles = `
 }
 
 .animate-scroll-markets {
-  animation: scrollMarkets 250s linear infinite;
+  animation: scrollMarkets 20s linear infinite;
 }
 
 .animate-scroll-markets-slow {
-  animation: scrollMarkets 300s linear infinite;
+  animation: scrollMarkets 30s linear infinite;
 }
 `;
 
@@ -495,8 +495,7 @@ interface MarketStats {
   under5Percentage: number;
   strength: number;
   lastUpdate: number;
-  dominantSignal: 'even' | 'odd' | 'over' | 'under' | 'neutral';
-  signalStrength: number;
+  dominantSignal: 'EVEN' | 'ODD' | 'OVER' | 'UNDER' | null; // ADDED: real signal for strongest markets
 }
 
 // Constants
@@ -508,7 +507,7 @@ const HEARTBEAT_INTERVAL = 30000;
 const DEBUG = true;
 const BALANCE_SYNC_INTERVAL = 1000;
 const IMMEDIATE_BALANCE_SYNC_DELAY = 50;
-const MARKET_SCROLL_INTERVAL = 10000;
+const MARKET_SCROLL_INTERVAL = 25000; // UPDATED: increased to 25 seconds for smoother rotation
 const PATTERN_DISPLAY_DURATION = 4000;
 const STATS_UPDATE_INTERVAL = 1000; // Update stats every second
 const STRONG_MARKET_THRESHOLD = 55; // Market considered strong if percentage > 55%
@@ -630,6 +629,11 @@ export default function ProScannerBot() {
   const { isAuthorized, balance: apiBalance, activeAccount, refreshBalance } = useAuth();
   const { recordLoss } = useLossRequirement();
 
+  // ADDED: Toggle states for UI sections
+  const [showPatternDetection, setShowPatternDetection] = useState(true);
+  const [showLiveMarkets, setShowLiveMarkets] = useState(true);
+  const [showStrongestMarkets, setShowStrongestMarkets] = useState(true);
+
   // Local balance tracking
   const [localBalance, setLocalBalance] = useState(apiBalance);
   const localBalanceRef = useRef(apiBalance);
@@ -642,11 +646,6 @@ export default function ProScannerBot() {
   const [strongestMarkets, setStrongestMarkets] = useState<MarketStats[]>([]);
   const marketTickCountersRef = useRef<Map<string, { even: number; odd: number; over4: number; under5: number; total: number }>>(new Map());
   const statsIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Toggle states for hiding sections
-  const [showPatternDetection, setShowPatternDetection] = useState(true);
-  const [showLiveMarkets, setShowLiveMarkets] = useState(true);
-  const [showStrongestMarkets, setShowStrongestMarkets] = useState(true);
 
   const forceImmediateBalanceUpdate = useCallback(async (expectedPnl?: number): Promise<number> => {
     if (!refreshBalance) return localBalanceRef.current;
@@ -718,33 +717,27 @@ export default function ProScannerBot() {
       current.under5++;
     }
     
-    // Calculate percentages
+    // Calculate percentages and update stats
     const evenPercentage = (current.even / current.total) * 100;
     const oddPercentage = (current.odd / current.total) * 100;
     const over4Percentage = (current.over4 / current.total) * 100;
     const under5Percentage = (current.under5 / current.total) * 100;
     
     // Calculate market strength (higher percentage means stronger trend)
+    // For even/odd: strength is max(even%, odd%)
+    // For over/under: strength is max(over4%, under5%)
     const directionStrength = Math.max(evenPercentage, oddPercentage);
     const barrierStrength = Math.max(over4Percentage, under5Percentage);
     const strength = Math.max(directionStrength, barrierStrength);
     
-    // Determine dominant signal
-    let dominantSignal: 'even' | 'odd' | 'over' | 'under' | 'neutral' = 'neutral';
-    let signalStrength = 0;
-    
-    if (evenPercentage > oddPercentage && evenPercentage > 50) {
-      dominantSignal = 'even';
-      signalStrength = evenPercentage;
-    } else if (oddPercentage > evenPercentage && oddPercentage > 50) {
-      dominantSignal = 'odd';
-      signalStrength = oddPercentage;
-    } else if (over4Percentage > under5Percentage && over4Percentage > 50) {
-      dominantSignal = 'over';
-      signalStrength = over4Percentage;
-    } else if (under5Percentage > over4Percentage && under5Percentage > 50) {
-      dominantSignal = 'under';
-      signalStrength = under5Percentage;
+    // ADDED: Determine the dominant signal for the market
+    let dominantSignal: 'EVEN' | 'ODD' | 'OVER' | 'UNDER' | null = null;
+    if (strength >= STRONG_MARKET_THRESHOLD) {
+      if (directionStrength >= barrierStrength) {
+        dominantSignal = evenPercentage > oddPercentage ? 'EVEN' : 'ODD';
+      } else {
+        dominantSignal = over4Percentage > under5Percentage ? 'OVER' : 'UNDER';
+      }
     }
     
     const marketInfo = SCANNER_MARKETS.find(m => m.symbol === symbol);
@@ -765,8 +758,7 @@ export default function ProScannerBot() {
             under5Percentage,
             strength,
             lastUpdate: Date.now(),
-            dominantSignal,
-            signalStrength
+            dominantSignal
           } : s);
         } else {
           return [...prev, {
@@ -784,8 +776,7 @@ export default function ProScannerBot() {
             under5Percentage,
             strength,
             lastUpdate: Date.now(),
-            dominantSignal,
-            signalStrength
+            dominantSignal
           }];
         }
       });
@@ -953,8 +944,7 @@ export default function ProScannerBot() {
       under5Percentage: 0,
       strength: 0,
       lastUpdate: Date.now(),
-      dominantSignal: 'neutral',
-      signalStrength: 0
+      dominantSignal: null,
     }));
     setMarketStats(initialStats);
     
@@ -966,7 +956,7 @@ export default function ProScannerBot() {
     }
     setScannerMarkers(shuffled);
     
-    // Rotate markets every 10 seconds for slower scrolling (always active)
+    // UPDATED: Rotate markets every 25 seconds for slower scrolling (always active)
     scannerIntervalRef.current = setInterval(() => {
       setScannerMarkers(prev => {
         if (prev.length === 0) return [...SCANNER_MARKETS];
@@ -2419,20 +2409,27 @@ export default function ProScannerBot() {
     return { text: 'WEAK', color: 'text-slate-400', bg: 'bg-slate-500/20' };
   };
 
-  // Helper to get signal display
-  const getSignalDisplay = (signal: string, strength: number) => {
+  // Helper to get signal display color and label
+  const getSignalDisplay = (signal: string | null) => {
+    if (!signal) return { label: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
     switch (signal) {
-      case 'even':
-        return { text: 'EVEN 🔵', color: 'text-blue-400', bg: 'bg-blue-500/20' };
-      case 'odd':
-        return { text: 'ODD 🟣', color: 'text-purple-400', bg: 'bg-purple-500/20' };
-      case 'over':
-        return { text: 'OVER 4 🔺', color: 'text-emerald-400', bg: 'bg-emerald-500/20' };
-      case 'under':
-        return { text: 'UNDER 5 🔻', color: 'text-amber-400', bg: 'bg-amber-500/20' };
-      default:
-        return { text: 'NEUTRAL ⚪', color: 'text-slate-400', bg: 'bg-slate-500/20' };
+      case 'EVEN': return { label: 'EVEN', color: 'text-emerald-400', bg: 'bg-emerald-500/20' };
+      case 'ODD': return { label: 'ODD', color: 'text-red-400', bg: 'bg-red-500/20' };
+      case 'OVER': return { label: 'OVER', color: 'text-emerald-400', bg: 'bg-emerald-500/20' };
+      case 'UNDER': return { label: 'UNDER', color: 'text-red-400', bg: 'bg-red-500/20' };
+      default: return { label: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
     }
+  };
+
+  // UPDATED: Determine layout based on visible sections
+  const isPatternVisible = showPatternDetection;
+  const isLiveMarketsVisible = showLiveMarkets;
+  const isStrongestVisible = showStrongestMarkets;
+
+  // UPDATED: Conditional grid classes for Pattern + Live Markets section
+  const getPatternLiveGridClass = () => {
+    if (isPatternVisible && isLiveMarketsVisible) return 'grid-cols-1 lg:grid-cols-2';
+    return 'grid-cols-1';
   };
 
   return (
@@ -2472,46 +2469,89 @@ export default function ProScannerBot() {
             </div>
           </div>
 
-          {/* Strongest Markets Banner - Continuous Scanner Results with Toggle */}
+          {/* ADDED: Toggle Controls Row */}
+          <div className="bg-gradient-to-r from-slate-900/80 to-slate-800/80 backdrop-blur-sm border border-slate-700/50 rounded-xl p-3 shadow-xl">
+            <div className="flex flex-wrap items-center justify-center gap-4">
+              {/* Pattern Detection Toggle */}
+              <button
+                onClick={() => setShowPatternDetection(!showPatternDetection)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 ${
+                  showPatternDetection 
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                    : 'bg-slate-800/50 text-slate-400 border border-slate-700/50'
+                }`}
+              >
+                {showPatternDetection ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                <span className="text-xs font-bold">Pattern Detection</span>
+                <span className={`text-[8px] font-bold ${showPatternDetection ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {showPatternDetection ? 'ON' : 'OFF'}
+                </span>
+              </button>
+
+              {/* Live Markets Toggle */}
+              <button
+                onClick={() => setShowLiveMarkets(!showLiveMarkets)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 ${
+                  showLiveMarkets 
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                    : 'bg-slate-800/50 text-slate-400 border border-slate-700/50'
+                }`}
+              >
+                {showLiveMarkets ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                <span className="text-xs font-bold">Live Markets</span>
+                <span className={`text-[8px] font-bold ${showLiveMarkets ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {showLiveMarkets ? 'ON' : 'OFF'}
+                </span>
+              </button>
+
+              {/* Strongest Markets Toggle */}
+              <button
+                onClick={() => setShowStrongestMarkets(!showStrongestMarkets)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 ${
+                  showStrongestMarkets 
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                    : 'bg-slate-800/50 text-slate-400 border border-slate-700/50'
+                }`}
+              >
+                {showStrongestMarkets ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                <span className="text-xs font-bold">Strongest Markets</span>
+                <span className={`text-[8px] font-bold ${showStrongestMarkets ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {showStrongestMarkets ? 'ON' : 'OFF'}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* UPDATED: Strongest Markets Banner - Conditionally Rendered */}
           {showStrongestMarkets && (
             <div className="bg-gradient-to-r from-amber-900/30 to-amber-800/30 backdrop-blur-sm border border-amber-500/30 rounded-xl p-3 shadow-xl">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <div className="p-1 bg-amber-500/20 rounded-lg">
-                    <TrendingUp className="w-3 h-3 text-amber-400" />
-                  </div>
-                  <h3 className="text-xs font-bold text-amber-400">🔥 STRONGEST MARKETS (Last 1000+ Ticks)</h3>
+              <div className="flex items-center gap-2 mb-2">
+                <div className="p-1 bg-amber-500/20 rounded-lg">
+                  <TrendingUp className="w-3 h-3 text-amber-400" />
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1">
-                    <span className="text-[8px] text-slate-400">Even/Odd % | Over/Under %</span>
-                    <div className="flex gap-1 ml-2">
-                      <button
-                        onClick={() => setScrollSpeed('normal')}
-                        className={`text-[8px] px-1.5 py-0.5 rounded ${scrollSpeed === 'normal' ? 'bg-amber-500/30 text-amber-400' : 'bg-slate-700/50 text-slate-400'}`}
-                      >
-                        Normal
-                      </button>
-                      <button
-                        onClick={() => setScrollSpeed('slow')}
-                        className={`text-[8px] px-1.5 py-0.5 rounded ${scrollSpeed === 'slow' ? 'bg-amber-500/30 text-amber-400' : 'bg-slate-700/50 text-slate-400'}`}
-                      >
-                        Slow
-                      </button>
-                    </div>
+                <h3 className="text-xs font-bold text-amber-400">🔥 STRONGEST MARKETS (Last 1000+ Ticks)</h3>
+                <div className="ml-auto flex items-center gap-2">
+                  <span className="text-[8px] text-slate-400">Even/Odd % | Over/Under %</span>
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setScrollSpeed('normal')}
+                      className={`text-[8px] px-1.5 py-0.5 rounded ${scrollSpeed === 'normal' ? 'bg-amber-500/30 text-amber-400' : 'bg-slate-700/50 text-slate-400'}`}
+                    >
+                      Normal
+                    </button>
+                    <button
+                      onClick={() => setScrollSpeed('slow')}
+                      className={`text-[8px] px-1.5 py-0.5 rounded ${scrollSpeed === 'slow' ? 'bg-amber-500/30 text-amber-400' : 'bg-slate-700/50 text-slate-400'}`}
+                    >
+                      Slow
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setShowStrongestMarkets(false)}
-                    className="p-1 hover:bg-slate-700/50 rounded transition-colors"
-                  >
-                    <EyeOff className="w-3 h-3 text-slate-400" />
-                  </button>
                 </div>
               </div>
               <div className="overflow-hidden relative">
                 <div className={`flex gap-3 ${scrollSpeed === 'normal' ? 'animate-scroll-markets' : 'animate-scroll-markets-slow'}`}>
                   {[...strongestMarkets, ...strongestMarkets].map((market, idx) => {
-                    const signalInfo = getSignalDisplay(market.dominantSignal, market.signalStrength);
+                    const signalInfo = getSignalDisplay(market.dominantSignal);
                     return (
                       <div
                         key={`${market.symbol}-${idx}`}
@@ -2531,17 +2571,6 @@ export default function ProScannerBot() {
                             {getStrengthDisplay(market.strength).text}
                           </div>
                         </div>
-                        
-                        {/* SIGNAL DISPLAY */}
-                        <div className={`text-center mb-2 py-1 rounded ${signalInfo.bg}`}>
-                          <span className={`text-[10px] font-bold ${signalInfo.color} uppercase tracking-wider`}>
-                            {signalInfo.text}
-                          </span>
-                          {market.signalStrength > 0 && (
-                            <span className="text-[8px] text-slate-400 ml-1">({market.signalStrength.toFixed(1)}%)</span>
-                          )}
-                        </div>
-                        
                         <div className="grid grid-cols-2 gap-2 text-[9px]">
                           <div>
                             <span className="text-slate-400">Even:</span>
@@ -2549,15 +2578,15 @@ export default function ProScannerBot() {
                           </div>
                           <div>
                             <span className="text-slate-400">Odd:</span>
-                            <span className="text-fuchsia-400 ml-1 font-bold">{market.oddPercentage.toFixed(1)}%</span>
+                            <span className="text-red-400 ml-1 font-bold">{market.oddPercentage.toFixed(1)}%</span>
                           </div>
                           <div>
                             <span className="text-slate-400">Over 4:</span>
-                            <span className="text-cyan-400 ml-1 font-bold">{market.over4Percentage.toFixed(1)}%</span>
+                            <span className="text-emerald-400 ml-1 font-bold">{market.over4Percentage.toFixed(1)}%</span>
                           </div>
                           <div>
                             <span className="text-slate-400">Under 5:</span>
-                            <span className="text-amber-400 ml-1 font-bold">{market.under5Percentage.toFixed(1)}%</span>
+                            <span className="text-red-400 ml-1 font-bold">{market.under5Percentage.toFixed(1)}%</span>
                           </div>
                         </div>
                         <div className="mt-1 h-1 bg-slate-700 rounded-full overflow-hidden">
@@ -2566,8 +2595,14 @@ export default function ProScannerBot() {
                             style={{ width: `${market.strength}%` }}
                           />
                         </div>
-                        <div className="text-[7px] text-slate-500 text-center mt-1">
-                          {market.totalTicks} ticks analyzed
+                        {/* UPDATED: Real signal display */}
+                        <div className="mt-1 flex items-center justify-between">
+                          <div className={`text-[7px] font-bold px-1.5 py-0.5 rounded ${signalInfo.bg} ${signalInfo.color}`}>
+                            SIGNAL: {signalInfo.label}
+                          </div>
+                          <div className="text-[7px] text-slate-500">
+                            {market.totalTicks} ticks
+                          </div>
                         </div>
                       </div>
                     );
@@ -2575,19 +2610,6 @@ export default function ProScannerBot() {
                 </div>
               </div>
             </div>
-          )}
-
-          {/* Show Hide Button for Strongest Markets if hidden */}
-          {!showStrongestMarkets && (
-            <button
-              onClick={() => setShowStrongestMarkets(true)}
-              className="w-full bg-gradient-to-r from-amber-900/30 to-amber-800/30 backdrop-blur-sm border border-amber-500/30 rounded-xl p-2 text-center hover:bg-amber-800/40 transition-all"
-            >
-              <div className="flex items-center justify-center gap-2">
-                <Eye className="w-3 h-3 text-amber-400" />
-                <span className="text-[10px] text-amber-400 font-bold">SHOW STRONGEST MARKETS</span>
-              </div>
-            </button>
           )}
 
           {/* Markets Row - Horizontal (M1 and M2) */}
@@ -2754,34 +2776,26 @@ export default function ProScannerBot() {
             )}
           </div>
 
-          {/* TWO DIVS SIDE BY SIDE - Pattern Detection and Live Markets with Toggles */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {/* Pattern Detection Container with Toggle */}
+          {/* UPDATED: TWO DIVS SIDE BY SIDE - Pattern Detection and Live Markets (Conditional) */}
+          <div className={`grid ${getPatternLiveGridClass()} gap-3`}>
+            {/* Pattern Detection Container - Conditional */}
             {showPatternDetection && (
               <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
                 <div className="p-3 border-b border-slate-700/50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
-                        <Scan className="w-3 h-3 text-white" />
-                      </div>
-                      <h3 className="text-sm font-bold text-amber-400">🔍 Ramzfx 🔥 Market Scanner - Pattern Detection</h3>
-                      {scannerActive && isRunning && (
-                        <div className="flex items-center gap-1 ml-auto">
-                          <span className="relative flex h-1.5 w-1.5">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                          </span>
-                          <span className="text-[8px] text-emerald-400 font-bold">Active🚀</span>
-                        </div>
-                      )}
+                  <div className="flex items-center gap-2">
+                    <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
+                      <Scan className="w-3 h-3 text-white" />
                     </div>
-                    <button
-                      onClick={() => setShowPatternDetection(false)}
-                      className="p-1 hover:bg-slate-700/50 rounded transition-colors"
-                    >
-                      <EyeOff className="w-3 h-3 text-slate-400" />
-                    </button>
+                    <h3 className="text-sm font-bold text-amber-400">🔍 Ramzfx 🔥 Market Scanner - Pattern Detection</h3>
+                    {scannerActive && isRunning && (
+                      <div className="flex items-center gap-1 ml-auto">
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                        </span>
+                        <span className="text-[8px] text-emerald-400 font-bold">Active🚀</span>
+                      </div>
+                    )}
                   </div>
                 </div>
                 
@@ -2869,20 +2883,7 @@ export default function ProScannerBot() {
               </div>
             )}
 
-            {/* Show Hide Button for Pattern Detection if hidden */}
-            {!showPatternDetection && (
-              <button
-                onClick={() => setShowPatternDetection(true)}
-                className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-amber-500/30 rounded-xl p-8 text-center hover:bg-slate-800/60 transition-all"
-              >
-                <div className="flex flex-col items-center gap-2">
-                  <Eye className="w-5 h-5 text-amber-400" />
-                  <span className="text-[10px] text-amber-400 font-bold">SHOW PATTERN DETECTION</span>
-                </div>
-              </button>
-            )}
-
-            {/* Live Markets Scanner Container with Toggle */}
+            {/* Live Markets Scanner Container - CONTINUOUS SCROLLING - Conditional */}
             {showLiveMarkets && (
               <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
                 <div className="p-3 border-b border-slate-700/50 bg-slate-800/30">
@@ -2907,12 +2908,6 @@ export default function ProScannerBot() {
                         </span>
                         <span className="text-[8px] text-slate-400 font-bold">CONTINUOUS SCANNING</span>
                       </div>
-                      <button
-                        onClick={() => setShowLiveMarkets(false)}
-                        className="p-1 hover:bg-slate-700/50 rounded transition-colors"
-                      >
-                        <EyeOff className="w-3 h-3 text-slate-400" />
-                      </button>
                     </div>
                   </div>
                 </div>
@@ -2928,15 +2923,17 @@ export default function ProScannerBot() {
                         </div>
                       )}
                       
-                      {/* Scrolling items - continuous smooth scrolling (25-30 second interval) */}
+                      {/* Scrolling items - continuous smooth scrolling */}
                       <div 
                         className={`absolute left-0 right-0 ${scrollSpeed === 'normal' ? 'animate-scroll-markets' : 'animate-scroll-markets-slow'}`}
-                        style={{ animationDuration: scrollSpeed === 'normal' ? '25s' : '30s' }}
+                        style={{ animationDuration: scrollSpeed === 'normal' ? '20s' : '30s' }}
                       >
                         {[...scannerMarkers, ...scannerMarkers].map((market, idx) => {
                           const stats = marketStats.find(s => s.symbol === market.symbol);
                           const strengthInfo = stats ? getStrengthDisplay(stats.strength) : { text: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
-                          const signalInfo = stats ? getSignalDisplay(stats.dominantSignal, stats.signalStrength) : { text: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
+                          
+                          // UPDATED: Get signal info for live markets display
+                          const signalInfo = stats ? getSignalDisplay(stats.dominantSignal) : { label: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
                           
                           return (
                             <div 
@@ -2960,34 +2957,24 @@ export default function ProScannerBot() {
                                   </div>
                                 </div>
                                 
-                                {/* SIGNAL DISPLAY */}
-                                {stats && stats.totalTicks > 0 && stats.dominantSignal !== 'neutral' && (
-                                  <div className={`text-center mb-2 py-1 rounded ${signalInfo.bg}`}>
-                                    <span className={`text-[10px] font-bold ${signalInfo.color} uppercase tracking-wider`}>
-                                      {signalInfo.text}
-                                    </span>
-                                    <span className="text-[8px] text-white/60 ml-1">({stats.signalStrength.toFixed(1)}%)</span>
-                                  </div>
-                                )}
-                                
-                                {/* Statistics for this market */}
+                                {/* UPDATED: Statistics for this market with improved colors */}
                                 {stats && stats.totalTicks > 0 ? (
-                                  <div className="grid grid-cols-2 gap-2 text-[9px] text-white/80">
+                                  <div className="grid grid-cols-2 gap-2 text-[9px]">
                                     <div className="flex items-center justify-between">
-                                      <span>Even:</span>
-                                      <span className="font-bold text-white">{stats.evenPercentage.toFixed(1)}%</span>
+                                      <span className="text-white/70">Even:</span>
+                                      <span className={`font-bold text-emerald-400`}>{stats.evenPercentage.toFixed(1)}%</span>
                                     </div>
                                     <div className="flex items-center justify-between">
-                                      <span>Odd:</span>
-                                      <span className="font-bold text-white">{stats.oddPercentage.toFixed(1)}%</span>
+                                      <span className="text-white/70">Odd:</span>
+                                      <span className={`font-bold text-red-400`}>{stats.oddPercentage.toFixed(1)}%</span>
                                     </div>
                                     <div className="flex items-center justify-between">
-                                      <span>Over 4:</span>
-                                      <span className="font-bold text-white">{stats.over4Percentage.toFixed(1)}%</span>
+                                      <span className="text-white/70">Over 4:</span>
+                                      <span className={`font-bold text-emerald-400`}>{stats.over4Percentage.toFixed(1)}%</span>
                                     </div>
                                     <div className="flex items-center justify-between">
-                                      <span>Under 5:</span>
-                                      <span className="font-bold text-white">{stats.under5Percentage.toFixed(1)}%</span>
+                                      <span className="text-white/70">Under 5:</span>
+                                      <span className={`font-bold text-red-400`}>{stats.under5Percentage.toFixed(1)}%</span>
                                     </div>
                                   </div>
                                 ) : (
@@ -2996,21 +2983,24 @@ export default function ProScannerBot() {
                                   </div>
                                 )}
                                 
-                                {/* Strength bar */}
+                                {/* UPDATED: Strength bar and signal display */}
                                 {stats && stats.totalTicks > 0 && (
-                                  <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
-                                    <div 
-                                      className="h-full bg-white rounded-full transition-all duration-500"
-                                      style={{ width: `${stats.strength}%` }}
-                                    />
-                                  </div>
-                                )}
-                                
-                                {/* Tick counter */}
-                                {stats && stats.totalTicks > 0 && (
-                                  <div className="text-[7px] text-white/50 text-right mt-1">
-                                    {stats.totalTicks} ticks analyzed
-                                  </div>
+                                  <>
+                                    <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
+                                      <div 
+                                        className="h-full bg-white rounded-full transition-all duration-500"
+                                        style={{ width: `${stats.strength}%` }}
+                                      />
+                                    </div>
+                                    <div className="mt-1 flex items-center justify-between">
+                                      <div className={`text-[7px] font-bold px-1.5 py-0.5 rounded ${signalInfo.bg} ${signalInfo.color}`}>
+                                        SIGNAL: {signalInfo.label}
+                                      </div>
+                                      <div className="text-[7px] text-white/50">
+                                        {stats.totalTicks} ticks
+                                      </div>
+                                    </div>
+                                  </>
                                 )}
                               </div>
                             </div>
@@ -3047,19 +3037,6 @@ export default function ProScannerBot() {
                   </div>
                 </div>
               </div>
-            )}
-
-            {/* Show Hide Button for Live Markets if hidden */}
-            {!showLiveMarkets && (
-              <button
-                onClick={() => setShowLiveMarkets(true)}
-                className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-emerald-500/30 rounded-xl p-8 text-center hover:bg-slate-800/60 transition-all"
-              >
-                <div className="flex flex-col items-center gap-2">
-                  <Eye className="w-5 h-5 text-emerald-400" />
-                  <span className="text-[10px] text-emerald-400 font-bold">SHOW LIVE MARKETS</span>
-                </div>
-              </button>
             )}
           </div>
 
