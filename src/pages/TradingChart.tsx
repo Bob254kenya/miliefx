@@ -12,7 +12,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Play, StopCircle, Trash2, Scan,
-  Home, RefreshCw, Shield, TrendingUp, DollarSign, X, Volume2, VolumeX, Eye, EyeOff
+  Home, RefreshCw, Shield, TrendingUp, DollarSign, X, Volume2, VolumeX
 } from 'lucide-react';
 
 // ============================================
@@ -207,11 +207,11 @@ const notificationStyles = `
 }
 
 .animate-scroll-markets {
-  animation: scrollMarkets 25s linear infinite;
+  animation: scrollMarkets 20s linear infinite;
 }
 
 .animate-scroll-markets-slow {
-  animation: scrollMarkets 35s linear infinite;
+  animation: scrollMarkets 30s linear infinite;
 }
 `;
 
@@ -222,7 +222,7 @@ export const showTPNotification = (type: 'tp' | 'sl', message: string, amount?: 
   }
 };
 
-// Compact Notification Component
+// Compact Notification Component (300px x 200px)
 const NotificationPopup = () => {
   const [notification, setNotification] = useState<{ type: 'tp' | 'sl'; message: string; amount?: number } | null>(null);
   const [isVisible, setIsVisible] = useState(false);
@@ -508,8 +508,8 @@ const BALANCE_SYNC_INTERVAL = 1000;
 const IMMEDIATE_BALANCE_SYNC_DELAY = 50;
 const MARKET_SCROLL_INTERVAL = 10000;
 const PATTERN_DISPLAY_DURATION = 4000;
-const STATS_UPDATE_INTERVAL = 1000;
-const STRONG_MARKET_THRESHOLD = 55;
+const STATS_UPDATE_INTERVAL = 1000; // Update stats every second
+const STRONG_MARKET_THRESHOLD = 55; // Market considered strong if percentage > 55%
 
 // Helper function
 const logDebug = (...args: any[]) => {
@@ -641,10 +641,6 @@ export default function ProScannerBot() {
   const marketTickCountersRef = useRef<Map<string, { even: number; odd: number; over4: number; under5: number; total: number }>>(new Map());
   const statsIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Toggle visibility for scanner sections
-  const [showLiveMarkets, setShowLiveMarkets] = useState(true);
-  const [showPatternDetection, setShowPatternDetection] = useState(true);
-
   const forceImmediateBalanceUpdate = useCallback(async (expectedPnl?: number): Promise<number> => {
     if (!refreshBalance) return localBalanceRef.current;
     
@@ -721,7 +717,9 @@ export default function ProScannerBot() {
     const over4Percentage = (current.over4 / current.total) * 100;
     const under5Percentage = (current.under5 / current.total) * 100;
     
-    // Calculate market strength
+    // Calculate market strength (higher percentage means stronger trend)
+    // For even/odd: strength is max(even%, odd%)
+    // For over/under: strength is max(over4%, under5%)
     const directionStrength = Math.max(evenPercentage, oddPercentage);
     const barrierStrength = Math.max(over4Percentage, under5Percentage);
     const strength = Math.max(directionStrength, barrierStrength);
@@ -822,7 +820,7 @@ export default function ProScannerBot() {
   const [isScannerVoiceActive, setIsScannerVoiceActive] = useState(false);
   const [scannerMarkers, setScannerMarkers] = useState<typeof SCANNER_MARKETS>([]);
   const scannerIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const voiceAudioRef = useRef<any>(null);
+  const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
   
   // Continuous scrolling animation ref
   const scrollingContainerRef = useRef<HTMLDivElement>(null);
@@ -877,6 +875,38 @@ export default function ProScannerBot() {
       return () => clearTimeout(timer);
     }
   }, [tradeResult]);
+
+  // Initialize scanner voice
+  useEffect(() => {
+    const initVoice = () => {
+      try {
+        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        oscillator.type = 'sine';
+        oscillator.frequency.value = 880;
+        gainNode.gain.value = 0;
+        oscillator.start();
+        
+        voiceAudioRef.current = {
+          play: () => {
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 0.5);
+          }
+        } as any;
+      } catch (e) {
+        console.log('Audio not supported');
+      }
+    };
+    
+    initVoice();
+    
+    return () => {
+      if (scannerIntervalRef.current) clearInterval(scannerIntervalRef.current);
+    };
+  }, []);
 
   // Continuous market scanner animation - runs regardless of bot state
   useEffect(() => {
@@ -2504,6 +2534,7 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
+                      <SelectItem disabled>Over/Under (last digits pattern based) Reversal Direction</SelectItem>
                       <SelectItem value="over0_under9_1">🎯 Over 0 / Under 9 (1 tick)</SelectItem>
                       <SelectItem value="over0_under9_2">🎯 Over 0 / Under 9 (2 ticks)</SelectItem>
                       <SelectItem value="over0_under9_3">🎯 Over 0 / Under 9 (3 ticks)</SelectItem>
@@ -2561,6 +2592,7 @@ export default function ProScannerBot() {
                       <SelectValue placeholder="Select strategy" />
                     </SelectTrigger>
                     <SelectContent className="bg-slate-800 border-slate-700 max-h-[300px] overflow-y-auto">
+                      <SelectItem disabled>Even/Odd (last digits pattern based) Reversal Direction</SelectItem>
                       <SelectItem value="odd_even_3">🔄 Even / Odd (3 ticks)</SelectItem>
                       <SelectItem value="odd_even_4">🔄 Even / Odd (4 ticks)</SelectItem>
                       <SelectItem value="odd_even_5">🔄 Even / Odd (5 ticks)</SelectItem>
@@ -2568,6 +2600,7 @@ export default function ProScannerBot() {
                       <SelectItem value="odd_even_7">🔄 Even / Odd (7 ticks)</SelectItem>
                       <SelectItem value="odd_even_8">🔄 Even / Odd (8 ticks)</SelectItem>
                       <SelectItem value="odd_even_9">🔄 Even / Odd (9 ticks)</SelectItem>
+                      <SelectItem disabled>Over/Under (last digits pattern based) Reversal Direction</SelectItem>
                       <SelectItem value="over4_under5_5">🎯 Over 4 / Under 5 (5 ticks)</SelectItem>
                       <SelectItem value="over4_under5_6">🎯 Over 4 / Under 5 (6 ticks)</SelectItem>
                       <SelectItem value="over4_under5_7">🎯 Over 4 / Under 5 (7 ticks)</SelectItem>
@@ -2575,6 +2608,7 @@ export default function ProScannerBot() {
                       <SelectItem value="over4_under5_9">🎯 Over 4 / Under 5 (9 ticks)</SelectItem>
                       <SelectItem value="over3_under6_5">🎯 Over 3 / Under 6 (5 ticks)</SelectItem>
                       <SelectItem value="over3_under6_7">🎯 Over 3 / Under 6 (7 ticks)</SelectItem>
+                      <SelectItem disabled>Even/Odd (last digits pattern based) Same Direction</SelectItem>
                       <SelectItem value="same_direction_3">🔢 Even/Odd (3 ticks)</SelectItem>
                       <SelectItem value="same_direction_4">🔢 Even/Odd (4 ticks)</SelectItem>
                       <SelectItem value="same_direction_5">🔢 Even/Odd (5 ticks)</SelectItem>
@@ -2636,123 +2670,115 @@ export default function ProScannerBot() {
             )}
           </div>
 
-          {/* TWO DIVS SIDE BY SIDE - Pattern Detection and Live Markets with Toggle Buttons */}
-          <div className={`grid gap-3 ${showLiveMarkets && showPatternDetection ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'}`}>
+          {/* TWO DIVS SIDE BY SIDE - Pattern Detection and Live Markets */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {/* Pattern Detection Container */}
-            {showPatternDetection && (
-              <div className={`bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl ${!showLiveMarkets ? 'lg:col-span-1' : ''}`}>
-                <div className="p-3 border-b border-slate-700/50 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
-                      <Scan className="w-3 h-3 text-white" />
-                    </div>
-                    <h3 className="text-sm font-bold text-amber-400">🔍 Ramzfx 🔥 Market Scanner - Pattern Detection</h3>
-                    {scannerActive && isRunning && (
-                      <div className="flex items-center gap-1 ml-auto">
-                        <span className="relative flex h-1.5 w-1.5">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                        </span>
-                        <span className="text-[8px] text-emerald-400 font-bold">Active🚀</span>
-                      </div>
-                    )}
+            <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
+              <div className="p-3 border-b border-slate-700/50">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
+                    <Scan className="w-3 h-3 text-white" />
                   </div>
-                  <button
-                    onClick={() => setShowPatternDetection(false)}
-                    className="p-1 rounded-md hover:bg-slate-700/50 transition-colors text-slate-400 hover:text-slate-200"
-                  >
-                    <EyeOff className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                
-                {/* Animated Dollar Icons Row */}
-                <div className="py-2 bg-slate-800/30 overflow-hidden relative">
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10 font-bold">PATTERN DETECTION</span>
-                  </div>
-                  <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite' }}>
-                    {[...Array(15)].map((_, i) => (
-                      <DollarSign 
-                        key={i}
-                        className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
-                        style={{ 
-                          animationDuration: `${0.5 + (i % 3) * 0.2}s`,
-                          filter: 'drop-shadow(0 0 1px currentColor)'
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite', position: 'absolute', top: 0, left: '100%' }}>
-                    {[...Array(15)].map((_, i) => (
-                      <DollarSign 
-                        key={`dup-${i}`}
-                        className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
-                        style={{ 
-                          animationDuration: `${0.5 + (i % 3) * 0.2}s`,
-                          filter: 'drop-shadow(0 0 1px currentColor)'
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-                
-                {/* Detected Patterns Display */}
-                <div className="h-[200px] overflow-y-auto">
-                  {detectedPatterns.length === 0 ? (
-                    <div className="h-full flex items-center justify-center">
-                      <p className="text-[10px] text-slate-500 font-semibold">Waiting for pattern detection...</p>
-                    </div>
-                  ) : (
-                    <div className="p-2 space-y-1.5">
-                      {detectedPatterns.map((pattern) => (
-                        <div 
-                          key={pattern.timestamp}
-                          className="bg-slate-800/50 rounded-lg p-2 border border-slate-700/50 animate-slideIn"
-                        >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
-                                <DollarSign className="w-3 h-3 text-amber-400" />
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-1.5">
-                                  <span className="font-mono text-[11px] font-bold text-slate-200">{pattern.symbol}</span>
-                                  <Badge className="text-[8px] bg-slate-700/50 text-slate-300 px-1 py-0 font-semibold">{pattern.name}</Badge>
-                                </div>
-                                <div className="text-[9px] text-amber-400 font-bold">{pattern.patternType}</div>
-                                {pattern.contractType && (
-                                  <div className="text-[8px] text-cyan-400 font-semibold">Contract: {pattern.contractType.replace('DIGIT', '')}</div>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <div className="flex gap-0.5">
-                                {(pattern.last15Ticks || pattern.digits).slice(-8).map((digit, i) => (
-                                  <span 
-                                    key={i}
-                                    className="w-5 h-5 rounded bg-slate-700 flex items-center justify-center text-[10px] font-mono font-bold text-cyan-400"
-                                  >
-                                    {digit}
-                                  </span>
-                                ))}
-                              </div>
-                              <Badge className={`text-[8px] px-1 py-0 font-bold ${pattern.result === 'Win' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : pattern.result === 'Loss' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'}`}>
-                                {pattern.result ? (pattern.result === 'Win' ? `WIN +$${pattern.pnl?.toFixed(2)}` : `LOSS $${pattern.pnl?.toFixed(2)}`) : 'FOUND 🤷‍♀️'}
-                              </Badge>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+                  <h3 className="text-sm font-bold text-amber-400">🔍 Ramzfx 🔥 Market Scanner - Pattern Detection</h3>
+                  {scannerActive && isRunning && (
+                    <div className="flex items-center gap-1 ml-auto">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                      </span>
+                      <span className="text-[8px] text-emerald-400 font-bold">Active🚀</span>
                     </div>
                   )}
                 </div>
               </div>
-            )}
+              
+              {/* Animated Dollar Icons Row */}
+              <div className="py-2 bg-slate-800/30 overflow-hidden relative">
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <span className="text-[8px] text-slate-400 font-mono bg-slate-800/80 px-2 py-0.5 rounded-full z-10 font-bold">PATTERN DETECTION</span>
+                </div>
+                <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite' }}>
+                  {[...Array(15)].map((_, i) => (
+                    <DollarSign 
+                      key={i}
+                      className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
+                      style={{ 
+                        animationDuration: `${0.5 + (i % 3) * 0.2}s`,
+                        filter: 'drop-shadow(0 0 1px currentColor)'
+                      }}
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 animate-scroll-right-to-left" style={{ animation: 'scrollRightToLeft 12s linear infinite', position: 'absolute', top: 0, left: '100%' }}>
+                  {[...Array(15)].map((_, i) => (
+                    <DollarSign 
+                      key={`dup-${i}`}
+                      className={`w-3 h-3 ${dollarColors[i % dollarColors.length]} animate-pulse`}
+                      style={{ 
+                        animationDuration: `${0.5 + (i % 3) * 0.2}s`,
+                        filter: 'drop-shadow(0 0 1px currentColor)'
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+              
+              {/* Detected Patterns Display */}
+              <div className="h-[200px] overflow-y-auto">
+                {detectedPatterns.length === 0 ? (
+                  <div className="h-full flex items-center justify-center">
+                    <p className="text-[10px] text-slate-500 font-semibold">Waiting for pattern detection...</p>
+                  </div>
+                ) : (
+                  <div className="p-2 space-y-1.5">
+                    {detectedPatterns.map((pattern) => (
+                      <div 
+                        key={pattern.timestamp}
+                        className="bg-slate-800/50 rounded-lg p-2 border border-slate-700/50 animate-slideIn"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
+                              <DollarSign className="w-3 h-3 text-amber-400" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono text-[11px] font-bold text-slate-200">{pattern.symbol}</span>
+                                <Badge className="text-[8px] bg-slate-700/50 text-slate-300 px-1 py-0 font-semibold">{pattern.name}</Badge>
+                              </div>
+                              <div className="text-[9px] text-amber-400 font-bold">{pattern.patternType}</div>
+                              {pattern.contractType && (
+                                <div className="text-[8px] text-cyan-400 font-semibold">Contract: {pattern.contractType.replace('DIGIT', '')}</div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="flex gap-0.5">
+                              {(pattern.last15Ticks || pattern.digits).slice(-8).map((digit, i) => (
+                                <span 
+                                  key={i}
+                                  className="w-5 h-5 rounded bg-slate-700 flex items-center justify-center text-[10px] font-mono font-bold text-cyan-400"
+                                >
+                                  {digit}
+                                </span>
+                              ))}
+                            </div>
+                            <Badge className={`text-[8px] px-1 py-0 font-bold ${pattern.result === 'Win' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : pattern.result === 'Loss' ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'}`}>
+                              {pattern.result ? (pattern.result === 'Win' ? `WIN +$${pattern.pnl?.toFixed(2)}` : `LOSS $${pattern.pnl?.toFixed(2)}`) : 'FOUND 🤷‍♀️'}
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
 
             {/* Live Markets Scanner Container - CONTINUOUS SCROLLING */}
-            {showLiveMarkets && (
-              <div className={`bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden ${!showPatternDetection ? 'lg:col-span-1' : ''}`}>
-                <div className="p-3 border-b border-slate-700/50 bg-slate-800/30 flex items-center justify-between">
+            <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
+              <div className="p-3 border-b border-slate-700/50 bg-slate-800/30">
+                <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className={`p-1.5 rounded-lg ${isRunning ? 'bg-gradient-to-br from-emerald-500 to-green-600 animate-pulse-slow' : 'bg-gradient-to-br from-slate-600 to-slate-700'}`}>
                       <Scan className="w-3 h-3 text-white" />
@@ -2773,157 +2799,130 @@ export default function ProScannerBot() {
                       </span>
                       <span className="text-[8px] text-slate-400 font-bold">CONTINUOUS SCANNING</span>
                     </div>
-                    <button
-                      onClick={() => setShowLiveMarkets(false)}
-                      className="p-1 rounded-md hover:bg-slate-700/50 transition-colors text-slate-400 hover:text-slate-200"
-                    >
-                      <EyeOff className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-                
-                {/* Animated Scrolling Markets Container - Continuous scrolling even when bot is off */}
-                <div className="relative h-[400px] overflow-hidden bg-slate-900/50">
-                  {scannerMarkers.length > 0 ? (
-                    <div className="absolute inset-0">
-                      {/* Voice wave overlay when bot is running */}
-                      {isRunning && (
-                        <div className="absolute inset-0 pointer-events-none z-10">
-                          <div className={`absolute inset-0 bg-gradient-to-t from-emerald-500/0 via-emerald-500/5 to-transparent ${isScannerVoiceActive ? 'animate-pulse' : ''}`} />
-                        </div>
-                      )}
-                      
-                      {/* Scrolling items - continuous smooth scrolling (25-35 second interval based on speed setting) */}
-                      <div 
-                        className={`absolute left-0 right-0 ${scrollSpeed === 'normal' ? 'animate-scroll-markets' : 'animate-scroll-markets-slow'}`}
-                      >
-                        {[...scannerMarkets, ...scannerMarkets].map((market, idx) => {
-                          const stats = marketStats.find(s => s.symbol === market.symbol);
-                          const strengthInfo = stats ? getStrengthDisplay(stats.strength) : { text: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
-                          
-                          return (
-                            <div 
-                              key={`${market.symbol}-${idx}`}
-                              className={`mx-2 mb-2 rounded-lg overflow-hidden shadow-lg transform transition-all duration-300 hover:scale-[1.02] animate-fadeInUp`}
-                              style={{ animationDelay: `${idx * 0.05}s` }}
-                            >
-                              <div className={`bg-gradient-to-r ${market.color} p-3`}>
-                                <div className="flex items-center justify-between mb-2">
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-                                      <DollarSign className="w-4 h-4 text-white" />
-                                    </div>
-                                    <div>
-                                      <span className="font-mono text-sm font-bold text-white">{market.symbol}</span>
-                                      <span className="text-[9px] text-white/70 ml-1">{market.name}</span>
-                                    </div>
-                                  </div>
-                                  <div className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${strengthInfo.bg} ${strengthInfo.color}`}>
-                                    {strengthInfo.text}
-                                  </div>
-                                </div>
-                                
-                                {/* Statistics for this market */}
-                                {stats && stats.totalTicks > 0 ? (
-                                  <div className="grid grid-cols-2 gap-2 text-[9px] text-white/80">
-                                    <div className="flex items-center justify-between">
-                                      <span className="font-bold">Even:</span>
-                                      <span className="font-bold text-white">{stats.evenPercentage.toFixed(1)}%</span>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                      <span className="font-bold">Odd:</span>
-                                      <span className="font-bold text-white">{stats.oddPercentage.toFixed(1)}%</span>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                      <span className="font-bold">Over 4:</span>
-                                      <span className="font-bold text-white">{stats.over4Percentage.toFixed(1)}%</span>
-                                    </div>
-                                    <div className="flex items-center justify-between">
-                                      <span className="font-bold">Under 5:</span>
-                                      <span className="font-bold text-white">{stats.under5Percentage.toFixed(1)}%</span>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <div className="text-[8px] text-white/60 text-center py-1">
-                                    Waiting for tick data...
-                                  </div>
-                                )}
-                                
-                                {/* Strength bar */}
-                                {stats && stats.totalTicks > 0 && (
-                                  <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
-                                    <div 
-                                      className="h-full bg-white rounded-full transition-all duration-500"
-                                      style={{ width: `${stats.strength}%` }}
-                                    />
-                                  </div>
-                                )}
-                                
-                                {/* Tick counter */}
-                                {stats && stats.totalTicks > 0 && (
-                                  <div className="text-[7px] text-white/50 text-right mt-1">
-                                    {stats.totalTicks} ticks analyzed
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="h-full flex items-center justify-center">
-                      <div className="text-center">
-                        <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-slate-800 flex items-center justify-center">
-                          <Scan className="w-6 h-6 text-slate-600 animate-pulse" />
-                        </div>
-                        <p className="text-[10px] text-slate-500 font-semibold">Loading market data...</p>
-                        <p className="text-[8px] text-slate-600 mt-1">Analyzing {SCANNER_MARKETS.length} markets in real-time</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Scanner info footer */}
-                <div className="p-2 border-t border-slate-700/30 bg-slate-800/20">
-                  <div className="flex items-center justify-between text-[8px] text-slate-500 font-semibold">
-                    <span className="flex items-center gap-1">
-                      <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
-                      {SCANNER_MARKETS.length} markets monitored
-                    </span>
-                    <span className="font-mono font-bold">
-                      {marketStats.filter(m => m.totalTicks >= 100).length} markets have 100+ ticks
-                    </span>
-                    <span className="font-mono text-emerald-400">
-                      {strongestMarkets.length} strong markets
-                    </span>
                   </div>
                 </div>
               </div>
-            )}
-          </div>
-
-          {/* Show toggle buttons when sections are hidden */}
-          {(!showPatternDetection || !showLiveMarkets) && (
-            <div className="flex gap-2 justify-center">
-              {!showPatternDetection && (
-                <button
-                  onClick={() => setShowPatternDetection(true)}
-                  className="text-[10px] px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500/30 transition-colors flex items-center gap-1"
-                >
-                  <Eye className="w-3 h-3" /> Show Pattern Detection
-                </button>
-              )}
-              {!showLiveMarkets && (
-                <button
-                  onClick={() => setShowLiveMarkets(true)}
-                  className="text-[10px] px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30 transition-colors flex items-center gap-1"
-                >
-                  <Eye className="w-3 h-3" /> Show Live Markets
-                </button>
-              )}
+              
+              {/* Animated Scrolling Markets Container - Continuous scrolling even when bot is off */}
+              <div className="relative h-[400px] overflow-hidden bg-slate-900/50">
+                {scannerMarkers.length > 0 ? (
+                  <div className="absolute inset-0">
+                    {/* Voice wave overlay when bot is running */}
+                    {isRunning && (
+                      <div className="absolute inset-0 pointer-events-none z-10">
+                        <div className={`absolute inset-0 bg-gradient-to-t from-emerald-500/0 via-emerald-500/5 to-transparent ${isScannerVoiceActive ? 'animate-pulse' : ''}`} />
+                      </div>
+                    )}
+                    
+                    {/* Scrolling items - continuous smooth scrolling (10-30 second interval based on speed setting) */}
+                    <div 
+                      className={`absolute left-0 right-0 ${scrollSpeed === 'normal' ? 'animate-scroll-markets' : 'animate-scroll-markets-slow'}`}
+                      style={{ animationDuration: scrollSpeed === 'normal' ? '20s' : '30s' }}
+                    >
+                      {[...scannerMarkers, ...scannerMarkers].map((market, idx) => {
+                        const stats = marketStats.find(s => s.symbol === market.symbol);
+                        const strengthInfo = stats ? getStrengthDisplay(stats.strength) : { text: 'ANALYZING', color: 'text-slate-400', bg: 'bg-slate-500/20' };
+                        
+                        return (
+                          <div 
+                            key={`${market.symbol}-${idx}`}
+                            className={`mx-2 mb-2 rounded-lg overflow-hidden shadow-lg transform transition-all duration-300 hover:scale-[1.02] animate-fadeInUp`}
+                            style={{ animationDelay: `${idx * 0.05}s` }}
+                          >
+                            <div className={`bg-gradient-to-r ${market.color} p-3`}>
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                                    <DollarSign className="w-4 h-4 text-white" />
+                                  </div>
+                                  <div>
+                                    <span className="font-mono text-sm font-bold text-white">{market.symbol}</span>
+                                    <span className="text-[9px] text-white/70 ml-1">{market.name}</span>
+                                  </div>
+                                </div>
+                                <div className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${strengthInfo.bg} ${strengthInfo.color}`}>
+                                  {strengthInfo.text}
+                                </div>
+                              </div>
+                              
+                              {/* Statistics for this market */}
+                              {stats && stats.totalTicks > 0 ? (
+                                <div className="grid grid-cols-2 gap-2 text-[9px] text-white/80">
+                                  <div className="flex items-center justify-between">
+                                    <span>Even:</span>
+                                    <span className="font-bold text-white">{stats.evenPercentage.toFixed(1)}%</span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span>Odd:</span>
+                                    <span className="font-bold text-white">{stats.oddPercentage.toFixed(1)}%</span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span>Over 4:</span>
+                                    <span className="font-bold text-white">{stats.over4Percentage.toFixed(1)}%</span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span>Under 5:</span>
+                                    <span className="font-bold text-white">{stats.under5Percentage.toFixed(1)}%</span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="text-[8px] text-white/60 text-center py-1">
+                                  Waiting for tick data...
+                                </div>
+                              )}
+                              
+                              {/* Strength bar */}
+                              {stats && stats.totalTicks > 0 && (
+                                <div className="mt-2 h-1.5 bg-white/20 rounded-full overflow-hidden">
+                                  <div 
+                                    className="h-full bg-white rounded-full transition-all duration-500"
+                                    style={{ width: `${stats.strength}%` }}
+                                  />
+                                </div>
+                              )}
+                              
+                              {/* Tick counter */}
+                              {stats && stats.totalTicks > 0 && (
+                                <div className="text-[7px] text-white/50 text-right mt-1">
+                                  {stats.totalTicks} ticks analyzed
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-full flex items-center justify-center">
+                    <div className="text-center">
+                      <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-slate-800 flex items-center justify-center">
+                        <Scan className="w-6 h-6 text-slate-600 animate-pulse" />
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-semibold">Loading market data...</p>
+                      <p className="text-[8px] text-slate-600 mt-1">Analyzing {SCANNER_MARKETS.length} markets in real-time</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {/* Scanner info footer */}
+              <div className="p-2 border-t border-slate-700/30 bg-slate-800/20">
+                <div className="flex items-center justify-between text-[8px] text-slate-500 font-semibold">
+                  <span className="flex items-center gap-1">
+                    <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
+                    {SCANNER_MARKETS.length} markets monitored
+                  </span>
+                  <span className="font-mono font-bold">
+                    {marketStats.filter(m => m.totalTicks >= 100).length} markets have 100+ ticks
+                  </span>
+                  <span className="font-mono text-emerald-400">
+                    {strongestMarkets.length} strong markets
+                  </span>
+                </div>
+              </div>
             </div>
-          )}
+          </div>
 
           {/* NEW: Active Pattern Display */}
           {activePattern && (
