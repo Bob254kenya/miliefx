@@ -211,7 +211,7 @@ const notificationStyles = `
 }
 
 .animate-scroll-markets-slow {
-  animation: scrollMarkets 30s linear infinite;
+  animation: scrollMarkets 45s linear infinite;
 }
 `;
 
@@ -842,7 +842,7 @@ export default function ProScannerBot() {
   
   // Continuous scrolling animation ref
   const scrollingContainerRef = useRef<HTMLDivElement>(null);
-  const [scrollSpeed, setScrollSpeed] = useState<'normal' | 'slow'>('normal');
+  const [scrollSpeed, setScrollSpeed] = useState<'normal' | 'slow'>('slow'); // CHANGED: default to 'slow' for slower scrolling
 
   /* ── Bot state ── */
   const [botStatus, setBotStatus] = useState<BotStatus>('idle');
@@ -2469,148 +2469,8 @@ export default function ProScannerBot() {
             </div>
           </div>
 
-          {/* ADDED: Toggle Controls Row */}
-          <div className="bg-gradient-to-r from-slate-900/80 to-slate-800/80 backdrop-blur-sm border border-slate-700/50 rounded-xl p-3 shadow-xl">
-            <div className="flex flex-wrap items-center justify-center gap-4">
-              {/* Pattern Detection Toggle */}
-              <button
-                onClick={() => setShowPatternDetection(!showPatternDetection)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 ${
-                  showPatternDetection 
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
-                    : 'bg-slate-800/50 text-slate-400 border border-slate-700/50'
-                }`}
-              >
-                {showPatternDetection ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                <span className="text-xs font-bold">Pattern Detection</span>
-                <span className={`text-[8px] font-bold ${showPatternDetection ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {showPatternDetection ? 'ON' : 'OFF'}
-                </span>
-              </button>
-
-              {/* Live Markets Toggle */}
-              <button
-                onClick={() => setShowLiveMarkets(!showLiveMarkets)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 ${
-                  showLiveMarkets 
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
-                    : 'bg-slate-800/50 text-slate-400 border border-slate-700/50'
-                }`}
-              >
-                {showLiveMarkets ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                <span className="text-xs font-bold">Live Markets</span>
-                <span className={`text-[8px] font-bold ${showLiveMarkets ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {showLiveMarkets ? 'ON' : 'OFF'}
-                </span>
-              </button>
-
-              {/* Strongest Markets Toggle */}
-              <button
-                onClick={() => setShowStrongestMarkets(!showStrongestMarkets)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all duration-200 ${
-                  showStrongestMarkets 
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
-                    : 'bg-slate-800/50 text-slate-400 border border-slate-700/50'
-                }`}
-              >
-                {showStrongestMarkets ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                <span className="text-xs font-bold">Strongest Markets</span>
-                <span className={`text-[8px] font-bold ${showStrongestMarkets ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {showStrongestMarkets ? 'ON' : 'OFF'}
-                </span>
-              </button>
-            </div>
-          </div>
-
-          {/* UPDATED: Strongest Markets Banner - Conditionally Rendered */}
-          {showStrongestMarkets && (
-            <div className="bg-gradient-to-r from-amber-900/30 to-amber-800/30 backdrop-blur-sm border border-amber-500/30 rounded-xl p-3 shadow-xl">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="p-1 bg-amber-500/20 rounded-lg">
-                  <TrendingUp className="w-3 h-3 text-amber-400" />
-                </div>
-                <h3 className="text-xs font-bold text-amber-400">🔥 STRONGEST MARKETS (Last 1000+ Ticks)</h3>
-                <div className="ml-auto flex items-center gap-2">
-                  <span className="text-[8px] text-slate-400">Even/Odd % | Over/Under %</span>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => setScrollSpeed('normal')}
-                      className={`text-[8px] px-1.5 py-0.5 rounded ${scrollSpeed === 'normal' ? 'bg-amber-500/30 text-amber-400' : 'bg-slate-700/50 text-slate-400'}`}
-                    >
-                      Normal
-                    </button>
-                    <button
-                      onClick={() => setScrollSpeed('slow')}
-                      className={`text-[8px] px-1.5 py-0.5 rounded ${scrollSpeed === 'slow' ? 'bg-amber-500/30 text-amber-400' : 'bg-slate-700/50 text-slate-400'}`}
-                    >
-                      Slow
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div className="overflow-hidden relative">
-                <div className={`flex gap-3 ${scrollSpeed === 'normal' ? 'animate-scroll-markets' : 'animate-scroll-markets-slow'}`}>
-                  {[...strongestMarkets, ...strongestMarkets].map((market, idx) => {
-                    const signalInfo = getSignalDisplay(market.dominantSignal);
-                    return (
-                      <div
-                        key={`${market.symbol}-${idx}`}
-                        className="flex-shrink-0 bg-slate-800/50 rounded-lg p-2 min-w-[220px] border border-amber-500/20"
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-1.5">
-                            <div className={`w-6 h-6 rounded-full bg-gradient-to-r ${market.color} flex items-center justify-center`}>
-                              <DollarSign className="w-3 h-3 text-white" />
-                            </div>
-                            <div>
-                              <span className="font-mono text-xs font-bold text-slate-200">{market.symbol}</span>
-                              <span className="text-[8px] text-slate-400 ml-1">{market.name}</span>
-                            </div>
-                          </div>
-                          <div className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${getStrengthDisplay(market.strength).bg} ${getStrengthDisplay(market.strength).color}`}>
-                            {getStrengthDisplay(market.strength).text}
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-[9px]">
-                          <div>
-                            <span className="text-slate-400">Even:</span>
-                            <span className="text-emerald-400 ml-1 font-bold">{market.evenPercentage.toFixed(1)}%</span>
-                          </div>
-                          <div>
-                            <span className="text-slate-400">Odd:</span>
-                            <span className="text-red-400 ml-1 font-bold">{market.oddPercentage.toFixed(1)}%</span>
-                          </div>
-                          <div>
-                            <span className="text-slate-400">Over 4:</span>
-                            <span className="text-emerald-400 ml-1 font-bold">{market.over4Percentage.toFixed(1)}%</span>
-                          </div>
-                          <div>
-                            <span className="text-slate-400">Under 5:</span>
-                            <span className="text-red-400 ml-1 font-bold">{market.under5Percentage.toFixed(1)}%</span>
-                          </div>
-                        </div>
-                        <div className="mt-1 h-1 bg-slate-700 rounded-full overflow-hidden">
-                          <div 
-                            className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all duration-300"
-                            style={{ width: `${market.strength}%` }}
-                          />
-                        </div>
-                        {/* UPDATED: Real signal display */}
-                        <div className="mt-1 flex items-center justify-between">
-                          <div className={`text-[7px] font-bold px-1.5 py-0.5 rounded ${signalInfo.bg} ${signalInfo.color}`}>
-                            SIGNAL: {signalInfo.label}
-                          </div>
-                          <div className="text-[7px] text-slate-500">
-                            {market.totalTicks} ticks
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
+          {/* UPDATED: Toggle Controls Row - Moved to respective containers */}
+          {/* This row has been removed. Toggles are now in their respective containers below */}
 
           {/* Markets Row - Horizontal (M1 and M2) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -2781,14 +2641,14 @@ export default function ProScannerBot() {
             {/* Pattern Detection Container - Conditional */}
             {showPatternDetection && (
               <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl overflow-hidden shadow-xl">
-                <div className="p-3 border-b border-slate-700/50">
+                <div className="p-3 border-b border-slate-700/50 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className="p-1 bg-gradient-to-br from-amber-500 to-orange-500 rounded-lg">
                       <Scan className="w-3 h-3 text-white" />
                     </div>
                     <h3 className="text-sm font-bold text-amber-400">🔍 Ramzfx 🔥 Market Scanner - Pattern Detection</h3>
                     {scannerActive && isRunning && (
-                      <div className="flex items-center gap-1 ml-auto">
+                      <div className="flex items-center gap-1 ml-2">
                         <span className="relative flex h-1.5 w-1.5">
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                           <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
@@ -2797,6 +2657,14 @@ export default function ProScannerBot() {
                       </div>
                     )}
                   </div>
+                  {/* ADDED: Toggle button inside Pattern Detection container */}
+                  <button
+                    onClick={() => setShowPatternDetection(false)}
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800/50 text-slate-400 hover:text-red-400 transition-colors"
+                  >
+                    <EyeOff className="w-3 h-3" />
+                    <span className="text-[8px] font-bold">HIDE</span>
+                  </button>
                 </div>
                 
                 {/* Animated Dollar Icons Row */}
@@ -2886,29 +2754,50 @@ export default function ProScannerBot() {
             {/* Live Markets Scanner Container - CONTINUOUS SCROLLING - Conditional */}
             {showLiveMarkets && (
               <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden">
-                <div className="p-3 border-b border-slate-700/50 bg-slate-800/30">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className={`p-1.5 rounded-lg ${isRunning ? 'bg-gradient-to-br from-emerald-500 to-green-600 animate-pulse-slow' : 'bg-gradient-to-br from-slate-600 to-slate-700'}`}>
-                        <Scan className="w-3 h-3 text-white" />
-                      </div>
-                      <h3 className="text-sm font-bold text-emerald-400">📡 Ramzfx 🔥 Market Scanner - Live Markets</h3>
+                <div className="p-3 border-b border-slate-700/50 bg-slate-800/30 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className={`p-1.5 rounded-lg ${isRunning ? 'bg-gradient-to-br from-emerald-500 to-green-600 animate-pulse-slow' : 'bg-gradient-to-br from-slate-600 to-slate-700'}`}>
+                      <Scan className="w-3 h-3 text-white" />
                     </div>
-                    <div className="flex items-center gap-2">
-                      {isScannerVoiceActive && (
-                        <div className="flex items-center gap-1">
-                          <Volume2 className="w-3 h-3 text-emerald-400 animate-voice-wave" />
-                          <span className="text-[8px] text-emerald-400 font-mono font-bold">SCANNING VOICE ACTIVE</span>
-                        </div>
-                      )}
+                    <h3 className="text-sm font-bold text-emerald-400">📡 Ramzfx 🔥 Market Scanner - Live Markets</h3>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {/* UPDATED: Scroll speed toggle inside Live Markets container */}
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setScrollSpeed('normal')}
+                        className={`text-[8px] px-1.5 py-0.5 rounded ${scrollSpeed === 'normal' ? 'bg-emerald-500/30 text-emerald-400' : 'bg-slate-700/50 text-slate-400'}`}
+                      >
+                        Normal
+                      </button>
+                      <button
+                        onClick={() => setScrollSpeed('slow')}
+                        className={`text-[8px] px-1.5 py-0.5 rounded ${scrollSpeed === 'slow' ? 'bg-emerald-500/30 text-emerald-400' : 'bg-slate-700/50 text-slate-400'}`}
+                      >
+                        Slow
+                      </button>
+                    </div>
+                    {isScannerVoiceActive && (
                       <div className="flex items-center gap-1">
-                        <span className="relative flex h-1.5 w-1.5">
-                          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isRunning ? 'bg-emerald-400' : 'bg-emerald-400'} opacity-75`}></span>
-                          <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${isRunning ? 'bg-emerald-500' : 'bg-emerald-500'}`}></span>
-                        </span>
-                        <span className="text-[8px] text-slate-400 font-bold">CONTINUOUS SCANNING</span>
+                        <Volume2 className="w-3 h-3 text-emerald-400 animate-voice-wave" />
+                        <span className="text-[8px] text-emerald-400 font-mono font-bold">SCANNING VOICE ACTIVE</span>
                       </div>
+                    )}
+                    <div className="flex items-center gap-1">
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isRunning ? 'bg-emerald-400' : 'bg-emerald-400'} opacity-75`}></span>
+                        <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${isRunning ? 'bg-emerald-500' : 'bg-emerald-500'}`}></span>
+                      </span>
+                      <span className="text-[8px] text-slate-400 font-bold">CONTINUOUS SCANNING</span>
                     </div>
+                    {/* ADDED: Toggle button inside Live Markets container */}
+                    <button
+                      onClick={() => setShowLiveMarkets(false)}
+                      className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800/50 text-slate-400 hover:text-red-400 transition-colors"
+                    >
+                      <EyeOff className="w-3 h-3" />
+                      <span className="text-[8px] font-bold">HIDE</span>
+                    </button>
                   </div>
                 </div>
                 
@@ -2926,7 +2815,7 @@ export default function ProScannerBot() {
                       {/* Scrolling items - continuous smooth scrolling */}
                       <div 
                         className={`absolute left-0 right-0 ${scrollSpeed === 'normal' ? 'animate-scroll-markets' : 'animate-scroll-markets-slow'}`}
-                        style={{ animationDuration: scrollSpeed === 'normal' ? '20s' : '30s' }}
+                        style={{ animationDuration: scrollSpeed === 'normal' ? '20s' : '45s' }}
                       >
                         {[...scannerMarkers, ...scannerMarkers].map((market, idx) => {
                           const stats = marketStats.find(s => s.symbol === market.symbol);
@@ -3039,6 +2928,89 @@ export default function ProScannerBot() {
               </div>
             )}
           </div>
+
+          {/* UPDATED: Strongest Markets Banner - Conditionally Rendered with its own toggle button */}
+          {showStrongestMarkets && (
+            <div className="bg-gradient-to-r from-amber-900/30 to-amber-800/30 backdrop-blur-sm border border-amber-500/30 rounded-xl p-3 shadow-xl">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 bg-amber-500/20 rounded-lg">
+                    <TrendingUp className="w-3 h-3 text-amber-400" />
+                  </div>
+                  <h3 className="text-xs font-bold text-amber-400">🔥 STRONGEST MARKETS (Last 1000+ Ticks)</h3>
+                </div>
+                {/* ADDED: Toggle button inside Strongest Markets container */}
+                <button
+                  onClick={() => setShowStrongestMarkets(false)}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800/50 text-slate-400 hover:text-red-400 transition-colors"
+                >
+                  <EyeOff className="w-3 h-3" />
+                  <span className="text-[8px] font-bold">HIDE</span>
+                </button>
+              </div>
+              <div className="overflow-hidden relative">
+                <div className={`flex gap-3 ${scrollSpeed === 'normal' ? 'animate-scroll-markets' : 'animate-scroll-markets-slow'}`}>
+                  {[...strongestMarkets, ...strongestMarkets].map((market, idx) => {
+                    const signalInfo = getSignalDisplay(market.dominantSignal);
+                    return (
+                      <div
+                        key={`${market.symbol}-${idx}`}
+                        className="flex-shrink-0 bg-slate-800/50 rounded-lg p-2 min-w-[220px] border border-amber-500/20"
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-1.5">
+                            <div className={`w-6 h-6 rounded-full bg-gradient-to-r ${market.color} flex items-center justify-center`}>
+                              <DollarSign className="w-3 h-3 text-white" />
+                            </div>
+                            <div>
+                              <span className="font-mono text-xs font-bold text-slate-200">{market.symbol}</span>
+                              <span className="text-[8px] text-slate-400 ml-1">{market.name}</span>
+                            </div>
+                          </div>
+                          <div className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${getStrengthDisplay(market.strength).bg} ${getStrengthDisplay(market.strength).color}`}>
+                            {getStrengthDisplay(market.strength).text}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-[9px]">
+                          <div>
+                            <span className="text-slate-400">Even:</span>
+                            <span className="text-emerald-400 ml-1 font-bold">{market.evenPercentage.toFixed(1)}%</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400">Odd:</span>
+                            <span className="text-red-400 ml-1 font-bold">{market.oddPercentage.toFixed(1)}%</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400">Over 4:</span>
+                            <span className="text-emerald-400 ml-1 font-bold">{market.over4Percentage.toFixed(1)}%</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400">Under 5:</span>
+                            <span className="text-red-400 ml-1 font-bold">{market.under5Percentage.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                        <div className="mt-1 h-1 bg-slate-700 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-gradient-to-r from-amber-500 to-orange-500 rounded-full transition-all duration-300"
+                            style={{ width: `${market.strength}%` }}
+                          />
+                        </div>
+                        {/* UPDATED: Real signal display */}
+                        <div className="mt-1 flex items-center justify-between">
+                          <div className={`text-[7px] font-bold px-1.5 py-0.5 rounded ${signalInfo.bg} ${signalInfo.color}`}>
+                            SIGNAL: {signalInfo.label}
+                          </div>
+                          <div className="text-[7px] text-slate-500">
+                            {market.totalTicks} ticks
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* NEW: Active Pattern Display */}
           {activePattern && (
