@@ -629,9 +629,9 @@ export default function ProScannerBot() {
   const { isAuthorized, balance: apiBalance, activeAccount, refreshBalance } = useAuth();
   const { recordLoss } = useLossRequirement();
 
-  // ADDED: Toggle states for UI sections (DEFAULT: Pattern Detection HIDDEN, Strongest Markets HIDDEN, Live Markets ALWAYS visible)
+  // ADDED: Toggle states for UI sections (DEFAULT: Pattern Detection HIDDEN, Strongest Markets HIDDEN, Live Markets HIDDEN)
   const [showPatternDetection, setShowPatternDetection] = useState(false); // CHANGED: default false (HIDDEN)
-  const [showLiveMarkets, setShowLiveMarkets] = useState(true); // ALWAYS visible by default
+  const [showLiveMarkets, setShowLiveMarkets] = useState(false); // CHANGED: default false (HIDDEN)
   const [showStrongestMarkets, setShowStrongestMarkets] = useState(false); // CHANGED: default false (HIDDEN)
 
   // Local balance tracking
@@ -2633,7 +2633,7 @@ export default function ProScannerBot() {
             )}
           </div>
 
-          {/* ADDED: Global Toggle Row for Pattern Detection and Strongest Markets */}
+          {/* ADDED: Global Toggle Row for Pattern Detection, Live Markets, and Strongest Markets */}
           <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl p-3 shadow-xl flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
@@ -2641,6 +2641,14 @@ export default function ProScannerBot() {
                 <Switch 
                   checked={showPatternDetection} 
                   onCheckedChange={setShowPatternDetection} 
+                  className="data-[state=checked]:bg-emerald-500"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-slate-400 font-semibold">Live Markets:</span>
+                <Switch 
+                  checked={showLiveMarkets} 
+                  onCheckedChange={setShowLiveMarkets} 
                   className="data-[state=checked]:bg-emerald-500"
                 />
               </div>
@@ -2654,7 +2662,7 @@ export default function ProScannerBot() {
               </div>
             </div>
             <div className="text-[8px] text-slate-500 font-mono">
-              Live Markets always visible
+              Toggle sections on/off
             </div>
           </div>
 
@@ -2773,36 +2781,38 @@ export default function ProScannerBot() {
               </div>
             )}
 
-            {/* Live Markets Scanner Container - CONTINUOUS SCROLLING - Conditional (UPDATED: reduced height by 30px, fixed font colors) */}
+            {/* Live Markets Scanner Container - CONTINUOUS SCROLLING - Conditional (UPDATED: increased font sizes and colors) */}
             {showLiveMarkets && (
-              <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border border-slate-700/50 rounded-xl shadow-xl overflow-hidden h-[400px] flex flex-col">
+              <div className="bg-gradient-to-br from-slate-900/90 to-slate-800/90 backdrop-blur-sm border-2 border-emerald-500/30 rounded-xl shadow-xl overflow-hidden h-[400px] flex flex-col">
                 <div className="p-3 border-b border-slate-700/50 bg-slate-800/30 flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-2">
-                    <div className={`p-1.5 rounded-lg ${isRunning ? 'bg-gradient-to-br from-emerald-500 to-green-600 animate-pulse-slow' : 'bg-gradient-to-br from-slate-600 to-slate-700'}`}>
-                      <Scan className="w-3 h-3 text-white" />
+                    <div className={`p-1.5 rounded-lg ${isRunning ? 'bg-gradient-to-br from-emerald-500 to-green-600 animate-pulse-slow' : 'bg-gradient-to-br from-emerald-600 to-green-700'}`}>
+                      <Scan className="w-4 h-4 text-white" />
                     </div>
-                    <h3 className="text-sm font-bold text-emerald-400">📡 Ramzfx 🔥 Market Scanner - Live Markets</h3>
+                    <h3 className="text-base font-extrabold bg-gradient-to-r from-emerald-400 to-green-400 bg-clip-text text-transparent">
+                      📡 LIVE MARKETS SCANNER
+                    </h3>
                   </div>
                   <div className="flex items-center gap-3">
                     {/* UPDATED: Scroll speed toggle inside Live Markets container */}
                     <div className="flex gap-1">
                       <button
                         onClick={() => setScrollSpeed('normal')}
-                        className={`text-[8px] px-1.5 py-0.5 rounded ${scrollSpeed === 'normal' ? 'bg-emerald-500/30 text-emerald-400' : 'bg-slate-700/50 text-slate-400'}`}
+                        className={`text-[9px] px-1.5 py-0.5 rounded ${scrollSpeed === 'normal' ? 'bg-emerald-500/30 text-emerald-400' : 'bg-slate-700/50 text-slate-400'}`}
                       >
                         Normal
                       </button>
                       <button
                         onClick={() => setScrollSpeed('slow')}
-                        className={`text-[8px] px-1.5 py-0.5 rounded ${scrollSpeed === 'slow' ? 'bg-emerald-500/30 text-emerald-400' : 'bg-slate-700/50 text-slate-400'}`}
+                        className={`text-[9px] px-1.5 py-0.5 rounded ${scrollSpeed === 'slow' ? 'bg-emerald-500/30 text-emerald-400' : 'bg-slate-700/50 text-slate-400'}`}
                       >
                         Slow
                       </button>
                     </div>
                     {isScannerVoiceActive && (
                       <div className="flex items-center gap-1">
-                        <Volume2 className="w-3 h-3 text-emerald-400 animate-voice-wave" />
-                        <span className="text-[8px] text-emerald-400 font-mono font-bold">SCANNING VOICE ACTIVE</span>
+                        <Volume2 className="w-4 h-4 text-emerald-400 animate-voice-wave" />
+                        <span className="text-[10px] text-emerald-400 font-mono font-bold">VOICE ACTIVE</span>
                       </div>
                     )}
                     <div className="flex items-center gap-1">
@@ -2810,7 +2820,7 @@ export default function ProScannerBot() {
                         <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isRunning ? 'bg-emerald-400' : 'bg-emerald-400'} opacity-75`}></span>
                         <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${isRunning ? 'bg-emerald-500' : 'bg-emerald-500'}`}></span>
                       </span>
-                      <span className="text-[8px] text-slate-400 font-bold">CONTINUOUS SCANNING</span>
+                      <span className="text-[9px] text-emerald-400 font-bold">LIVE</span>
                     </div>
                     {/* ADDED: Toggle button inside Live Markets container */}
                     <button
@@ -2859,37 +2869,37 @@ export default function ProScannerBot() {
                                       <DollarSign className="w-4 h-4 text-white" />
                                     </div>
                                     <div>
-                                      <span className="font-mono text-sm font-bold text-white">{market.symbol}</span>
-                                      <span className="text-[9px] text-white/70 ml-1">{market.name}</span>
+                                      <span className="font-mono text-base font-bold text-white">{market.symbol}</span>
+                                      <span className="text-[11px] text-white/80 ml-1">{market.name}</span>
                                     </div>
                                   </div>
-                                  <div className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${strengthInfo.bg} ${strengthInfo.color}`}>
+                                  <div className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${strengthInfo.bg} ${strengthInfo.color}`}>
                                     {strengthInfo.text}
                                   </div>
                                 </div>
                                 
                                 {/* UPDATED: Statistics for this market with improved colors - NO WHITE TEXT */}
                                 {stats && stats.totalTicks > 0 ? (
-                                  <div className="grid grid-cols-2 gap-2 text-[9px]">
+                                  <div className="grid grid-cols-2 gap-2 text-[11px]">
                                     <div className="flex items-center justify-between">
-                                      <span className="text-slate-300">Even:</span>
-                                      <span className={`font-bold ${stats.evenPercentage > 50 ? 'text-emerald-400' : 'text-slate-400'}`}>{stats.evenPercentage.toFixed(1)}%</span>
+                                      <span className="text-white/70">Even:</span>
+                                      <span className={`font-bold ${stats.evenPercentage > 50 ? 'text-emerald-400' : 'text-slate-300'}`}>{stats.evenPercentage.toFixed(1)}%</span>
                                     </div>
                                     <div className="flex items-center justify-between">
-                                      <span className="text-slate-300">Odd:</span>
-                                      <span className={`font-bold ${stats.oddPercentage > 50 ? 'text-red-400' : 'text-slate-400'}`}>{stats.oddPercentage.toFixed(1)}%</span>
+                                      <span className="text-white/70">Odd:</span>
+                                      <span className={`font-bold ${stats.oddPercentage > 50 ? 'text-red-400' : 'text-slate-300'}`}>{stats.oddPercentage.toFixed(1)}%</span>
                                     </div>
                                     <div className="flex items-center justify-between">
-                                      <span className="text-slate-300">Over 4:</span>
-                                      <span className={`font-bold ${stats.over4Percentage > 50 ? 'text-emerald-400' : 'text-slate-400'}`}>{stats.over4Percentage.toFixed(1)}%</span>
+                                      <span className="text-white/70">Over 4:</span>
+                                      <span className={`font-bold ${stats.over4Percentage > 50 ? 'text-emerald-400' : 'text-slate-300'}`}>{stats.over4Percentage.toFixed(1)}%</span>
                                     </div>
                                     <div className="flex items-center justify-between">
-                                      <span className="text-slate-300">Under 5:</span>
-                                      <span className={`font-bold ${stats.under5Percentage > 50 ? 'text-red-400' : 'text-slate-400'}`}>{stats.under5Percentage.toFixed(1)}%</span>
+                                      <span className="text-white/70">Under 5:</span>
+                                      <span className={`font-bold ${stats.under5Percentage > 50 ? 'text-red-400' : 'text-slate-300'}`}>{stats.under5Percentage.toFixed(1)}%</span>
                                     </div>
                                   </div>
                                 ) : (
-                                  <div className="text-[8px] text-slate-400 text-center py-1">
+                                  <div className="text-[10px] text-white/60 text-center py-1">
                                     Waiting for tick data...
                                   </div>
                                 )}
@@ -2904,10 +2914,10 @@ export default function ProScannerBot() {
                                       />
                                     </div>
                                     <div className="mt-1 flex items-center justify-between">
-                                      <div className={`text-[7px] font-bold px-1.5 py-0.5 rounded ${signalInfo.bg} ${signalInfo.color}`}>
+                                      <div className={`text-[8px] font-bold px-1.5 py-0.5 rounded ${signalInfo.bg} ${signalInfo.color}`}>
                                         SIGNAL: {signalInfo.label}
                                       </div>
-                                      <div className="text-[7px] text-slate-400">
+                                      <div className="text-[9px] text-white/60">
                                         {stats.totalTicks} ticks
                                       </div>
                                     </div>
@@ -2925,8 +2935,8 @@ export default function ProScannerBot() {
                         <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-slate-800 flex items-center justify-center">
                           <Scan className="w-6 h-6 text-slate-600 animate-pulse" />
                         </div>
-                        <p className="text-[10px] text-slate-500 font-semibold">Loading market data...</p>
-                        <p className="text-[8px] text-slate-600 mt-1">Analyzing {SCANNER_MARKETS.length} markets in real-time</p>
+                        <p className="text-[11px] text-slate-500 font-semibold">Loading market data...</p>
+                        <p className="text-[9px] text-slate-600 mt-1">Analyzing {SCANNER_MARKETS.length} markets in real-time</p>
                       </div>
                     </div>
                   )}
@@ -2934,9 +2944,9 @@ export default function ProScannerBot() {
                 
                 {/* Scanner info footer */}
                 <div className="p-2 border-t border-slate-700/30 bg-slate-800/20 shrink-0">
-                  <div className="flex items-center justify-between text-[8px] text-slate-500 font-semibold">
+                  <div className="flex items-center justify-between text-[9px] text-slate-500 font-semibold">
                     <span className="flex items-center gap-1">
-                      <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse"></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                       {SCANNER_MARKETS.length} markets monitored
                     </span>
                     <span className="font-mono font-bold">
