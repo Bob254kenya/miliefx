@@ -22,7 +22,7 @@ import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPre
 // SOCIAL NOTIFICATION POPUP - CENTERED 500px x 400px (No Backdrop)
 // ============================================
 
-// Animation Styles (same as before)
+// Animation Styles
 const notificationStyles = `
 @keyframes fadeIn {
   from { opacity: 0; }
@@ -134,35 +134,35 @@ const SocialNotificationPopup = () => {
     },
     {
       name: 'Telegram Group',
-      url: 'https://youtube.com/@millicentalice-sc6kz?si=TRpxu_Eji8k2q98K',
+      url: 'https://t.me/yourgroup',
       icon: <MessageSquare className="w-4 h-4" />,
       color: 'hover:text-[#26A5E4]',
       bgGradient: 'from-blue-500/20 to-blue-600/20',
     },
     {
       name: 'Telegram Channel',
-      url: 'https://www.facebook.com/share/17ZY1Y6cSd/',
+      url: 'https://t.me/yourchannel',
       icon: <MessageSquare className="w-4 h-4" />,
       color: 'hover:text-[#26A5E4]',
       bgGradient: 'from-blue-500/20 to-blue-600/20',
     },
     {
       name: 'YouTube',
-      url: 'https://youtube.com/@millicentalice-sc6kz?si=TRpxu_Eji8k2q98K',
+      url: 'https://youtube.com/@yourchannel',
       icon: <Youtube className="w-4 h-4" />,
       color: 'hover:text-[#FF0000]',
       bgGradient: 'from-red-500/20 to-red-600/20',
     },
     {
       name: 'TikTok',
-      url: 'https://www.tiktok.com/@aliceousmillie?_t=ZM-90rqIhv3NY8&_r=1',
+      url: 'https://www.tiktok.com/@yourprofile',
       icon: <Music className="w-4 h-4" />,
       color: 'hover:text-foreground',
       bgGradient: 'from-gray-500/20 to-gray-600/20',
     },
     {
       name: 'Instagram',
-      url: ' https://www.instagram.com/aliceousmilliie?igsh=ZHJrZXFtdGViendx',
+      url: 'https://www.instagram.com/yourprofile',
       icon: <Instagram className="w-4 h-4" />,
       color: 'hover:text-[#E4405F]',
       bgGradient: 'from-pink-500/20 to-pink-600/20',
@@ -287,7 +287,7 @@ const TPSLNotificationPopup = () => {
       
       const timeout = setTimeout(() => {
         handleClose();
-      }, 80000);
+      }, 8000);
       
       return () => clearTimeout(timeout);
     };
@@ -561,12 +561,10 @@ class BalanceCache {
   async getBalance(refreshFn: () => Promise<number>, force: boolean = false): Promise<number> {
     const now = Date.now();
     
-    // Return cached balance if valid and not forcing refresh
     if (!force && this.cache !== null && (now - this.lastFetch) < 500) {
       return this.cache;
     }
     
-    // Fetch new balance
     try {
       const newBalance = await refreshFn();
       this.cache = newBalance;
@@ -579,7 +577,6 @@ class BalanceCache {
     }
   }
   
-  // Instant optimistic update - NO WAITING
   optimisticUpdate(newBalance: number): void {
     this.cache = newBalance;
     this.lastFetch = Date.now();
@@ -606,16 +603,10 @@ export default function ProScannerBot() {
   const { recordLoss } = useLossRequirement();
   const location = useLocation();
 
-  // Initialize balance cache
   const balanceCache = useRef(BalanceCache.getInstance()).current;
-  
-  // Local balance state with instant updates
   const [localBalance, setLocalBalance] = useState(authBalance);
-  
-  // Track if we've taken a trade after pattern match
   const patternTradeTakenRef = useRef(false);
   
-  // Subscribe to cache updates
   useEffect(() => {
     const unsubscribe = balanceCache.subscribe((newBalance) => {
       setLocalBalance(newBalance);
@@ -623,7 +614,6 @@ export default function ProScannerBot() {
     return unsubscribe;
   }, [balanceCache]);
 
-  // Update cache when auth balance changes
   useEffect(() => {
     balanceCache.optimisticUpdate(authBalance);
   }, [authBalance, balanceCache]);
@@ -705,18 +695,16 @@ export default function ProScannerBot() {
   const lastPnlRef = useRef(0);
   const tpNotifiedRef = useRef(false);
   const slNotifiedRef = useRef(false);
+  const shouldStopRef = useRef(false); // CRITICAL FIX: New ref to track stop requests
 
-  // Instant balance update - NO WAITING
   const updateBalanceImmediately = useCallback(async (pnl?: number): Promise<number> => {
     try {
       if (pnl !== undefined && activeAccount?.balance !== undefined) {
-        // Optimistic update - INSTANT
         const newBalance = activeAccount.balance + pnl;
         balanceCache.optimisticUpdate(newBalance);
         return newBalance;
       }
       
-      // Fetch real balance in background
       const newBalance = await refreshBalance();
       balanceCache.optimisticUpdate(newBalance);
       return newBalance;
@@ -905,8 +893,10 @@ export default function ProScannerBot() {
     slNotifiedRef.current = false;
     lastPnlRef.current = 0;
     patternTradeTakenRef.current = false;
+    shouldStopRef.current = false;
   }, []);
 
+  // FIXED: executeRealTrade with proper TP/SL stop handling
   const executeRealTrade = useCallback(async (
     cfg: { contract: string; barrier: string; symbol: string },
     tradeSymbol: string,
@@ -916,7 +906,15 @@ export default function ProScannerBot() {
     currentBalance: number,
     currentPnl: number,
     baseStake: number,
-  ) => {
+  ): Promise<{ 
+    localPnl: number; 
+    localBalance: number; 
+    cStake: number; 
+    mStep: number; 
+    inRecovery: boolean; 
+    shouldBreak: boolean;
+    won: boolean;
+  }> => {
     if (!derivApi.isConnected) {
       const connected = await ensureConnection();
       if (!connected) {
@@ -926,19 +924,29 @@ export default function ProScannerBot() {
     
     const logId = ++logIdRef.current;
     const now = new Date().toLocaleTimeString();
+    
+    // Update UI state
     setTotalStaked(prev => prev + cStake);
     setCurrentStakeState(cStake);
 
     addLog(logId, {
-      time: now, market: mkt === 1 ? 'M1' : 'M2', symbol: tradeSymbol,
-      contract: cfg.contract, stake: cStake, martingaleStep: mStep,
-      exitDigit: '...', result: 'Pending', pnl: 0, balance: currentBalance,
+      time: now, 
+      market: mkt === 1 ? 'M1' : 'M2', 
+      symbol: tradeSymbol,
+      contract: cfg.contract, 
+      stake: cStake, 
+      martingaleStep: mStep,
+      exitDigit: '...', 
+      result: 'Pending', 
+      pnl: 0, 
+      balance: currentBalance,
       switchInfo: '',
     });
 
     let inRecovery = mkt === 2;
     let updatedBalance = currentBalance;
     let updatedPnl = currentPnl;
+    let won = false;
 
     try {
       if (!turboMode) {
@@ -946,8 +954,12 @@ export default function ProScannerBot() {
       }
 
       const buyParams: any = {
-        contract_type: cfg.contract, symbol: tradeSymbol,
-        duration: 1, duration_unit: 't', basis: 'stake', amount: cStake,
+        contract_type: cfg.contract, 
+        symbol: tradeSymbol,
+        duration: 1, 
+        duration_unit: 't', 
+        basis: 'stake', 
+        amount: cStake,
       };
       if (needsBarrier(cfg.contract)) buyParams.barrier = cfg.barrier;
 
@@ -961,19 +973,19 @@ export default function ProScannerBot() {
       }
       
       const result = await derivApi.waitForContractResult(contractId);
-      const won = result.status === 'won';
+      won = result.status === 'won';
       const pnl = result.profit;
       
-      // INSTANT BALANCE UPDATE - Optimistic update first
+      // Update balances
       updatedPnl = currentPnl + pnl;
       updatedBalance = currentBalance + pnl;
       
-      // Update UI immediately
+      // Optimistic UI update
       setLocalBalance(updatedBalance);
       balanceCache.optimisticUpdate(updatedBalance);
       setNetProfit(updatedPnl);
       
-      // Background refresh (non-blocking)
+      // Background refresh
       updateBalanceImmediately(pnl).catch(console.error);
 
       const exitDigit = String(getLastDigit(result.sellPrice || 0));
@@ -1027,17 +1039,24 @@ export default function ProScannerBot() {
         switchInfo 
       });
 
+      // CRITICAL FIX: Check TP/SL conditions and set stop flag
       let shouldBreak = false;
-      if (updatedPnl >= parseFloat(takeProfit)) {
-        showTPNotification('tp', `Take Profit Hit!`, updatedPnl);
+      const tpValue = parseFloat(takeProfit);
+      const slValue = parseFloat(stopLoss);
+      
+      if (updatedPnl >= tpValue) {
+        showTPNotification('tp', `Take Profit Target Hit!`, updatedPnl);
         shouldBreak = true;
+        shouldStopRef.current = true; // Set global stop flag
       }
-      if (updatedPnl <= -parseFloat(stopLoss)) {
-        showTPNotification('sl', `Stop Loss Hit!`, Math.abs(updatedPnl));
+      if (updatedPnl <= -slValue) {
+        showTPNotification('sl', `Stop Loss Target Hit!`, Math.abs(updatedPnl));
         shouldBreak = true;
+        shouldStopRef.current = true; // Set global stop flag
       }
       if (updatedBalance < newCStake) {
         shouldBreak = true;
+        shouldStopRef.current = true;
       }
 
       return { 
@@ -1047,7 +1066,7 @@ export default function ProScannerBot() {
         mStep: newMStep, 
         inRecovery: newInRecovery, 
         shouldBreak,
-        won // Return whether the trade was won
+        won
       };
     } catch (err: any) {
       console.error('Trade execution error:', err);
@@ -1065,6 +1084,7 @@ export default function ProScannerBot() {
     }
   }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, turboMode, ensureConnection, activeAccount, recordLoss, updateBalanceImmediately, balanceCache]);
 
+  // FIXED: startBot with proper TP/SL stop handling
   const startBot = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
     
@@ -1073,7 +1093,6 @@ export default function ProScannerBot() {
       return;
     }
     
-    // Get current balance from cache
     const currentBalance = await balanceCache.getBalance(async () => {
       await refreshBalance();
       return authBalance;
@@ -1093,6 +1112,8 @@ export default function ProScannerBot() {
       return; 
     }
 
+    // Reset stop flag before starting
+    shouldStopRef.current = false;
     setIsRunning(true);
     runningRef.current = true;
     setCurrentMarket(1);
@@ -1104,7 +1125,7 @@ export default function ProScannerBot() {
     slNotifiedRef.current = false;
     lastPnlRef.current = 0;
     setNetProfit(0);
-    patternTradeTakenRef.current = false; // Reset pattern trade flag
+    patternTradeTakenRef.current = false;
 
     let cStake = baseStake;
     let mStep = 0;
@@ -1118,7 +1139,13 @@ export default function ProScannerBot() {
       symbol: market === 1 ? m1Symbol : m2Symbol,
     });
 
-    while (runningRef.current) {
+    while (runningRef.current && !shouldStopRef.current) { // CRITICAL FIX: Check stop flag
+      // Check TP/SL again at loop start for safety
+      if (currentPnl >= parseFloat(takeProfit) || currentPnl <= -parseFloat(stopLoss)) {
+        shouldStopRef.current = true;
+        break;
+      }
+      
       if (!derivApi.isConnected) {
         const reconnected = await ensureConnection();
         if (!reconnected) {
@@ -1129,8 +1156,16 @@ export default function ProScannerBot() {
       const mkt: 1 | 2 = inRecovery ? 2 : 1;
       setCurrentMarket(mkt);
 
-      if (mkt === 1 && !m1Enabled) { if (m2Enabled) { inRecovery = true; continue; } else break; }
-      if (mkt === 2 && !m2Enabled) { inRecovery = false; continue; }
+      if (mkt === 1 && !m1Enabled) { 
+        if (m2Enabled) { 
+          inRecovery = true; 
+          continue; 
+        } else break; 
+      }
+      if (mkt === 2 && !m2Enabled) { 
+        inRecovery = false; 
+        continue; 
+      }
 
       let tradeSymbol: string;
       const cfg = getConfig(mkt);
@@ -1138,27 +1173,31 @@ export default function ProScannerBot() {
       const requiredLosses = parseInt(mkt === 1 ? m1VirtualLossCount : m2VirtualLossCount) || 3;
       const realCount = parseInt(mkt === 1 ? m1RealCount : m2RealCount) || 2;
 
-      // Reset pattern trade flag when entering pattern waiting state
-      if (mkt === 2 && strategyEnabled) {
-        patternTradeTakenRef.current = false;
-      } else if (mkt === 1 && strategyM1Enabled) {
+      // Reset pattern trade flag
+      if ((mkt === 2 && strategyEnabled) || (mkt === 1 && strategyM1Enabled)) {
         patternTradeTakenRef.current = false;
       }
 
+      // Pattern matching logic
       if (inRecovery && strategyEnabled) {
         setBotStatus('waiting_pattern');
-
         let matched = false;
         let matchedSymbol = '';
         let attempts = 0;
         const MAX_ATTEMPTS = 100;
         
-        while (runningRef.current && !matched && attempts < MAX_ATTEMPTS) {
+        while (runningRef.current && !matched && attempts < MAX_ATTEMPTS && !shouldStopRef.current) {
           if (scannerActive) {
             const found = findScannerMatchForMarket(2);
-            if (found) { matched = true; matchedSymbol = found; }
+            if (found) { 
+              matched = true; 
+              matchedSymbol = found; 
+            }
           } else {
-            if (checkStrategyForMarket(cfg.symbol, 2)) { matched = true; matchedSymbol = cfg.symbol; }
+            if (checkStrategyForMarket(cfg.symbol, 2)) { 
+              matched = true; 
+              matchedSymbol = cfg.symbol; 
+            }
           }
           if (!matched) {
             await new Promise<void>(r => {
@@ -1168,7 +1207,7 @@ export default function ProScannerBot() {
             attempts++;
           }
         }
-        if (!runningRef.current || !matched) continue;
+        if (!runningRef.current || !matched || shouldStopRef.current) continue;
 
         setBotStatus('pattern_matched');
         tradeSymbol = matchedSymbol;
@@ -1176,13 +1215,14 @@ export default function ProScannerBot() {
       }
       else if (!inRecovery && strategyM1Enabled) {
         setBotStatus('waiting_pattern');
-
         let matched = false;
         let attempts = 0;
         const MAX_ATTEMPTS = 100;
         
-        while (runningRef.current && !matched && attempts < MAX_ATTEMPTS) {
-          if (checkStrategyForMarket(cfg.symbol, 1)) { matched = true; }
+        while (runningRef.current && !matched && attempts < MAX_ATTEMPTS && !shouldStopRef.current) {
+          if (checkStrategyForMarket(cfg.symbol, 1)) { 
+            matched = true; 
+          }
           if (!matched) {
             await new Promise<void>(r => {
               if (turboMode) requestAnimationFrame(() => r());
@@ -1191,7 +1231,7 @@ export default function ProScannerBot() {
             attempts++;
           }
         }
-        if (!runningRef.current || !matched) continue;
+        if (!runningRef.current || !matched || shouldStopRef.current) continue;
 
         setBotStatus('pattern_matched');
         tradeSymbol = cfg.symbol;
@@ -1201,15 +1241,16 @@ export default function ProScannerBot() {
         tradeSymbol = cfg.symbol;
       }
 
-      // Check if we've already taken a trade after pattern match
-      if ((inRecovery && strategyEnabled) || (!inRecovery && strategyM1Enabled)) {
-        if (patternTradeTakenRef.current) {
-          // Already took a trade after pattern, reset and wait for next pattern
-          patternTradeTakenRef.current = false;
-          continue;
-        }
+      // Check stop flag before trading
+      if (shouldStopRef.current) break;
+
+      // Check if trade already taken after pattern
+      if (((inRecovery && strategyEnabled) || (!inRecovery && strategyM1Enabled)) && patternTradeTakenRef.current) {
+        patternTradeTakenRef.current = false;
+        continue;
       }
 
+      // VIRTUAL HOOK LOGIC
       if (hookEnabled) {
         setBotStatus('virtual_hook');
         setVhStatus('waiting');
@@ -1219,33 +1260,47 @@ export default function ProScannerBot() {
         let consecLosses = 0;
         let virtualTradeNum = 0;
 
-        // VIRTUAL PHASE: Accumulate fake losses
-        while (consecLosses < requiredLosses && runningRef.current) {
+        // VIRTUAL PHASE: Accumulate consecutive losses
+        while (consecLosses < requiredLosses && runningRef.current && !shouldStopRef.current) {
           virtualTradeNum++;
           const vLogId = ++logIdRef.current;
           const vNow = new Date().toLocaleTimeString();
           addLog(vLogId, {
-            time: vNow, market: 'VH', symbol: tradeSymbol,
-            contract: cfg.contract, stake: 0, martingaleStep: 0,
-            exitDigit: '...', result: 'Pending', pnl: 0, balance: currentBalanceLocal,
+            time: vNow, 
+            market: 'VH', 
+            symbol: tradeSymbol,
+            contract: cfg.contract, 
+            stake: 0, 
+            martingaleStep: 0,
+            exitDigit: '...', 
+            result: 'Pending', 
+            pnl: 0, 
+            balance: currentBalanceLocal,
             switchInfo: `Virtual #${virtualTradeNum} (losses: ${consecLosses}/${requiredLosses})`,
           });
 
           try {
             const vResult = await simulateVirtualContract(cfg.contract, cfg.barrier, tradeSymbol);
-            if (!runningRef.current) break;
+            if (!runningRef.current || shouldStopRef.current) break;
 
             if (vResult.won) {
-              // WIN in virtual mode - RESET consecutive losses counter
               consecLosses = 0;
               setVhConsecLosses(0);
               setVhFakeWins(prev => prev + 1);
-              updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Win', switchInfo: `Virtual WIN → Losses reset (0/${requiredLosses})` });
+              updateLog(vLogId, { 
+                exitDigit: String(vResult.digit), 
+                result: 'V-Win', 
+                switchInfo: `Virtual WIN → Losses reset (0/${requiredLosses})` 
+              });
             } else {
               consecLosses++;
               setVhConsecLosses(consecLosses);
               setVhFakeLosses(prev => prev + 1);
-              updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Loss', switchInfo: `Virtual LOSS (${consecLosses}/${requiredLosses})` });
+              updateLog(vLogId, { 
+                exitDigit: String(vResult.digit), 
+                result: 'V-Loss', 
+                switchInfo: `Virtual LOSS (${consecLosses}/${requiredLosses})` 
+              });
             }
           } catch (err) {
             console.error('Virtual simulation error:', err);
@@ -1254,14 +1309,14 @@ export default function ProScannerBot() {
           }
         }
 
-        if (!runningRef.current) break;
+        if (!runningRef.current || shouldStopRef.current) break;
 
         setVhStatus('confirmed');
 
-        // REAL PHASE: Execute real trades - WITH INSTANT WIN DETECTION AND EXIT
+        // REAL PHASE: Execute real trades - BREAK ON FIRST WIN OR TP/SL
         let winOccurred = false;
         
-        for (let ri = 0; ri < realCount && runningRef.current && !winOccurred; ri++) {
+        for (let ri = 0; ri < realCount && runningRef.current && !winOccurred && !shouldStopRef.current; ri++) {
           const result = await executeRealTrade(
             cfg, tradeSymbol, cStake, mStep, mkt, currentBalanceLocal, currentPnl, baseStake
           );
@@ -1273,10 +1328,16 @@ export default function ProScannerBot() {
           mStep = result.mStep;
           inRecovery = result.inRecovery;
 
-          // CRITICAL FIX: Check if the trade was a WIN
+          // Check if we need to stop due to TP/SL
+          if (result.shouldBreak) {
+            shouldStopRef.current = true;
+            runningRef.current = false;
+            break;
+          }
+
+          // CRITICAL: Exit real trading loop immediately on WIN
           if (result.won) {
             winOccurred = true;
-            // Add log entry showing immediate reset due to win
             const winLogId = ++logIdRef.current;
             addLog(winLogId, {
               time: new Date().toLocaleTimeString(),
@@ -1289,53 +1350,49 @@ export default function ProScannerBot() {
               result: 'Pending',
               pnl: 0,
               balance: currentBalanceLocal,
-              switchInfo: `⚠️ REAL WIN DETECTED! IMMEDIATE RESET to VIRTUAL MODE. Remaining trades (${realCount - ri - 1}) ABORTED.`
+              switchInfo: `✅ REAL WIN DETECTED! Immediate exit from hook mode.`
             });
-            // BREAK out of the real trading loop immediately
             break;
-          }
-
-          if (result.shouldBreak) { 
-            runningRef.current = false; 
-            break; 
           }
         }
 
-        // Reset virtual hook state and prepare to return to virtual mode
+        // Reset hook state
         setVhStatus('idle');
         setVhConsecLosses(0);
         
-        // CRITICAL: Reset virtual loss counter for next cycle
-        // The consecLosses variable will be re-initialized when we re-enter the virtual phase
-        
-        // Mark that we've taken a trade after pattern match
+        // Mark trade taken
         if ((inRecovery && strategyEnabled) || (!inRecovery && strategyM1Enabled)) {
           patternTradeTakenRef.current = true;
         }
         
-        if (!runningRef.current) break;
+        if (!runningRef.current || shouldStopRef.current) break;
         
-        // Continue to next iteration of main loop - this will re-enter virtual mode
+        // Continue to next iteration - will re-enter virtual phase
         continue;
       }
 
-      // Non-hook mode: Regular trading
+      // NON-HOOK MODE: Regular trading
       const result = await executeRealTrade(
         cfg, tradeSymbol, cStake, mStep, mkt, currentBalanceLocal, currentPnl, baseStake
       );
       if (!result || !runningRef.current) break;
+      
       currentPnl = result.localPnl;
       currentBalanceLocal = result.localBalance;
       cStake = result.cStake;
       mStep = result.mStep;
       inRecovery = result.inRecovery;
 
-      // Mark that we've taken a trade after pattern match
+      // Check if we need to stop due to TP/SL
+      if (result.shouldBreak) {
+        shouldStopRef.current = true;
+        break;
+      }
+
+      // Mark trade taken after pattern
       if ((inRecovery && strategyEnabled) || (!inRecovery && strategyM1Enabled)) {
         patternTradeTakenRef.current = true;
       }
-
-      if (result.shouldBreak) break;
 
       if (!turboMode) await new Promise(r => setTimeout(r, 400));
     }
@@ -1344,10 +1401,10 @@ export default function ProScannerBot() {
     runningRef.current = false;
     setBotStatus('idle');
     patternTradeTakenRef.current = false;
+    shouldStopRef.current = false; // Reset stop flag
     
-    // Final balance refresh (non-blocking)
     updateBalanceImmediately().catch(console.error);
-  }, [isAuthorized, isRunning, localBalance, stake, m1Enabled, m2Enabled, m1Contract, m2Contract,
+  }, [isAuthorized, isRunning, stake, m1Enabled, m2Enabled, m1Contract, m2Contract,
     m1Barrier, m2Barrier, m1Symbol, m2Symbol, martingaleOn, martingaleMultiplier, martingaleMaxSteps,
     takeProfit, stopLoss, strategyEnabled, strategyM1Enabled, m1StrategyMode, m2StrategyMode, 
     m1PatternValid, m2PatternValid, scannerActive, findScannerMatchForMarket, checkStrategyForMarket, 
@@ -1356,6 +1413,7 @@ export default function ProScannerBot() {
     balanceCache, refreshBalance, authBalance]);
 
   const stopBot = useCallback(() => {
+    shouldStopRef.current = true; // Set stop flag to break the main loop
     runningRef.current = false;
     setIsRunning(false);
     setBotStatus('idle');
@@ -1446,7 +1504,7 @@ export default function ProScannerBot() {
     <>
       <style>{notificationStyles}</style>
       <div className="space-y-3 max-w-7xl mx-auto p-4">
-        {/* ── Header ── */}
+        {/* Header */}
         <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-card/80 to-card/50 backdrop-blur-sm border border-border rounded-xl px-4 py-3 shadow-lg">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-gradient-to-br from-primary to-primary/70 rounded-lg shadow-md">
@@ -1474,7 +1532,7 @@ export default function ProScannerBot() {
           </div>
         </div>
 
-        {/* ── Scanner + Turbo + Stats Row ── */}
+        {/* Scanner + Turbo + Stats Row */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="bg-card border border-border rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
@@ -1554,7 +1612,7 @@ export default function ProScannerBot() {
           </div>
         </div>
 
-        {/* ── Main 2-Column Layout ── */}
+        {/* Main 2-Column Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
           {/* LEFT: Config Column */}
           <div className="lg:col-span-4 space-y-3">
@@ -2091,7 +2149,7 @@ export default function ProScannerBot() {
         </div>
       </div>
       
-      {/* Social Notification Popup - 500px x 400px, Centered, No Backdrop */}
+      {/* Social Notification Popup */}
       <SocialNotificationPopup />
       
       {/* TP/SL Notification Popup */}
