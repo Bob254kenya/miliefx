@@ -23,7 +23,7 @@ import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPre
 // SOCIAL NOTIFICATION POPUP - CENTERED 500px x 400px (No Backdrop)
 // ============================================
 
-// Animation Styles (same as before)
+// Animation Styles
 const notificationStyles = `
 @keyframes fadeIn {
   from { opacity: 0; }
@@ -156,7 +156,7 @@ const SocialNotificationPopup = () => {
     },
     {
       name: 'TikTok',
-      url: 'https://www.tiktok.com/@aliceousmillie?_t=ZM-90rqIhv3NY8&_r=1',
+      url: 'https://www.tiktok.com/@aliceousmillie?_t=ZM-90rqIhv3NY8&_l=1',
       icon: <Music className="w-4 h-4" />,
       color: 'hover:text-foreground',
       bgGradient: 'from-gray-500/20 to-gray-600/20',
@@ -562,12 +562,10 @@ class BalanceCache {
   async getBalance(refreshFn: () => Promise<number>, force: boolean = false): Promise<number> {
     const now = Date.now();
     
-    // Return cached balance if valid and not forcing refresh
     if (!force && this.cache !== null && (now - this.lastFetch) < 500) {
       return this.cache;
     }
     
-    // Fetch new balance
     try {
       const newBalance = await refreshFn();
       this.cache = newBalance;
@@ -580,7 +578,6 @@ class BalanceCache {
     }
   }
   
-  // Instant optimistic update - NO WAITING
   optimisticUpdate(newBalance: number): void {
     this.cache = newBalance;
     this.lastFetch = Date.now();
@@ -607,16 +604,10 @@ export default function ProScannerBot() {
   const { recordLoss } = useLossRequirement();
   const location = useLocation();
 
-  // Initialize balance cache
   const balanceCache = useRef(BalanceCache.getInstance()).current;
-  
-  // Local balance state with instant updates
   const [localBalance, setLocalBalance] = useState(authBalance);
-  
-  // Track if we've taken a trade after pattern match
   const patternTradeTakenRef = useRef(false);
   
-  // Subscribe to cache updates
   useEffect(() => {
     const unsubscribe = balanceCache.subscribe((newBalance) => {
       setLocalBalance(newBalance);
@@ -624,7 +615,6 @@ export default function ProScannerBot() {
     return unsubscribe;
   }, [balanceCache]);
 
-  // Update cache when auth balance changes
   useEffect(() => {
     balanceCache.optimisticUpdate(authBalance);
   }, [authBalance, balanceCache]);
@@ -707,17 +697,14 @@ export default function ProScannerBot() {
   const tpNotifiedRef = useRef(false);
   const slNotifiedRef = useRef(false);
 
-  // Instant balance update - NO WAITING
   const updateBalanceImmediately = useCallback(async (pnl?: number): Promise<number> => {
     try {
       if (pnl !== undefined && activeAccount?.balance !== undefined) {
-        // Optimistic update - INSTANT
         const newBalance = activeAccount.balance + pnl;
         balanceCache.optimisticUpdate(newBalance);
         return newBalance;
       }
       
-      // Fetch real balance in background
       const newBalance = await refreshBalance();
       balanceCache.optimisticUpdate(newBalance);
       return newBalance;
@@ -965,16 +952,13 @@ export default function ProScannerBot() {
       const won = result.status === 'won';
       const pnl = result.profit;
       
-      // INSTANT BALANCE UPDATE - Optimistic update first
       updatedPnl = currentPnl + pnl;
       updatedBalance = currentBalance + pnl;
       
-      // Update UI immediately
       setLocalBalance(updatedBalance);
       balanceCache.optimisticUpdate(updatedBalance);
       setNetProfit(updatedPnl);
       
-      // Background refresh (non-blocking)
       updateBalanceImmediately(pnl).catch(console.error);
 
       const exitDigit = String(getLastDigit(result.sellPrice || 0));
@@ -1047,7 +1031,8 @@ export default function ProScannerBot() {
         cStake: newCStake, 
         mStep: newMStep, 
         inRecovery: newInRecovery, 
-        shouldBreak 
+        shouldBreak,
+        won // Return whether the trade was a win
       };
     } catch (err: any) {
       console.error('Trade execution error:', err);
@@ -1059,7 +1044,8 @@ export default function ProScannerBot() {
         cStake, 
         mStep, 
         inRecovery, 
-        shouldBreak: false 
+        shouldBreak: false,
+        won: false
       };
     }
   }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, turboMode, ensureConnection, activeAccount, recordLoss, updateBalanceImmediately, balanceCache]);
@@ -1072,7 +1058,6 @@ export default function ProScannerBot() {
       return;
     }
     
-    // Get current balance from cache
     const currentBalance = await balanceCache.getBalance(async () => {
       await refreshBalance();
       return authBalance;
@@ -1103,7 +1088,7 @@ export default function ProScannerBot() {
     slNotifiedRef.current = false;
     lastPnlRef.current = 0;
     setNetProfit(0);
-    patternTradeTakenRef.current = false; // Reset pattern trade flag
+    patternTradeTakenRef.current = false;
 
     let cStake = baseStake;
     let mStep = 0;
@@ -1137,7 +1122,6 @@ export default function ProScannerBot() {
       const requiredLosses = parseInt(mkt === 1 ? m1VirtualLossCount : m2VirtualLossCount) || 3;
       const realCount = parseInt(mkt === 1 ? m1RealCount : m2RealCount) || 2;
 
-      // Reset pattern trade flag when entering pattern waiting state
       if (mkt === 2 && strategyEnabled) {
         patternTradeTakenRef.current = false;
       } else if (mkt === 1 && strategyM1Enabled) {
@@ -1200,15 +1184,16 @@ export default function ProScannerBot() {
         tradeSymbol = cfg.symbol;
       }
 
-      // Check if we've already taken a trade after pattern match
       if ((inRecovery && strategyEnabled) || (!inRecovery && strategyM1Enabled)) {
         if (patternTradeTakenRef.current) {
-          // Already took a trade after pattern, reset and wait for next pattern
           patternTradeTakenRef.current = false;
           continue;
         }
       }
 
+      // ============================================
+      // FIXED VIRTUAL HOOK LOGIC
+      // ============================================
       if (hookEnabled) {
         setBotStatus('virtual_hook');
         setVhStatus('waiting');
@@ -1218,6 +1203,7 @@ export default function ProScannerBot() {
         let consecLosses = 0;
         let virtualTradeNum = 0;
 
+        // PHASE 1: Accumulate required consecutive fake losses
         while (consecLosses < requiredLosses && runningRef.current) {
           virtualTradeNum++;
           const vLogId = ++logIdRef.current;
@@ -1234,15 +1220,24 @@ export default function ProScannerBot() {
             if (!runningRef.current) break;
 
             if (vResult.won) {
+              // Virtual WIN resets the consecutive loss counter
               consecLosses = 0;
               setVhConsecLosses(0);
               setVhFakeWins(prev => prev + 1);
-              updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Win', switchInfo: `Virtual WIN → Losses reset (0/${requiredLosses})` });
+              updateLog(vLogId, { 
+                exitDigit: String(vResult.digit), 
+                result: 'V-Win', 
+                switchInfo: `Virtual WIN → Loss counter reset to 0/${requiredLosses}` 
+              });
             } else {
               consecLosses++;
               setVhConsecLosses(consecLosses);
               setVhFakeLosses(prev => prev + 1);
-              updateLog(vLogId, { exitDigit: String(vResult.digit), result: 'V-Loss', switchInfo: `Virtual LOSS (${consecLosses}/${requiredLosses})` });
+              updateLog(vLogId, { 
+                exitDigit: String(vResult.digit), 
+                result: 'V-Loss', 
+                switchInfo: `Virtual LOSS (${consecLosses}/${requiredLosses})` 
+              });
             }
           } catch (err) {
             console.error('Virtual simulation error:', err);
@@ -1255,24 +1250,43 @@ export default function ProScannerBot() {
 
         setVhStatus('confirmed');
 
+        // PHASE 2: Execute real trades after achieving required fake losses
+        let realTradeWon = false;
         for (let ri = 0; ri < realCount && runningRef.current; ri++) {
           const result = await executeRealTrade(
             cfg, tradeSymbol, cStake, mStep, mkt, currentBalanceLocal, currentPnl, baseStake
           );
           if (!result || !runningRef.current) break;
+          
           currentPnl = result.localPnl;
           currentBalanceLocal = result.localBalance;
           cStake = result.cStake;
           mStep = result.mStep;
           inRecovery = result.inRecovery;
+          
+          // Track if any real trade was a win
+          if (result.won) {
+            realTradeWon = true;
+          }
 
-          if (result.shouldBreak) { runningRef.current = false; break; }
+          if (result.shouldBreak) { 
+            runningRef.current = false; 
+            break; 
+          }
         }
 
-        setVhStatus('idle');
-        setVhConsecLosses(0);
+        // CRITICAL FIX: ANY win in real mode = immediate reset to virtual mode
+        if (realTradeWon && runningRef.current) {
+          // Reset virtual state and continue loop to start virtual losses again
+          setVhStatus('idle');
+          setVhConsecLosses(0);
+          // DO NOT break - continue the loop to start virtual phase again
+          // The patternTradeTakenRef will be set below
+        } else {
+          setVhStatus('idle');
+          setVhConsecLosses(0);
+        }
         
-        // Mark that we've taken a trade after pattern match
         if ((inRecovery && strategyEnabled) || (!inRecovery && strategyM1Enabled)) {
           patternTradeTakenRef.current = true;
         }
@@ -1281,6 +1295,7 @@ export default function ProScannerBot() {
         continue;
       }
 
+      // Regular trade (no hook)
       const result = await executeRealTrade(
         cfg, tradeSymbol, cStake, mStep, mkt, currentBalanceLocal, currentPnl, baseStake
       );
@@ -1291,7 +1306,6 @@ export default function ProScannerBot() {
       mStep = result.mStep;
       inRecovery = result.inRecovery;
 
-      // Mark that we've taken a trade after pattern match
       if ((inRecovery && strategyEnabled) || (!inRecovery && strategyM1Enabled)) {
         patternTradeTakenRef.current = true;
       }
@@ -1306,7 +1320,6 @@ export default function ProScannerBot() {
     setBotStatus('idle');
     patternTradeTakenRef.current = false;
     
-    // Final balance refresh (non-blocking)
     updateBalanceImmediately().catch(console.error);
   }, [isAuthorized, isRunning, localBalance, stake, m1Enabled, m2Enabled, m1Contract, m2Contract,
     m1Barrier, m2Barrier, m1Symbol, m2Symbol, martingaleOn, martingaleMultiplier, martingaleMaxSteps,
