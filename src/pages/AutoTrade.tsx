@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { derivApi, type MarketSymbol } from '@/services/deriv-api';
 import { getLastDigit, analyzeDigits, calculateRSI, calculateMACD, calculateBollingerBands } from '@/services/analysis';
+import { copyTradingService } from '@/services/copy-trading-service';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,7 +16,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   TrendingUp, TrendingDown, Activity, BarChart3, ArrowUp, ArrowDown, Minus,
   Target, ShieldAlert, Gauge, Volume2, VolumeX, Clock, Zap, Trophy, Play, Pause, StopCircle, Eye, EyeOff, RefreshCw,
-  Plus, X, LineChart
+  Plus, X, LineChart, Anchor, Copy, Users, Wifi, WifiOff
 } from 'lucide-react';
 
 // ============================================
@@ -75,6 +76,15 @@ const notificationStyles = `
   }
 }
 
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .animate-slide-up-center {
   animation: slideUpCenter 0.4s cubic-bezier(0.34, 1.2, 0.64, 1) forwards;
 }
@@ -93,6 +103,10 @@ const notificationStyles = `
 
 .animate-pulse-slow {
   animation: pulse 1s ease-in-out infinite;
+}
+
+.animate-spin-slow {
+  animation: spin 1s linear infinite;
 }
 `;
 
@@ -117,7 +131,7 @@ const TPSLNotificationPopup = () => {
       
       const timeout = setTimeout(() => {
         handleClose();
-      }, 80000);
+      }, 8000);
       
       return () => clearTimeout(timeout);
     };
@@ -186,7 +200,7 @@ const TPSLNotificationPopup = () => {
       <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
         <div 
           className={`
-            pointer-events-auto w-[350px] h-[350px] rounded-xl shadow-2xl overflow-hidden
+            pointer-events-auto w-[500px] h-[300px] rounded-xl shadow-2xl overflow-hidden
             ${isExiting ? 'animate-slide-down-center' : 'animate-slide-up-center'}
           `}
         >
@@ -341,6 +355,9 @@ interface TradeRecord {
   symbol: string;
   resultDigit?: number;
   outcomeSymbol?: string;
+  isVirtual?: boolean;
+  virtualLossCount?: number;
+  virtualRequired?: number;
 }
 
 interface DigitStats {
@@ -625,8 +642,56 @@ function calculateDigitStats(symbol: string, tickRange: number): DigitStats {
   };
 }
 
+// ============================================
+// VIRTUAL CONTRACT SIMULATION FUNCTION
+// ============================================
+
+function simulateVirtualContract(
+  contractType: string, barrier: string, symbol: string
+): Promise<{ won: boolean; digit: number }> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      unsub();
+      reject(new Error('Virtual contract timeout'));
+    }, 5000);
+    
+    const unsub = derivApi.onMessage((data: any) => {
+      if (data.tick && data.tick.symbol === symbol) {
+        clearTimeout(timeout);
+        unsub();
+        const digit = getLastDigit(data.tick.quote);
+        const b = parseInt(barrier) || 0;
+        let won = false;
+        switch (contractType) {
+          case 'DIGITEVEN': won = digit % 2 === 0; break;
+          case 'DIGITODD': won = digit % 2 !== 0; break;
+          case 'DIGITMATCH': won = digit === b; break;
+          case 'DIGITDIFF': won = digit !== b; break;
+          case 'DIGITOVER': won = digit > b; break;
+          case 'DIGITUNDER': won = digit < b; break;
+          case 'CALL': won = true; break;
+          case 'PUT': won = false; break;
+          default: won = false;
+        }
+        resolve({ won, digit });
+      }
+    });
+  });
+}
+
+// ============================================
+// CHECK CONNECTION FUNCTION
+// ============================================
+const checkConnection = async (): Promise<boolean> => {
+  if (!derivApi.isConnected) {
+    toast.error('Not connected to Deriv. Please check your connection.');
+    return false;
+  }
+  return true;
+};
+
 export default function TradingChart() {
-  const { isAuthorized } = useAuth();
+  const { isAuthorized, balance: apiBalance, refreshBalance } = useAuth();
   const [showChart, setShowChart] = useState(false);
   const [symbol, setSymbol] = useState('R_100');
   const [groupFilter, setGroupFilter] = useState('all');
@@ -635,7 +700,7 @@ export default function TradingChart() {
   const [times, setTimes] = useState<number[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [candleCount, setCandleCount] = useState(CANDLE_CONFIG.defaultCandles);
-  const [tickRange, setTickRange] = useState(100);
+  const [tickRange, setTickRange] = useState(1000);
   const subscribedRef = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const subscriptionRef = useRef<any>(null);
@@ -686,6 +751,7 @@ export default function TradingChart() {
   const [botPaused, setBotPaused] = useState(false);
   const botRunningRef = useRef(false);
   const botPausedRef = useRef(false);
+  const shouldStopRef = useRef(false);
   const [botConfig, setBotConfig] = useState({
     botSymbol: 'R_100',
     stake: '1.00',
@@ -703,6 +769,18 @@ export default function TradingChart() {
   const [turboMode, setTurboMode] = useState(false);
 
   const [displaySymbols, setDisplaySymbols] = useState<string[]>([]);
+
+  // ============================================
+  // VIRTUAL HOOK STATE VARIABLES
+  // ============================================
+  const [hookEnabled, setHookEnabled] = useState(false);
+  const [virtualLossCount, setVirtualLossCount] = useState('3');
+  const [realCount, setRealCount] = useState('3');
+  const [vhFakeWins, setVhFakeWins] = useState(0);
+  const [vhFakeLosses, setVhFakeLosses] = useState(0);
+  const [vhConsecLosses, setVhConsecLosses] = useState(0);
+  const [vhStatus, setVhStatus] = useState<'idle' | 'waiting' | 'confirmed' | 'failed'>('idle');
+  const patternTradeTakenRef = useRef(false);
 
   // Helper function to get symbol based on contract type, digit, and price movement
   const getDigitSymbol = useCallback((digit: number, price: number, prevPrice: number | null, type: string, barrier: string): string => {
@@ -1179,7 +1257,7 @@ export default function TradingChart() {
     };
   }, [candles.length, scrollOffset, candleWidth, showChart]);
 
-  // Chart rendering
+  // Chart rendering (keep existing rendering logic)
   useEffect(() => {
     if (!showChart) return;
     
@@ -1545,96 +1623,376 @@ export default function TradingChart() {
     window.speechSynthesis.speak(utterance);
   }, [voiceEnabled]);
 
+  // ============================================
+  // EXECUTE REAL TRADE FUNCTION (with TP/SL handling)
+  // ============================================
+  const executeRealTrade = useCallback(async (
+    stakeAmount: number,
+    currentPnl: number,
+    isVirtual: boolean = false
+  ): Promise<{ won: boolean; profit: number; newPnl: number; shouldStop: boolean }> => {
+    // Check connection before executing trade
+    if (!derivApi.isConnected) {
+      toast.error('No connection to Deriv. Cannot execute trade.');
+      return { won: false, profit: 0, newPnl: currentPnl, shouldStop: false };
+    }
+    
+    const ct = botConfig.contractType;
+    const params: any = {
+      contract_type: ct,
+      symbol: botConfig.botSymbol,
+      duration: parseInt(botConfig.duration),
+      duration_unit: botConfig.durationUnit,
+      basis: 'stake',
+      amount: stakeAmount,
+    };
+    if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct)) {
+      params.barrier = botConfig.prediction;
+    }
+
+    try {
+      const { contractId } = await derivApi.buyContract(params);
+      
+      // Add to trade history (open status)
+      const tr: TradeRecord = {
+        id: contractId,
+        time: Date.now(),
+        type: ct,
+        stake: stakeAmount,
+        profit: 0,
+        status: 'open',
+        symbol: botConfig.botSymbol,
+        isVirtual,
+      };
+      setTradeHistory(prev => [tr, ...prev]);
+      
+      const result = await derivApi.waitForContractResult(contractId);
+      const won = result.status === 'won';
+      const profit = result.profit;
+      const newPnl = currentPnl + profit;
+      const resultDigit = getLastDigit(result.price || 0);
+      
+      setTradeHistory(prev => prev.map(t =>
+        t.id === contractId
+          ? { ...t, profit, status: result.status, resultDigit, outcomeSymbol: getOutcomeSymbol({ ...t, profit, status: result.status, resultDigit }) }
+          : t
+      ));
+      
+      // Check TP/SL
+      const tpValue = parseFloat(botConfig.takeProfit);
+      const slValue = parseFloat(botConfig.stopLoss);
+      let shouldStop = false;
+      
+      if (newPnl >= tpValue) {
+        showTPNotification('tp', `Take Profit Target Hit!`, newPnl);
+        shouldStop = true;
+        if (voiceEnabled) speak(`Take profit reached. Total profit ${newPnl.toFixed(2)} dollars`);
+      }
+      if (newPnl <= -slValue) {
+        showTPNotification('sl', `Stop Loss Target Hit!`, Math.abs(newPnl));
+        shouldStop = true;
+        if (voiceEnabled) speak(`Stop loss hit. Total loss ${Math.abs(newPnl).toFixed(2)} dollars`);
+      }
+      
+      return { won, profit, newPnl, shouldStop };
+    } catch (err: any) {
+      toast.error(`Trade error: ${err.message}`);
+      return { won: false, profit: 0, newPnl: currentPnl, shouldStop: false };
+    }
+  }, [botConfig, voiceEnabled, getOutcomeSymbol]);
+
+  // ============================================
+  // VIRTUAL TRADE FUNCTION (for hook phase) - NO NOTIFICATIONS
+  // ============================================
+  const executeVirtualTrade = useCallback(async (
+    currentLossCount: number,
+    requiredLosses: number
+  ): Promise<{ won: boolean; profit: number }> => {
+    try {
+      const result = await simulateVirtualContract(
+        botConfig.contractType,
+        botConfig.prediction,
+        botConfig.botSymbol
+      );
+      
+      const won = result.won;
+      
+      // Add virtual trade to history - NO TOAST NOTIFICATIONS
+      const virtualTrade: TradeRecord = {
+        id: `virtual-${Date.now()}-${Math.random()}`,
+        time: Date.now(),
+        type: botConfig.contractType,
+        stake: 0, // No stake for virtual trades
+        profit: 0,
+        status: won ? 'won' : 'lost',
+        symbol: botConfig.botSymbol,
+        resultDigit: result.digit,
+        isVirtual: true,
+        virtualLossCount: currentLossCount + (won ? 0 : 1),
+        virtualRequired: requiredLosses,
+      };
+      setTradeHistory(prev => [virtualTrade, ...prev]);
+      
+      // NO toast notifications for virtual trades
+      return { won, profit: 0 };
+    } catch (err: any) {
+      console.error('Virtual trade error:', err);
+      // Add failed virtual trade - NO TOAST
+      const failedTrade: TradeRecord = {
+        id: `virtual-failed-${Date.now()}`,
+        time: Date.now(),
+        type: botConfig.contractType,
+        stake: 0,
+        profit: 0,
+        status: 'lost',
+        symbol: botConfig.botSymbol,
+        isVirtual: true,
+        virtualLossCount: currentLossCount + 1,
+        virtualRequired: requiredLosses,
+      };
+      setTradeHistory(prev => [failedTrade, ...prev]);
+      return { won: false, profit: 0 };
+    }
+  }, [botConfig]);
+
+  // ============================================
+  // START BOT WITH VIRTUAL HOOK INTEGRATION - NO VIRTUAL NOTIFICATIONS
+  // ============================================
   const startBot = useCallback(async () => {
     if (!isAuthorized) { toast.error('Login to Deriv first'); return; }
-    setBotRunning(true); setBotPaused(false);
-    botRunningRef.current = true; botPausedRef.current = false;
+    
+    // Check connection before starting
+    if (!derivApi.isConnected) {
+      toast.error('Not connected to Deriv. Please check your connection.');
+      return;
+    }
+    
+    // Sync balance before starting
+    if (refreshBalance) await refreshBalance();
+    
+    shouldStopRef.current = false;
+    setBotRunning(true);
+    setBotPaused(false);
+    botRunningRef.current = true;
+    botPausedRef.current = false;
+    patternTradeTakenRef.current = false;
+    
     const baseStake = parseFloat(botConfig.stake) || 1;
     const sl = parseFloat(botConfig.stopLoss) || 10;
     const tp = parseFloat(botConfig.takeProfit) || 20;
     const maxT = parseInt(botConfig.maxTrades) || 50;
     const mart = botConfig.martingale;
     const mult = parseFloat(botConfig.multiplier) || 2;
+    
     let stake = baseStake;
-    let pnl = 0; let trades = 0; let wins = 0; let losses = 0; let consLosses = 0;
+    let pnl = 0;
+    let trades = 0;
+    let wins = 0;
+    let losses = 0;
+    let consLosses = 0;
+    
+    // Reset hook states
+    setVhFakeWins(0);
+    setVhFakeLosses(0);
+    setVhConsecLosses(0);
+    setVhStatus('idle');
 
     if (voiceEnabled) speak('Auto trading bot started');
 
-    while (botRunningRef.current) {
-      if (botPausedRef.current) { await new Promise(r => setTimeout(r, 500)); continue; }
+    while (botRunningRef.current && !shouldStopRef.current) {
+      if (botPausedRef.current) {
+        await new Promise(r => setTimeout(r, 500));
+        continue;
+      }
+      
+      // Check TP/SL limits
       if (trades >= maxT || pnl <= -sl || pnl >= tp) {
         const reason = trades >= maxT ? 'Max trades reached' : pnl <= -sl ? 'Stop loss hit' : 'Take profit reached';
         toast.info(`🤖 Bot stopped: ${reason}`);
-        
-        // Show TP/SL notification
-        if (pnl <= -sl) {
-          showTPNotification('sl', `Stop loss triggered at $${Math.abs(sl).toFixed(2)} loss limit`, pnl);
-          if (voiceEnabled) speak(`Stop loss hit. Total loss ${Math.abs(pnl).toFixed(2)} dollars`);
-        } else if (pnl >= tp) {
-          showTPNotification('tp', `Take profit achieved! ${tp.toFixed(2)} profit target reached`, pnl);
-          if (voiceEnabled) speak(`Take profit reached. Total profit ${pnl.toFixed(2)} dollars`);
-        } else {
-          if (voiceEnabled) speak(`Bot stopped. ${reason}. Total profit ${pnl.toFixed(2)} dollars`);
-        }
         break;
       }
 
+      // Check strategy condition if enabled
       if (strategyEnabled) {
         let conditionMet = false;
-        while (botRunningRef.current && !conditionMet) {
+        while (botRunningRef.current && !conditionMet && !shouldStopRef.current) {
           conditionMet = checkStrategyCondition();
           if (!conditionMet) {
             await new Promise(r => setTimeout(r, 500));
           }
         }
-        if (!botRunningRef.current) break;
+        if (!botRunningRef.current || shouldStopRef.current) break;
       }
 
-      const ct = botConfig.contractType;
-      const params: any = { contract_type: ct, symbol: botConfig.botSymbol, duration: parseInt(botConfig.duration), duration_unit: botConfig.durationUnit, basis: 'stake', amount: stake };
-      if (['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(ct)) params.barrier = botConfig.prediction;
+      // ============================================
+      // VIRTUAL HOOK LOGIC - NO NOTIFICATIONS
+      // ============================================
+      if (hookEnabled) {
+        setVhStatus('waiting');
+        let consecLossesHook = 0;
+        const requiredLosses = parseInt(virtualLossCount) || 3;
+        const realTradesCount = parseInt(realCount) || 2;
+        let virtualTradeNum = 0;
 
-      try {
-        const { contractId } = await derivApi.buyContract(params);
-        const tr: TradeRecord = { id: contractId, time: Date.now(), type: ct, stake, profit: 0, status: 'open', symbol: botConfig.botSymbol };
-        setTradeHistory(prev => [tr, ...prev].slice(0, 100));
-        const result = await derivApi.waitForContractResult(contractId);
-        trades++; pnl += result.profit;
-        const resultDigit = getLastDigit(result.price || 0);
-        setTradeHistory(prev => prev.map(t => t.id === contractId ? { ...t, profit: result.profit, status: result.status, resultDigit } : t));
-
-        if (result.status === 'won') {
-          wins++; consLosses = 0;
-          stake = baseStake;
-          if (voiceEnabled && trades % 5 === 0) speak(`Trade ${trades} won. Total profit ${pnl.toFixed(2)}`);
-        } else {
-          losses++; consLosses++;
-          if (mart) {
-            stake = Math.round(stake * mult * 100) / 100;
-          } else {
-            stake = baseStake;
+        // VIRTUAL PHASE: Accumulate consecutive losses - NO TOASTS
+        while (consecLossesHook < requiredLosses && botRunningRef.current && !shouldStopRef.current) {
+          virtualTradeNum++;
+          
+          if (voiceEnabled && virtualTradeNum % 5 === 0) {
+            speak(`Virtual trade ${virtualTradeNum}, losses ${consecLossesHook} of ${requiredLosses}`);
           }
-          if (voiceEnabled) speak(`Loss ${consLosses}. ${mart ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
+          
+          try {
+            const vResult = await executeVirtualTrade(consecLossesHook, requiredLosses);
+            
+            if (!botRunningRef.current || shouldStopRef.current) break;
+
+            if (vResult.won) {
+              consecLossesHook = 0;
+              setVhConsecLosses(0);
+              setVhFakeWins(prev => prev + 1);
+              // NO toast notification
+            } else {
+              consecLossesHook++;
+              setVhConsecLosses(consecLossesHook);
+              setVhFakeLosses(prev => prev + 1);
+              // NO toast notification
+            }
+            
+            await new Promise(r => setTimeout(r, 200));
+          } catch (err) {
+            console.error('Virtual simulation error:', err);
+            break;
+          }
         }
-        setBotStats({ trades, wins, losses, pnl, currentStake: stake, consecutiveLosses: consLosses });
-      } catch (err: any) {
-        toast.error(`Bot trade error: ${err.message}`);
-        await new Promise(r => setTimeout(r, 2000));
+
+        if (!botRunningRef.current || shouldStopRef.current) break;
+
+        setVhStatus('confirmed');
+        // NO toast notification for hook confirmation
+        
+        if (voiceEnabled) {
+          speak(`Virtual hook confirmed after ${consecLossesHook} losses. Starting ${realTradesCount} real trades.`);
+        }
+
+        // REAL PHASE: Execute real trades - BREAK ON FIRST WIN
+        let winOccurred = false;
+        
+        for (let ri = 0; ri < realTradesCount && botRunningRef.current && !winOccurred && !shouldStopRef.current; ri++) {
+          if (!derivApi.isConnected) {
+            toast.error('Connection lost. Stopping bot.');
+            shouldStopRef.current = true;
+            break;
+          }
+          
+          const result = await executeRealTrade(stake, pnl, false);
+          
+          trades++;
+          pnl = result.newPnl;
+          
+          if (result.won) {
+            wins++;
+            consLosses = 0;
+            winOccurred = true;
+            stake = baseStake;
+            if (voiceEnabled) speak(`Hook trade ${ri + 1} won. Total profit ${pnl.toFixed(2)}`);
+            toast.success(`✅ Hook trade WIN! Exiting hook mode.`);
+          } else {
+            losses++;
+            consLosses++;
+            if (mart) {
+              stake = Math.round(stake * mult * 100) / 100;
+            }
+            if (voiceEnabled) speak(`Hook trade ${ri + 1} loss. ${mart ? `New stake ${stake.toFixed(2)}` : ''}`);
+          }
+          
+          setBotStats({ trades, wins, losses, pnl, currentStake: stake, consecutiveLosses: consLosses });
+          
+          if (result.shouldStop) {
+            shouldStopRef.current = true;
+            break;
+          }
+          
+          if (!turboMode && ri < realTradesCount - 1 && !winOccurred) {
+            await new Promise(r => setTimeout(r, 400));
+          }
+        }
+        
+        setVhStatus('idle');
+        setVhConsecLosses(0);
+        patternTradeTakenRef.current = true;
+        
+        if (!turboMode && !shouldStopRef.current) {
+          await new Promise(r => setTimeout(r, 500));
+        }
+        
+        continue;
+      }
+
+      // ============================================
+      // NORMAL TRADING (NO HOOK)
+      // ============================================
+      if (!derivApi.isConnected) {
+        toast.error('Connection lost. Stopping bot.');
+        break;
+      }
+      
+      const result = await executeRealTrade(stake, pnl, false);
+      
+      trades++;
+      pnl = result.newPnl;
+      
+      if (result.won) {
+        wins++;
+        consLosses = 0;
+        stake = baseStake;
+        if (voiceEnabled && trades % 5 === 0) speak(`Trade ${trades} won. Total profit ${pnl.toFixed(2)}`);
+      } else {
+        losses++;
+        consLosses++;
+        if (mart) {
+          stake = Math.round(stake * mult * 100) / 100;
+        } else {
+          stake = baseStake;
+        }
+        if (voiceEnabled) speak(`Loss ${consLosses}. ${mart ? `Martingale stake ${stake.toFixed(2)}` : ''}`);
+      }
+      
+      setBotStats({ trades, wins, losses, pnl, currentStake: stake, consecutiveLosses: consLosses });
+      
+      if (result.shouldStop) {
+        shouldStopRef.current = true;
+        break;
+      }
+      
+      if (!turboMode) {
+        await new Promise(r => setTimeout(r, 400));
       }
     }
-    setBotRunning(false); botRunningRef.current = false;
-    setBotStats(prev => ({ ...prev, trades, wins, losses, pnl }));
-  }, [isAuthorized, botConfig, voiceEnabled, speak, strategyEnabled, checkStrategyCondition]);
-
-  const stopBot = useCallback(() => { 
-    botRunningRef.current = false; 
+    
     setBotRunning(false);
-    toast.info('🛑 Bot stopped'); 
+    botRunningRef.current = false;
+    setVhStatus('idle');
+    shouldStopRef.current = false;
+    setBotStats(prev => ({ ...prev, trades, wins, losses, pnl }));
+    
+    if (voiceEnabled && (pnl <= -sl || pnl >= tp)) {
+      speak(`Bot stopped. Final profit ${pnl.toFixed(2)} dollars`);
+    }
+  }, [isAuthorized, botConfig, voiceEnabled, speak, strategyEnabled, checkStrategyCondition, hookEnabled, virtualLossCount, realCount, executeRealTrade, executeVirtualTrade, turboMode, refreshBalance]);
+
+  const stopBot = useCallback(() => {
+    shouldStopRef.current = true;
+    botRunningRef.current = false;
+    setBotRunning(false);
+    setVhStatus('idle');
+    toast.info('🛑 Bot stopped');
   }, []);
   
-  const togglePauseBot = useCallback(() => { 
-    botPausedRef.current = !botPausedRef.current; 
-    setBotPaused(botPausedRef.current); 
+  const togglePauseBot = useCallback(() => {
+    botPausedRef.current = !botPausedRef.current;
+    setBotPaused(botPausedRef.current);
+    toast.info(botPausedRef.current ? '⏸ Bot paused' : '▶ Bot resumed');
   }, []);
 
   const handleBotSymbolChange = useCallback((newSymbol: string) => {
@@ -1642,11 +2000,11 @@ export default function TradingChart() {
     setSymbol(newSymbol);
   }, []);
 
-  const totalTrades = tradeHistory.filter(t => t.status !== 'open').length;
-  const wins = tradeHistory.filter(t => t.status === 'won').length;
-  const losses = tradeHistory.filter(t => t.status === 'lost').length;
-  const totalProfit = tradeHistory.reduce((s, t) => s + t.profit, 0);
-  const winRate = totalTrades > 0 ? (wins / totalTrades * 100) : 0;
+  const totalTrades = tradeHistory.filter(t => t.status !== 'open' && !t.isVirtual).length;
+  const winsCount = tradeHistory.filter(t => t.status === 'won' && !t.isVirtual).length;
+  const lossesCount = tradeHistory.filter(t => t.status === 'lost' && !t.isVirtual).length;
+  const totalProfit = tradeHistory.filter(t => !t.isVirtual).reduce((s, t) => s + t.profit, 0);
+  const winRate = totalTrades > 0 ? (winsCount / totalTrades * 100) : 0;
 
   const legend = getLegendText();
 
@@ -1659,11 +2017,27 @@ export default function TradingChart() {
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-primary" /> Trading Chart
+            <BarChart3 className="w-5 h-5 text-primary" />Ramzfx Trading Chart
           </h1>
           <p className="text-xs text-muted-foreground">{marketName} • {timeframe} • {candles.length} candles</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Connection Status */}
+          <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] ${
+            derivApi.isConnected ? 'bg-profit/20 text-profit' : 'bg-loss/20 text-loss'
+          }`}>
+            {derivApi.isConnected ? (
+              <>
+                <Wifi className="w-3 h-3" />
+                <span>Connected</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-3 h-3" />
+                <span>Disconnected refresh page</span>
+              </>
+            )}
+          </div>
           <Button
             onClick={handleManualRefresh}
             variant="outline"
@@ -1671,7 +2045,7 @@ export default function TradingChart() {
             className="gap-1"
             disabled={isLoading}
           >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin-slow' : ''}`} />
             Refresh
           </Button>
           <Button
@@ -1925,12 +2299,12 @@ export default function TradingChart() {
           {/* Strategic Recommendations */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <div className="bg-card border border-profit/30 rounded-lg p-2">
-              <div className="text-[9px] text-muted-foreground">Best Match</div>
+              <div className="text-[9px] text-muted-foreground">Most Appearing </div>
               <div className="font-mono text-lg font-bold text-profit">{mostCommon}</div>
               <div className="text-[8px] text-muted-foreground">{percentages[mostCommon]?.toFixed(1)}% frequency</div>
             </div>
             <div className="bg-card border border-loss/30 rounded-lg p-2">
-              <div className="text-[9px] text-muted-foreground">Best Differ</div>
+              <div className="text-[9px] text-muted-foreground">Least Appearing </div>
               <div className="font-mono text-lg font-bold text-loss">{leastCommon}</div>
               <div className="text-[8px] text-muted-foreground">{percentages[leastCommon]?.toFixed(1)}% frequency</div>
             </div>
@@ -2033,7 +2407,7 @@ export default function TradingChart() {
             <div className="bg-card border border-border rounded-xl p-3">
               <div className="flex items-center gap-1 mb-1">
                 <Target className="w-3.5 h-3.5 text-profit" />
-                <span className="text-[10px] font-semibold">Best Match</span>
+                <span className="text-[10px] font-semibold">Match Digit</span>
               </div>
               <div className="font-mono text-sm font-bold text-profit">Digit {matchSignal.digit}</div>
               <div className="text-[8px] text-muted-foreground mb-1">{percentages[mostCommon]?.toFixed(1)}%</div>
@@ -2139,6 +2513,80 @@ export default function TradingChart() {
                   <div className={`w-4 h-4 rounded-full bg-background shadow absolute top-0.5 transition-transform ${botConfig.martingale ? 'translate-x-4' : 'translate-x-0.5'}`} />
                 </button>
               </div>
+            </div>
+
+            {/* ============================================ */}
+            {/* VIRTUAL HOOK SECTION - NO NOTIFICATIONS */}
+            {/* ============================================ */}
+            <div className="border-t border-border pt-2 mt-1">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-[10px] font-semibold text-primary flex items-center gap-1">
+                  <Anchor className="w-3 h-3" /> Virtual Hook
+                </label>
+                <Switch checked={hookEnabled} onCheckedChange={setHookEnabled} disabled={botRunning} />
+              </div>
+
+              {hookEnabled && (
+                <div className="space-y-2 p-2 bg-primary/5 rounded-lg border border-primary/20">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[8px] text-muted-foreground">Required V-Losses</label>
+                      <Input
+                        type="number"
+                        min="1"
+                        max="20"
+                        value={virtualLossCount}
+                        onChange={e => setVirtualLossCount(e.target.value)}
+                        disabled={botRunning}
+                        className="h-7 text-[10px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[8px] text-muted-foreground">Real Trades (max)</label>
+                      <Input
+                        type="number"
+                        min="1"
+                        max="10"
+                        value={realCount}
+                        onChange={e => setRealCount(e.target.value)}
+                        disabled={botRunning}
+                        className="h-7 text-[10px]"
+                      />
+                    </div>
+                  </div>
+                  
+                  {/* Virtual Hook Stats Display */}
+                  <div className="grid grid-cols-3 gap-1 text-center pt-1">
+                    <div className="bg-muted/30 rounded p-1">
+                      <div className="text-[7px] text-muted-foreground">V-Win</div>
+                      <div className="font-mono text-[9px] font-bold text-profit">{vhFakeWins}</div>
+                    </div>
+                    <div className="bg-muted/30 rounded p-1">
+                      <div className="text-[7px] text-muted-foreground">V-Loss</div>
+                      <div className="font-mono text-[9px] font-bold text-loss">{vhFakeLosses}</div>
+                    </div>
+                    <div className="bg-muted/30 rounded p-1">
+                      <div className="text-[7px] text-muted-foreground">Streak</div>
+                      <div className="font-mono text-[9px] font-bold text-warning">{vhConsecLosses}</div>
+                    </div>
+                  </div>
+                  
+                  <div className="text-[8px] text-muted-foreground text-center">
+                    🎣 Bot will wait for {virtualLossCount} consecutive virtual losses, then enter {realCount} real trade(s)
+                  </div>
+                  
+                  {vhStatus === 'waiting' && botRunning && (
+                    <div className="bg-primary/10 border border-primary/30 rounded p-1 text-[8px] text-primary animate-pulse text-center">
+                      🎣 Waiting for {virtualLossCount} consecutive virtual losses... ({vhConsecLosses}/{virtualLossCount})
+                    </div>
+                  )}
+                  {vhStatus === 'confirmed' && botRunning && (
+                    <div className="bg-profit/10 border border-profit/30 rounded p-1 text-[4px] text-profit text-center animate-pulse">
+                      ✅ Hook confirmed! Executing real trades...
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Strategy Section */}
@@ -2279,7 +2727,7 @@ export default function TradingChart() {
           {/* Last 26 Digits - Filtration Chamber */}
           <div className="bg-card border border-border rounded-xl p-3">
             <h3 className="text-xs font-semibold text-foreground mb-2 flex items-center justify-between">
-              <span>Filtration Chamber 🚆</span>
+              <span>Ramzfx Filtration Chamber 🚆</span>
               <div className="flex items-center gap-2">
                 <Badge variant="outline" className="text-[8px] animate-pulse">
                   🟢 LIVE
@@ -2473,11 +2921,11 @@ export default function TradingChart() {
               </div>
               <div className="bg-profit/10 rounded-lg p-1.5 text-center">
                 <div className="text-[8px] text-profit">Wins</div>
-                <div className="font-mono text-sm font-bold text-profit">{wins}</div>
+                <div className="font-mono text-sm font-bold text-profit">{winsCount}</div>
               </div>
               <div className="bg-loss/10 rounded-lg p-1.5 text-center">
                 <div className="text-[8px] text-loss">Losses</div>
-                <div className="font-mono text-sm font-bold text-loss">{losses}</div>
+                <div className="font-mono text-sm font-bold text-loss">{lossesCount}</div>
               </div>
               <div className={`${totalProfit >= 0 ? 'bg-profit/10' : 'bg-loss/10'} rounded-lg p-1.5 text-center`}>
                 <div className="text-[8px] text-muted-foreground">P/L</div>
@@ -2498,13 +2946,13 @@ export default function TradingChart() {
               </div>
             )}
 
+            {/* Trade History - All trades visible, no limit */}
             {tradeHistory.length > 0 && (
-              <div className="max-h-40 overflow-auto space-y-1">
-                {tradeHistory.slice(0, 10).map(t => {
+              <div className="max-h-60 overflow-auto space-y-1">
+                {tradeHistory.map(t => {
                   const outcomeSymbol = getOutcomeSymbol(t);
                   const outcomeColor = t.status === 'won' ? 'text-profit' : 'text-loss';
                   
-                  // Determine badge color based on outcome symbol
                   let badgeColor = '';
                   if (outcomeSymbol === 'R' || outcomeSymbol === 'U') badgeColor = 'border-profit text-profit';
                   else if (outcomeSymbol === 'F' || outcomeSymbol === 'O') badgeColor = 'border-loss text-loss';
@@ -2512,18 +2960,40 @@ export default function TradingChart() {
                   else if (outcomeSymbol === 'D') badgeColor = 'border-[#D29922] text-[#D29922]';
                   else if (outcomeSymbol === 'E') badgeColor = 'border-[#3FB950] text-[#3FB950]';
                   
+                  // Enhanced styling for virtual trades
+                  const isVirtualTrade = t.isVirtual === true;
+                  const virtualStatusClass = isVirtualTrade
+                    ? t.status === 'won'
+                      ? 'bg-gradient-to-r from-green-950/40 to-emerald-950/30 border-green-500/50'
+                      : 'bg-gradient-to-r from-red-950/40 to-rose-950/30 border-red-500/50'
+                    : '';
+                  
                   return (
                     <div key={t.id} className={`flex items-center justify-between text-[9px] p-1.5 rounded-lg border ${
                       t.status === 'open' ? 'border-primary/30 bg-primary/5' :
                       t.status === 'won' ? 'border-profit/30 bg-profit/5' :
                       'border-loss/30 bg-loss/5'
-                    }`}>
-                      <div className="flex items-center gap-1.5">
+                    } ${virtualStatusClass} ${isVirtualTrade ? 'border-dashed' : ''}`}>
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className={`font-bold ${t.status === 'won' ? 'text-profit' : t.status === 'lost' ? 'text-loss' : 'text-primary'}`}>
                           {t.status === 'open' ? '⏳' : t.status === 'won' ? '✅' : '❌'}
                         </span>
+                        {isVirtualTrade && (
+                          <Badge variant="outline" className="text-[6px] px-1 py-0 bg-purple-500/30 text-purple-400 border-purple-500/50">
+                            VIRTUAL
+                          </Badge>
+                        )}
                         <span className="font-mono text-muted-foreground">{t.type}</span>
-                        <span className="text-muted-foreground">${t.stake.toFixed(2)}</span>
+                        {!isVirtualTrade && t.stake > 0 && (
+                          <span className="text-muted-foreground">${t.stake.toFixed(2)}</span>
+                        )}
+                        {isVirtualTrade && (
+                          <span className="text-purple-400/70 text-[8px] font-mono">
+                            {t.virtualLossCount !== undefined && t.virtualRequired !== undefined 
+                              ? `(${t.virtualLossCount}/${t.virtualRequired})` 
+                              : '(virtual)'}
+                          </span>
+                        )}
                         {t.resultDigit !== undefined && (
                           <Badge variant="outline" className={`text-[8px] px-1 ${t.status === 'won' ? 'border-profit text-profit' : 'border-loss text-loss'}`}>
                             {t.resultDigit}
@@ -2535,8 +3005,8 @@ export default function TradingChart() {
                           </Badge>
                         )}
                       </div>
-                      <span className={`font-mono font-bold ${t.profit >= 0 ? 'text-profit' : 'text-loss'}`}>
-                        {t.status === 'open' ? '...' : `${t.profit >= 0 ? '+' : ''}$${t.profit.toFixed(2)}`}
+                      <span className={`font-mono font-bold ${isVirtualTrade ? (t.status === 'won' ? 'text-green-400' : 'text-red-400') : (t.profit >= 0 ? 'text-profit' : 'text-loss')}`}>
+                        {t.status === 'open' ? '...' : isVirtualTrade ? (t.status === 'won' ? 'WIN' : 'LOSS') : `${t.profit >= 0 ? '+' : ''}$${t.profit.toFixed(2)}`}
                       </span>
                     </div>
                   );
