@@ -134,42 +134,42 @@ const SocialNotificationPopup = ({ onClose }: { onClose: () => void }) => {
   const socialLinks = [
     {
       name: 'WhatsApp',
-      url: 'https://wa.me/+254794944129',
+      url: 'https://wa.me/+254757261120',
       icon: <MessageCircle className="w-4 h-4" />,
       color: 'hover:text-[#25D366]',
       bgGradient: 'from-green-500/20 to-green-600/20',
     },
     {
       name: 'Telegram Group',
-      url: 'https://t.me/yourgroup',
+      url: 'https://t.me/+YDUwvuuVDYg5NjE0',
       icon: <MessageSquare className="w-4 h-4" />,
       color: 'hover:text-[#26A5E4]',
       bgGradient: 'from-blue-500/20 to-blue-600/20',
     },
     {
-      name: 'Telegram Channel',
-      url: 'https://t.me/yourchannel',
+      name: 'Facebook Channel',
+      url: 'https://www.facebook.com/profile.php?id=61573399294689',
       icon: <MessageSquare className="w-4 h-4" />,
       color: 'hover:text-[#26A5E4]',
       bgGradient: 'from-blue-500/20 to-blue-600/20',
     },
     {
       name: 'YouTube',
-      url: 'https://youtube.com/@yourchannel',
+      url: 'www.youtube.com/@ceoramz',
       icon: <Youtube className="w-4 h-4" />,
       color: 'hover:text-[#FF0000]',
       bgGradient: 'from-red-500/20 to-red-600/20',
     },
     {
       name: 'TikTok',
-      url: 'https://www.tiktok.com/@yourprofile',
+      url: 'https://tiktok.com/@ceoramz',
       icon: <Music className="w-4 h-4" />,
       color: 'hover:text-foreground',
       bgGradient: 'from-gray-500/20 to-gray-600/20',
     },
     {
       name: 'Instagram',
-      url: 'https://www.instagram.com/yourprofile',
+      url: 'https://www.instagram.com/ramztrader.site?igsh=aDY1aGFiMGpobHJi',
       icon: <Instagram className="w-4 h-4" />,
       color: 'hover:text-[#E4405F]',
       bgGradient: 'from-pink-500/20 to-pink-600/20',
@@ -217,7 +217,7 @@ const SocialNotificationPopup = ({ onClose }: { onClose: () => void }) => {
                 <Users className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-white">Join Our Community</h2>
+                <h2 className="text-lg font-bold text-white">Join Our Trading Community</h2>
                 <p className="text-[10px] text-white/80">Connect & Grow Together</p>
               </div>
             </div>
@@ -562,7 +562,7 @@ function calculateChartDigitStats(symbol: string, tickRange: number) {
 }
 
 // Trading Chart Popup Component - Positioned near the button
-const TradingChartPopup = ({ onClose, anchorRef }: { onClose: () => void; anchorRef: React.RefObject<HTMLElement | null> }) => {
+const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => void; anchorRef: React.RefObject<HTMLElement | null>; isRunning: boolean }) => {
   const [symbol, setSymbol] = useState('R_100');
   const [selectedContractType, setSelectedContractType] = useState('CALL');
   const [selectedPrediction, setSelectedPrediction] = useState('5');
@@ -571,25 +571,84 @@ const TradingChartPopup = ({ onClose, anchorRef }: { onClose: () => void; anchor
   const [displaySymbols, setDisplaySymbols] = useState<string[]>([]);
   const [isExiting, setIsExiting] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
-  const [position, setPosition] = useState({ top: 0, right: 0 });
+  const [position, setPosition] = useState({ bottom: 0, right: 0 });
+  const [isMinimized, setIsMinimized] = useState(false);
+  const [currentMarketIndex, setCurrentMarketIndex] = useState(0);
+  const [signalRotation, setSignalRotation] = useState<'ODD' | 'EVEN' | 'OVER' | 'UNDER'>('ODD');
   const lastSpokenSignal = useRef('');
   const subscribedRef = useRef(false);
   const subscriptionRef = useRef<any>(null);
+  const rotationIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Calculate position relative to the anchor button
+  // Calculate position relative to the anchor button (LEFT side now)
   useEffect(() => {
     if (anchorRef.current) {
       const rect = anchorRef.current.getBoundingClientRect();
-      // Position popup above the button, aligned to right
+      // Position popup to the LEFT of the button
       setPosition({
         bottom: window.innerHeight - rect.top + 10,
-        right: window.innerWidth - rect.right,
+        right: window.innerWidth - rect.left + 10,
       });
     } else {
       // Fallback position
       setPosition({ bottom: 80, right: 20 });
     }
   }, [anchorRef]);
+  
+  // Market rotation for signal display - changes every 1 minute
+  useEffect(() => {
+    rotationIntervalRef.current = setInterval(() => {
+      setCurrentMarketIndex(prev => (prev + 1) % SCANNER_MARKETS.length);
+      
+      // Rotate signal type: ODD -> EVEN -> OVER -> UNDER -> repeat
+      setSignalRotation(prev => {
+        switch(prev) {
+          case 'ODD': return 'EVEN';
+          case 'EVEN': return 'OVER';
+          case 'OVER': return 'UNDER';
+          case 'UNDER': return 'ODD';
+          default: return 'ODD';
+        }
+      });
+    }, 60000); // 1 minute
+    
+    return () => {
+      if (rotationIntervalRef.current) clearInterval(rotationIntervalRef.current);
+    };
+  }, []);
+  
+  const currentMarket = SCANNER_MARKETS[currentMarketIndex];
+  
+  // Get current signal based on rotation and market data
+  const getCurrentSignal = useCallback(() => {
+    const digits = getChartTickHistory(currentMarket.symbol);
+    const recentDigits = digits.slice(-50);
+    
+    if (recentDigits.length === 0) return { signal: 'WAITING', percentage: 0, strength: 'low' };
+    
+    let count = 0;
+    switch(signalRotation) {
+      case 'ODD':
+        count = recentDigits.filter(d => d % 2 !== 0).length;
+        break;
+      case 'EVEN':
+        count = recentDigits.filter(d => d % 2 === 0).length;
+        break;
+      case 'OVER':
+        count = recentDigits.filter(d => d > 4).length;
+        break;
+      case 'UNDER':
+        count = recentDigits.filter(d => d < 5).length;
+        break;
+    }
+    
+    const percentage = (count / recentDigits.length) * 100;
+    const strength = percentage > 65 ? 'high' : percentage > 55 ? 'medium' : 'low';
+    
+    return { signal: signalRotation, percentage, strength };
+  }, [currentMarket, signalRotation]);
+  
+  const currentSignal = getCurrentSignal();
   
   const speak = useCallback((text: string) => {
     if (!voiceEnabled || !window.speechSynthesis) return;
@@ -757,6 +816,46 @@ const TradingChartPopup = ({ onClose, anchorRef }: { onClose: () => void; anchor
   const mostCommon = digitStats?.mostCommon || 0;
   const totalTicks = digitStats?.totalTicks || 0;
   
+  const getSignalColor = (strength: string) => {
+    switch(strength) {
+      case 'high': return 'text-green-400 bg-green-500/20 border-green-500/40';
+      case 'medium': return 'text-yellow-400 bg-yellow-500/20 border-yellow-500/40';
+      default: return 'text-gray-400 bg-gray-500/20 border-gray-500/40';
+    }
+  };
+  
+  if (isMinimized) {
+    return (
+      <div 
+        className="fixed z-50 pointer-events-none"
+        style={{ bottom: position.bottom, right: position.right }}
+      >
+        <div 
+          className="pointer-events-auto w-[280px] rounded-xl shadow-2xl bg-gradient-to-br from-slate-900 to-slate-950 border border-blue-500/30 cursor-pointer"
+          onClick={() => setIsMinimized(false)}
+        >
+          <div className="p-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="p-1 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg">
+                <BarChart3 className="w-3 h-3 text-white" />
+              </div>
+              <span className="text-[10px] font-semibold text-white">Ramzfx Ai Signals</span>
+              {isRunning && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />}
+            </div>
+            <div className="flex items-center gap-1">
+              <Badge className={`text-[8px] px-1.5 ${getSignalColor(currentSignal.strength)}`}>
+                {currentSignal.signal} {currentSignal.percentage.toFixed(0)}%
+              </Badge>
+              <button onClick={handleClose} className="p-0.5 rounded hover:bg-white/10">
+                <X className="w-3 h-3 text-gray-400" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
   return (
     <div 
       className="fixed z-50 pointer-events-none"
@@ -791,6 +890,12 @@ const TradingChartPopup = ({ onClose, anchorRef }: { onClose: () => void; anchor
               {voiceEnabled ? 'ON' : 'OFF'}
             </Button>
             <button
+              onClick={() => setIsMinimized(true)}
+              className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-300 transition-all"
+            >
+              <span className="text-[10px]">━</span>
+            </button>
+            <button
               onClick={handleClose}
               className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-300 transition-all"
             >
@@ -800,6 +905,43 @@ const TradingChartPopup = ({ onClose, anchorRef }: { onClose: () => void; anchor
         </div>
         
         <div className="p-3 space-y-3">
+          {/* LIVE SIGNAL DISPLAY - NEW SECTION */}
+          <div className="bg-gradient-to-r from-blue-600/20 to-indigo-600/20 rounded-xl p-3 border border-blue-500/30">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[9px] text-blue-300 font-semibold">🔴 LIVE SIGNAL ROTATION</span>
+              <span className="text-[8px] text-gray-400">Changes every 1 min</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-[10px] text-gray-400">{currentMarket?.name || 'Loading...'}</div>
+                <div className={`text-2xl font-bold ${getSignalColor(currentSignal.strength)}`}>
+                  {currentSignal.signal}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[9px] text-gray-400">Confidence</div>
+                <div className={`text-xl font-bold ${getSignalColor(currentSignal.strength)}`}>
+                  {currentSignal.percentage.toFixed(1)}%
+                </div>
+              </div>
+            </div>
+            <div className="mt-2 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+              <div 
+                className={`h-full rounded-full transition-all duration-500 ${
+                  currentSignal.strength === 'high' ? 'bg-green-500' : 
+                  currentSignal.strength === 'medium' ? 'bg-yellow-500' : 'bg-gray-500'
+                }`}
+                style={{ width: `${currentSignal.percentage}%` }}
+              />
+            </div>
+            <div className="mt-2 text-[7px] text-gray-500 text-center">
+              {currentSignal.signal === 'ODD' && '📊 Trading Odd digits recommended'}
+              {currentSignal.signal === 'EVEN' && '📊 Trading Even digits recommended'}
+              {currentSignal.signal === 'OVER' && '📊 Trading Over 4 recommended'}
+              {currentSignal.signal === 'UNDER' && '📊 Trading Under 5 recommended'}
+            </div>
+          </div>
+          
           {/* Market Selector */}
           <div>
             <label className="text-[9px] text-blue-300 block mb-1">Market</label>
@@ -2332,9 +2474,9 @@ export default function ProScannerBot() {
       {/* Social Notification Popup - Top Right Corner */}
       {showSocialPopup && <SocialNotificationPopup onClose={handleCloseSocialPopup} />}
 
-      {/* Trading Chart Popup - Positioned near the floating button */}
+      {/* Trading Chart Popup - Positioned near the floating button (LEFT side when running) */}
       {showTradingChart && (
-        <TradingChartPopup onClose={handleCloseTradingChart} anchorRef={chartButtonRef} />
+        <TradingChartPopup onClose={handleCloseTradingChart} anchorRef={chartButtonRef} isRunning={isRunning} />
       )}
 
       <div className="space-y-3 max-w-7xl mx-auto p-4">
