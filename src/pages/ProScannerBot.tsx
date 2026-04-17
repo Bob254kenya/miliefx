@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Play, StopCircle, Trash2, Scan,
   Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload, X, Users,
-  MessageCircle, MessageSquare, Youtube, Instagram, Music, BarChart3, Activity, TrendingUp, TrendingDown, Target, Volume2, VolumeX, LineChart, Wifi, WifiOff, Trophy, ShieldAlert
+  MessageCircle, MessageSquare, Youtube, Instagram, Music, BarChart3, Activity, TrendingUp, TrendingDown, Target, Volume2, VolumeX, LineChart, Wifi, WifiOff, Trophy, ShieldAlert, GripVertical
 } from 'lucide-react';
 import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
@@ -433,7 +433,7 @@ const TPSLNotificationPopup = () => {
 };
 
 // ============================================
-// TRADING CHART POPUP COMPONENT (Positioned near button)
+// DRAGGABLE TRADING CHART POPUP COMPONENT
 // ============================================
 
 const ALL_MARKETS = [
@@ -525,13 +525,20 @@ function calculateChartDigitStats(symbol: string, tickRange: number) {
   
   let mostCommon = 0;
   let leastCommon = 0;
+  let secondMost = 0;
   let maxFreq = 0;
+  let secondMaxFreq = 0;
   let minFreq = Infinity;
   
   for (let i = 0; i <= 9; i++) {
     if (frequency[i] > maxFreq) {
+      secondMaxFreq = maxFreq;
+      secondMost = mostCommon;
       maxFreq = frequency[i];
       mostCommon = i;
+    } else if (frequency[i] > secondMaxFreq) {
+      secondMaxFreq = frequency[i];
+      secondMost = i;
     }
     if (frequency[i] < minFreq) {
       minFreq = frequency[i];
@@ -543,6 +550,8 @@ function calculateChartDigitStats(symbol: string, tickRange: number) {
   const oddCount = recentTicks.length - evenCount;
   const overCount = recentTicks.filter(d => d > 4).length;
   const underCount = recentTicks.length - overCount;
+  const over3Count = recentTicks.filter(d => d > 2).length;
+  const under6Count = recentTicks.filter(d => d < 6).length;
   const last26Digits = ticks.slice(-26);
   const last26Prices = tickPricesData.slice(-26);
   
@@ -550,19 +559,22 @@ function calculateChartDigitStats(symbol: string, tickRange: number) {
     frequency,
     percentages,
     mostCommon,
+    secondMost,
     leastCommon,
     totalTicks: recentTicks.length,
     evenPercentage: recentTicks.length > 0 ? (evenCount / recentTicks.length * 100) : 50,
     oddPercentage: recentTicks.length > 0 ? (oddCount / recentTicks.length * 100) : 50,
     overPercentage: recentTicks.length > 0 ? (overCount / recentTicks.length * 100) : 50,
     underPercentage: recentTicks.length > 0 ? (underCount / recentTicks.length * 100) : 50,
+    over3Percentage: recentTicks.length > 0 ? (over3Count / recentTicks.length * 100) : 50,
+    under6Percentage: recentTicks.length > 0 ? (under6Count / recentTicks.length * 100) : 50,
     last26Digits,
     tickPrices: last26Prices,
   };
 }
 
-// Trading Chart Popup Component - Positioned near the button
-const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => void; anchorRef: React.RefObject<HTMLElement | null>; isRunning: boolean }) => {
+// Draggable Trading Chart Popup Component
+const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunning: boolean }) => {
   const [symbol, setSymbol] = useState('R_100');
   const [selectedContractType, setSelectedContractType] = useState('CALL');
   const [selectedPrediction, setSelectedPrediction] = useState('5');
@@ -571,84 +583,64 @@ const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => v
   const [displaySymbols, setDisplaySymbols] = useState<string[]>([]);
   const [isExiting, setIsExiting] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
-  const [position, setPosition] = useState({ bottom: 0, right: 0 });
   const [isMinimized, setIsMinimized] = useState(false);
-  const [currentMarketIndex, setCurrentMarketIndex] = useState(0);
-  const [signalRotation, setSignalRotation] = useState<'ODD' | 'EVEN' | 'OVER' | 'UNDER'>('ODD');
+  const [position, setPosition] = useState({ x: window.innerWidth - 480, y: 80 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const popupRef = useRef<HTMLDivElement>(null);
+  const dragHandleRef = useRef<HTMLDivElement>(null);
+  
+  const [scrollingMarkets, setScrollingMarkets] = useState(ALL_MARKETS);
+  const [scrollingIndex, setScrollingIndex] = useState(0);
+  
   const lastSpokenSignal = useRef('');
   const subscribedRef = useRef(false);
   const subscriptionRef = useRef<any>(null);
-  const rotationIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Calculate position relative to the anchor button (LEFT side now)
+  // Auto-scroll through markets for the scrolling container
   useEffect(() => {
-    if (anchorRef.current) {
-      const rect = anchorRef.current.getBoundingClientRect();
-      // Position popup to the LEFT of the button
-      setPosition({
-        bottom: window.innerHeight - rect.top + 10,
-        right: window.innerWidth - rect.left + 10,
+    const interval = setInterval(() => {
+      setScrollingIndex((prev) => (prev + 1) % scrollingMarkets.length);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [scrollingMarkets.length]);
+  
+  // Drag handlers
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (dragHandleRef.current && dragHandleRef.current.contains(e.target as Node)) {
+      setIsDragging(true);
+      setDragOffset({
+        x: e.clientX - position.x,
+        y: e.clientY - position.y,
       });
-    } else {
-      // Fallback position
-      setPosition({ bottom: 80, right: 20 });
+      e.preventDefault();
     }
-  }, [anchorRef]);
+  };
   
-  // Market rotation for signal display - changes every 1 minute
   useEffect(() => {
-    rotationIntervalRef.current = setInterval(() => {
-      setCurrentMarketIndex(prev => (prev + 1) % SCANNER_MARKETS.length);
-      
-      // Rotate signal type: ODD -> EVEN -> OVER -> UNDER -> repeat
-      setSignalRotation(prev => {
-        switch(prev) {
-          case 'ODD': return 'EVEN';
-          case 'EVEN': return 'OVER';
-          case 'OVER': return 'UNDER';
-          case 'UNDER': return 'ODD';
-          default: return 'ODD';
-        }
-      });
-    }, 60000); // 1 minute
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isDragging) {
+        setPosition({
+          x: e.clientX - dragOffset.x,
+          y: e.clientY - dragOffset.y,
+        });
+      }
+    };
+    
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+    
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
     
     return () => {
-      if (rotationIntervalRef.current) clearInterval(rotationIntervalRef.current);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, []);
-  
-  const currentMarket = SCANNER_MARKETS[currentMarketIndex];
-  
-  // Get current signal based on rotation and market data
-  const getCurrentSignal = useCallback(() => {
-    const digits = getChartTickHistory(currentMarket.symbol);
-    const recentDigits = digits.slice(-50);
-    
-    if (recentDigits.length === 0) return { signal: 'WAITING', percentage: 0, strength: 'low' };
-    
-    let count = 0;
-    switch(signalRotation) {
-      case 'ODD':
-        count = recentDigits.filter(d => d % 2 !== 0).length;
-        break;
-      case 'EVEN':
-        count = recentDigits.filter(d => d % 2 === 0).length;
-        break;
-      case 'OVER':
-        count = recentDigits.filter(d => d > 4).length;
-        break;
-      case 'UNDER':
-        count = recentDigits.filter(d => d < 5).length;
-        break;
-    }
-    
-    const percentage = (count / recentDigits.length) * 100;
-    const strength = percentage > 65 ? 'high' : percentage > 55 ? 'medium' : 'low';
-    
-    return { signal: signalRotation, percentage, strength };
-  }, [currentMarket, signalRotation]);
-  
-  const currentSignal = getCurrentSignal();
+  }, [isDragging, dragOffset]);
   
   const speak = useCallback((text: string) => {
     if (!voiceEnabled || !window.speechSynthesis) return;
@@ -813,22 +805,20 @@ const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => v
   const oddPercentage = digitStats?.oddPercentage || 50;
   const overPercentage = digitStats?.overPercentage || 50;
   const underPercentage = digitStats?.underPercentage || 50;
+  const over3Percentage = digitStats?.over3Percentage || 50;
+  const under6Percentage = digitStats?.under6Percentage || 50;
   const mostCommon = digitStats?.mostCommon || 0;
+  const secondMost = digitStats?.secondMost || 0;
+  const leastCommon = digitStats?.leastCommon || 0;
   const totalTicks = digitStats?.totalTicks || 0;
   
-  const getSignalColor = (strength: string) => {
-    switch(strength) {
-      case 'high': return 'text-green-400 bg-green-500/20 border-green-500/40';
-      case 'medium': return 'text-yellow-400 bg-yellow-500/20 border-yellow-500/40';
-      default: return 'text-gray-400 bg-gray-500/20 border-gray-500/40';
-    }
-  };
+  const currentScrollingMarket = scrollingMarkets[scrollingIndex];
   
   if (isMinimized) {
     return (
       <div 
         className="fixed z-50 pointer-events-none"
-        style={{ bottom: position.bottom, right: position.right }}
+        style={{ left: position.x, top: position.y }}
       >
         <div 
           className="pointer-events-auto w-[280px] rounded-xl shadow-2xl bg-gradient-to-br from-slate-900 to-slate-950 border border-blue-500/30 cursor-pointer"
@@ -842,14 +832,9 @@ const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => v
               <span className="text-[10px] font-semibold text-white">Ramzfx Ai Signals</span>
               {isRunning && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />}
             </div>
-            <div className="flex items-center gap-1">
-              <Badge className={`text-[8px] px-1.5 ${getSignalColor(currentSignal.strength)}`}>
-                {currentSignal.signal} {currentSignal.percentage.toFixed(0)}%
-              </Badge>
-              <button onClick={handleClose} className="p-0.5 rounded hover:bg-white/10">
-                <X className="w-3 h-3 text-gray-400" />
-              </button>
-            </div>
+            <button onClick={handleClose} className="p-0.5 rounded hover:bg-white/10">
+              <X className="w-3 h-3 text-gray-400" />
+            </button>
           </div>
         </div>
       </div>
@@ -858,25 +843,32 @@ const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => v
   
   return (
     <div 
+      ref={popupRef}
       className="fixed z-50 pointer-events-none"
-      style={{ bottom: position.bottom, right: position.right }}
+      style={{ left: position.x, top: position.y }}
     >
       <div 
         className={`
-          pointer-events-auto w-[450px] max-h-[90vh] overflow-y-auto rounded-xl shadow-2xl
+          pointer-events-auto w-[480px] max-h-[90vh] overflow-y-auto rounded-xl shadow-2xl
           bg-gradient-to-br from-slate-900 to-slate-950 border border-blue-500/30
           ${isExiting ? 'animate-slide-out-right' : 'animate-slide-in-right'}
+          ${isDragging ? 'cursor-grabbing' : ''}
         `}
       >
-        {/* Header */}
-        <div className="sticky top-0 z-10 bg-gradient-to-r from-slate-900 to-slate-950 border-b border-blue-500/30 p-3 flex items-center justify-between rounded-t-xl">
+        {/* Draggable Header */}
+        <div 
+          ref={dragHandleRef}
+          onMouseDown={handleMouseDown}
+          className="sticky top-0 z-10 bg-gradient-to-r from-slate-900 to-slate-950 border-b border-blue-500/30 p-3 flex items-center justify-between rounded-t-xl cursor-grab active:cursor-grabbing"
+        >
           <div className="flex items-center gap-2">
+            <GripVertical className="w-3.5 h-3.5 text-gray-400" />
             <div className="p-1.5 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg">
               <BarChart3 className="w-3.5 h-3.5 text-white" />
             </div>
             <div>
               <h3 className="text-sm font-bold text-white">Ramzfx Trading Signals</h3>
-              <p className="text-[8px] text-blue-300">Live Market Analysis</p>
+              <p className="text-[8px] text-blue-300">Drag to move • Live Market Analysis</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -905,43 +897,6 @@ const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => v
         </div>
         
         <div className="p-3 space-y-3">
-          {/* LIVE SIGNAL DISPLAY - NEW SECTION */}
-          <div className="bg-gradient-to-r from-blue-600/20 to-indigo-600/20 rounded-xl p-3 border border-blue-500/30">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[9px] text-blue-300 font-semibold">🔴 LIVE SIGNAL ROTATION</span>
-              <span className="text-[8px] text-gray-400">Changes every 1 min</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-[10px] text-gray-400">{currentMarket?.name || 'Loading...'}</div>
-                <div className={`text-2xl font-bold ${getSignalColor(currentSignal.strength)}`}>
-                  {currentSignal.signal}
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-[9px] text-gray-400">Confidence</div>
-                <div className={`text-xl font-bold ${getSignalColor(currentSignal.strength)}`}>
-                  {currentSignal.percentage.toFixed(1)}%
-                </div>
-              </div>
-            </div>
-            <div className="mt-2 h-1.5 bg-slate-700 rounded-full overflow-hidden">
-              <div 
-                className={`h-full rounded-full transition-all duration-500 ${
-                  currentSignal.strength === 'high' ? 'bg-green-500' : 
-                  currentSignal.strength === 'medium' ? 'bg-yellow-500' : 'bg-gray-500'
-                }`}
-                style={{ width: `${currentSignal.percentage}%` }}
-              />
-            </div>
-            <div className="mt-2 text-[7px] text-gray-500 text-center">
-              {currentSignal.signal === 'ODD' && '📊 Trading Odd digits recommended'}
-              {currentSignal.signal === 'EVEN' && '📊 Trading Even digits recommended'}
-              {currentSignal.signal === 'OVER' && '📊 Trading Over 4 recommended'}
-              {currentSignal.signal === 'UNDER' && '📊 Trading Under 5 recommended'}
-            </div>
-          </div>
-          
           {/* Market Selector */}
           <div>
             <label className="text-[9px] text-blue-300 block mb-1">Market</label>
@@ -957,6 +912,25 @@ const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => v
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          
+          {/* Scrolling Markets Container */}
+          <div className="bg-gradient-to-r from-blue-600/20 to-indigo-600/20 rounded-xl p-3 border border-blue-500/30 overflow-hidden">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[9px] text-blue-300 font-semibold">📊 SCANNING ALL MARKETS</span>
+              <span className="text-[8px] text-gray-400 animate-pulse">LIVE</span>
+            </div>
+            <div className="relative h-8 overflow-hidden">
+              <div 
+                key={currentScrollingMarket?.symbol}
+                className="absolute inset-0 flex items-center justify-between animate-slide-in-right"
+              >
+                <span className="text-[11px] font-mono text-blue-300">{currentScrollingMarket?.name || 'Loading...'}</span>
+                <Badge className="text-[8px] bg-blue-500/20 text-blue-400 border-blue-500/30">
+                  {currentScrollingMarket?.symbol}
+                </Badge>
+              </div>
+            </div>
           </div>
           
           {/* Contract Type */}
@@ -1027,7 +1001,7 @@ const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => v
             </Badge>
           </div>
           
-          {/* Digit Analysis Grid */}
+          {/* Enhanced Analysis Grid */}
           <div className="grid grid-cols-2 gap-1.5">
             <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
               <div className="text-[7px] text-blue-300">Odd</div>
@@ -1057,6 +1031,20 @@ const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => v
                 <div className="h-full bg-yellow-500 rounded-full" style={{ width: `${underPercentage}%` }} />
               </div>
             </div>
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-purple-500/20">
+              <div className="text-[7px] text-purple-300">Over 3</div>
+              <div className="font-mono text-[11px] font-bold text-purple-400">{over3Percentage.toFixed(1)}%</div>
+              <div className="h-1 bg-slate-700 rounded-full mt-0.5">
+                <div className="h-full bg-purple-500 rounded-full" style={{ width: `${over3Percentage}%` }} />
+              </div>
+            </div>
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-purple-500/20">
+              <div className="text-[7px] text-purple-300">Under 6</div>
+              <div className="font-mono text-[11px] font-bold text-purple-400">{under6Percentage.toFixed(1)}%</div>
+              <div className="h-1 bg-slate-700 rounded-full mt-0.5">
+                <div className="h-full bg-purple-500 rounded-full" style={{ width: `${under6Percentage}%` }} />
+              </div>
+            </div>
           </div>
           
           {/* Digits Grid */}
@@ -1065,6 +1053,7 @@ const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => v
               const pct = percentages[d] || 0;
               const isHot = pct > 12;
               const isBestMatch = d === mostCommon;
+              const isSecondBest = d === secondMost;
               return (
                 <button
                   key={d}
@@ -1073,16 +1062,45 @@ const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => v
                     selectedPrediction === String(d) ? 'ring-2 ring-blue-500' : ''
                   } ${isHot ? 'bg-red-500/20 border-red-500/40 text-red-400' :
                     isBestMatch ? 'bg-green-500/20 border-green-500/40 text-green-400' :
+                    isSecondBest ? 'bg-blue-500/20 border-blue-500/40 text-blue-400' :
                     'bg-slate-800/30 border-slate-700 text-gray-300'}`}
                 >
                   <div className="font-mono text-[13px] font-bold">{d}</div>
                   <div className="text-[7px]">{pct.toFixed(1)}%</div>
                   <div className="h-0.5 bg-slate-700 rounded-full mt-0.5">
-                    <div className={`h-full rounded-full ${isHot ? 'bg-red-500' : isBestMatch ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
+                    <div className={`h-full rounded-full ${isHot ? 'bg-red-500' : isBestMatch ? 'bg-green-500' : isSecondBest ? 'bg-blue-500' : 'bg-gray-500'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
                   </div>
                 </button>
               );
             })}
+          </div>
+          
+          {/* Digit Analysis Summary */}
+          <div className="grid grid-cols-3 gap-1.5">
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-green-500/20">
+              <div className="text-[7px] text-green-400">🔥 Most Appearing</div>
+              <div className="font-mono text-[13px] font-bold text-green-400">{mostCommon}</div>
+              <div className="text-[6px] text-gray-500">{percentages[mostCommon]?.toFixed(1)}%</div>
+            </div>
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+              <div className="text-[7px] text-blue-400">⭐ Second Most</div>
+              <div className="font-mono text-[13px] font-bold text-blue-400">{secondMost}</div>
+              <div className="text-[6px] text-gray-500">{percentages[secondMost]?.toFixed(1)}%</div>
+            </div>
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-red-500/20">
+              <div className="text-[7px] text-red-400">❄️ Least Appearing</div>
+              <div className="font-mono text-[13px] font-bold text-red-400">{leastCommon}</div>
+              <div className="text-[6px] text-gray-500">{percentages[leastCommon]?.toFixed(1)}%</div>
+            </div>
+          </div>
+          
+          {/* Even/Odd Recommendation */}
+          <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+            <div className="text-[7px] text-blue-300">Even/Odd Recommendation</div>
+            <div className={`font-mono text-[11px] font-bold ${evenPercentage > 50 ? 'text-green-400' : 'text-yellow-400'}`}>
+              {evenPercentage > 50 ? 'EVEN' : 'ODD'}
+            </div>
+            <div className="text-[6px] text-gray-500">Confidence: {Math.max(evenPercentage, oddPercentage).toFixed(1)}%</div>
           </div>
           
           {/* Legend */}
@@ -1186,39 +1204,6 @@ const TradingChartPopup = ({ onClose, anchorRef, isRunning }: { onClose: () => v
                 <div className="text-center text-[9px] text-gray-500 py-2">Waiting for ticks...</div>
               )}
             </div>
-          </div>
-          
-          {/* Recommendations */}
-          <div className="grid grid-cols-2 gap-1.5">
-            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
-              <div className="text-[7px] text-blue-300">Most Appearing</div>
-              <div className="font-mono text-[13px] font-bold text-green-400">{mostCommon}</div>
-              <div className="text-[6px] text-gray-500">{percentages[mostCommon]?.toFixed(1)}%</div>
-            </div>
-            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
-              <div className="text-[7px] text-blue-300">Even/Odd</div>
-              <div className={`font-mono text-[11px] font-bold ${evenPercentage > 50 ? 'text-green-400' : 'text-yellow-400'}`}>
-                {evenPercentage > 50 ? 'EVEN' : 'ODD'}
-              </div>
-              <div className="text-[6px] text-gray-500">{Math.max(evenPercentage, oddPercentage).toFixed(1)}%</div>
-            </div>
-          </div>
-          
-          {/* Connection Status */}
-          <div className={`flex items-center justify-center gap-1 text-[8px] py-1 ${
-            derivApi.isConnected ? 'text-green-400' : 'text-red-400'
-          }`}>
-            {derivApi.isConnected ? (
-              <>
-                <Wifi className="w-2.5 h-2.5" />
-                <span>Connected to Deriv</span>
-              </>
-            ) : (
-              <>
-                <WifiOff className="w-2.5 h-2.5" />
-                <span>Disconnected - Refresh page</span>
-              </>
-            )}
           </div>
           
           <div className="text-center text-[6px] text-gray-500 py-1">
@@ -1418,7 +1403,7 @@ export default function ProScannerBot() {
   const { recordLoss } = useLossRequirement();
   const location = useLocation();
   
-  const [showSocialPopup, setShowSocialPopup] = useState(true); // Show by default
+  const [showSocialPopup, setShowSocialPopup] = useState(true);
   const [showTradingChart, setShowTradingChart] = useState(false);
   const chartButtonRef = useRef<HTMLButtonElement>(null);
   const [isChartAnimating, setIsChartAnimating] = useState(false);
@@ -1539,7 +1524,7 @@ export default function ProScannerBot() {
     }
   }, [refreshBalance, activeAccount?.balance, localBalance, balanceCache]);
 
-  // Enhanced connection with retry logic
+  // Auto-connect without status indicators
   const ensureConnection = useCallback(async (): Promise<boolean> => {
     if (derivApi.isConnected) {
       setIsConnected(true);
@@ -1547,9 +1532,6 @@ export default function ProScannerBot() {
       return true;
     }
 
-    setIsReconnecting(true);
-    setBotStatus('reconnecting');
-    
     for (let i = 0; i < MAX_CONNECTION_RETRIES; i++) {
       try {
         await derivApi.connect();
@@ -1563,18 +1545,15 @@ export default function ProScannerBot() {
           setIsConnected(true);
           setBotStatus(savedBotStateRef.current?.inRecovery ? 'recovery' : 'trading_m1');
           connectionRetryCountRef.current = 0;
-          setIsReconnecting(false);
           return true;
         }
       } catch (error) {
         console.error(`Reconnection attempt ${i + 1} failed:`, error);
-        await new Promise(r => setTimeout(r, RECONNECT_DELAY * (i + 1))); // Exponential backoff
+        await new Promise(r => setTimeout(r, RECONNECT_DELAY * (i + 1)));
       }
     }
     
     setIsConnected(false);
-    setBotStatus('idle');
-    setIsReconnecting(false);
     return false;
   }, []);
 
@@ -1633,7 +1612,7 @@ export default function ProScannerBot() {
     return false;
   }, [isRunning]);
 
-  // Enhanced connection checker with state preservation
+  // Enhanced connection checker without UI indicators
   useEffect(() => {
     const connectionChecker = setInterval(async () => {
       const connected = derivApi.isConnected;
@@ -1641,12 +1620,11 @@ export default function ProScannerBot() {
       setIsConnected(connected);
       
       if (!connected && isRunning && runningRef.current) {
-        saveBotState(); // Save state before attempting reconnection
+        saveBotState();
         const reconnected = await ensureConnection();
         if (reconnected) {
-          restoreBotState(); // Restore state after successful reconnection
+          restoreBotState();
         } else {
-          // Stop bot if reconnection fails after all retries
           if (connectionRetryCountRef.current >= MAX_CONNECTION_RETRIES) {
             shouldStopRef.current = true;
             runningRef.current = false;
@@ -1668,11 +1646,10 @@ export default function ProScannerBot() {
           }
         }
       } else if (connected && !wasConnected && !isRunning) {
-        // Just update connection status
         setIsConnected(true);
         connectionRetryCountRef.current = 0;
       }
-    }, 3000); // Check every 3 seconds
+    }, 3000);
     
     return () => clearInterval(connectionChecker);
   }, [isRunning, ensureConnection, saveBotState, restoreBotState, isConnected, localBalance]);
@@ -1961,7 +1938,6 @@ export default function ProScannerBot() {
       console.error('Trade execution error:', err);
       updateLog(logId, { result: 'Loss', pnl: 0, exitDigit: '-', switchInfo: `Error: ${err.message}` });
       
-      // If connection error, save state and attempt reconnection
       if (err.message?.includes('connection') || !derivApi.isConnected) {
         saveBotState();
         const reconnected = await ensureConnection();
@@ -1987,7 +1963,6 @@ export default function ProScannerBot() {
   const startBot = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
     
-    // Try to restore previous state first
     let currentBalanceLocal: number;
     let baseStakeLocal = parseFloat(stake);
     let cStakeLocal = baseStakeLocal;
@@ -1995,7 +1970,6 @@ export default function ProScannerBot() {
     let inRecoveryLocal = false;
     let currentPnlLocal = 0;
     
-    // Check if we have saved state to restore
     if (savedBotStateRef.current) {
       cStakeLocal = savedBotStateRef.current.cStake;
       mStepLocal = savedBotStateRef.current.mStep;
@@ -2057,20 +2031,18 @@ export default function ProScannerBot() {
     });
 
     while (runningRef.current && !shouldStopRef.current) {
-      // Check TP/SL
       if (currentPnl >= parseFloat(takeProfit) || currentPnl <= -parseFloat(stopLoss)) {
         shouldStopRef.current = true;
         break;
       }
       
       if (!derivApi.isConnected) {
-        saveBotState(); // Save current state
+        saveBotState();
         const reconnected = await ensureConnection();
         if (!reconnected) {
           break;
         }
-        restoreBotState(); // Restore after reconnection
-        // Update local variables after restoration
+        restoreBotState();
         cStake = currentStake;
         mStep = martingaleStep;
         inRecovery = currentMarket === 2;
@@ -2102,7 +2074,6 @@ export default function ProScannerBot() {
         patternTradeTakenRef.current = false;
       }
 
-      // Pattern matching logic
       if (inRecovery && strategyEnabled) {
         setBotStatus('waiting_pattern');
         let matched = false;
@@ -2182,7 +2153,6 @@ export default function ProScannerBot() {
         continue;
       }
 
-      // VIRTUAL HOOK LOGIC with connection resilience
       if (hookEnabled) {
         setBotStatus('virtual_hook');
         setVhStatus('waiting');
@@ -2193,7 +2163,6 @@ export default function ProScannerBot() {
         let virtualTradeNum = 0;
 
         while (consecLosses < requiredLosses && runningRef.current && !shouldStopRef.current) {
-          // Ensure connection before virtual trade
           if (!derivApi.isConnected) {
             const reconnected = await ensureConnection();
             if (!reconnected) break;
@@ -2301,7 +2270,6 @@ export default function ProScannerBot() {
         continue;
       }
 
-      // NON-HOOK MODE
       const result = await executeRealTrade(
         cfg, tradeSymbol, cStake, mStep, mkt, currentBalance, currentPnl, baseStakeLocal
       );
@@ -2349,7 +2317,6 @@ export default function ProScannerBot() {
     setIsRunning(false);
     setBotStatus('idle');
     patternTradeTakenRef.current = false;
-    // Don't clear saved state - we might want to resume later
   }, []);
 
   const statusConfig: Record<BotStatus, { icon: string; label: string; color: string }> = {
@@ -2474,9 +2441,9 @@ export default function ProScannerBot() {
       {/* Social Notification Popup - Top Right Corner */}
       {showSocialPopup && <SocialNotificationPopup onClose={handleCloseSocialPopup} />}
 
-      {/* Trading Chart Popup - Positioned near the floating button (LEFT side when running) */}
+      {/* Trading Chart Popup - Draggable */}
       {showTradingChart && (
-        <TradingChartPopup onClose={handleCloseTradingChart} anchorRef={chartButtonRef} isRunning={isRunning} />
+        <TradingChartPopup onClose={handleCloseTradingChart} isRunning={isRunning} />
       )}
 
       <div className="space-y-3 max-w-7xl mx-auto p-4">
@@ -2498,16 +2465,6 @@ export default function ProScannerBot() {
             {isRunning && (
               <Badge variant="outline" className="text-[9px] text-warning animate-pulse font-mono border-yellow-500/30">
                 P/L: ${netProfit.toFixed(2)}
-              </Badge>
-            )}
-            {!isConnected && !isReconnecting && (
-              <Badge variant="destructive" className="text-[9px]">
-                🔌 DISCONNECTED
-              </Badge>
-            )}
-            {isReconnecting && (
-              <Badge variant="warning" className="text-[9px] animate-pulse">
-                🔄 RECONNECTING...
               </Badge>
             )}
           </div>
@@ -2990,7 +2947,6 @@ export default function ProScannerBot() {
                   </div>
                 </div>
               </div>
-              {/* Additional real-time stats row */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
                 <div className="bg-muted/40 rounded-lg p-2 text-center">
                   <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Current Stake</div>
