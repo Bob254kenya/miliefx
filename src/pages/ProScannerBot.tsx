@@ -19,7 +19,7 @@ import {
 import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
 // ============================================
-// SOCIAL NOTIFICATION POPUP - REPOSITIONED TO TOP-RIGHT CORNER
+// SOCIAL NOTIFICATION POPUP - CENTERED WITH RESPONSIVE DESIGN
 // ============================================
 
 // Animation Styles
@@ -29,25 +29,47 @@ const notificationStyles = `
   to { opacity: 1; }
 }
 
-@keyframes slideInRight {
+@keyframes slideInCenter {
   from {
     opacity: 0;
-    transform: translateX(50px) scale(0.95);
+    transform: translate(-50%, -50%) scale(0.9);
   }
   to {
     opacity: 1;
-    transform: translateX(0) scale(1);
+    transform: translate(-50%, -50%) scale(1);
   }
 }
 
-@keyframes slideOutRight {
+@keyframes slideOutCenter {
   from {
     opacity: 1;
-    transform: translateX(0) scale(1);
+    transform: translate(-50%, -50%) scale(1);
   }
   to {
     opacity: 0;
-    transform: translateX(50px) scale(0.95);
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+}
+
+@keyframes slideUpCenter {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes slideDownCenter {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
   }
 }
 
@@ -94,8 +116,10 @@ const notificationStyles = `
 }
 
 .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }
-.animate-slide-in-right { animation: slideInRight 0.4s cubic-bezier(0.34, 1.2, 0.64, 1) forwards; }
-.animate-slide-out-right { animation: slideOutRight 0.3s ease-out forwards; }
+.animate-slide-in-center { animation: slideInCenter 0.4s cubic-bezier(0.34, 1.2, 0.64, 1) forwards; }
+.animate-slide-out-center { animation: slideOutCenter 0.3s ease-out forwards; }
+.animate-slide-up-center { animation: slideUpCenter 0.4s ease-out forwards; }
+.animate-slide-down-center { animation: slideDownCenter 0.3s ease-out forwards; }
 .animate-gradient { background-size: 200% 200%; animation: gradientShift 3s ease infinite; }
 .animate-float { animation: float 3s ease-in-out infinite; }
 .animate-bounce { animation: bounce 0.4s ease-in-out 2; }
@@ -104,6 +128,30 @@ const notificationStyles = `
 .animate-glow-pulse { animation: glowPulse 1.5s ease-in-out infinite; }
 .animate-spin-slow { animation: spin 1s linear infinite; }
 .animate-ring { animation: ring 0.5s ease-in-out 2; }
+
+/* Responsive styles for small screens */
+@media (max-width: 640px) {
+  .social-popup-content {
+    width: calc(100% - 32px) !important;
+    max-width: 320px !important;
+    margin: 0 16px !important;
+  }
+  .trading-chart-content {
+    width: calc(100% - 24px) !important;
+    max-width: 420px !important;
+    left: 12px !important;
+    right: 12px !important;
+    transform: none !important;
+  }
+  .trading-chart-minimized {
+    width: calc(100% - 24px) !important;
+    max-width: 280px !important;
+    left: 12px !important;
+    right: auto !important;
+    bottom: 80px !important;
+    top: auto !important;
+  }
+}
 `;
 
 // Helper function to show notification (TP/SL)
@@ -113,7 +161,7 @@ export const showTPNotification = (type: 'tp' | 'sl', message: string, amount?: 
   }
 };
 
-// Social Notification Component - Positioned at Top-Right Corner
+// Social Notification Component - Centered on screen
 const SocialNotificationPopup = ({ onClose }: { onClose: () => void }) => {
   const [isExiting, setIsExiting] = useState(false);
 
@@ -177,11 +225,12 @@ const SocialNotificationPopup = ({ onClose }: { onClose: () => void }) => {
   ];
 
   return (
-    <div className="fixed top-4 right-4 z-50 pointer-events-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
       <div 
         className={`
-          pointer-events-auto w-[380px] rounded-2xl shadow-2xl overflow-hidden
-          ${isExiting ? 'animate-slide-out-right' : 'animate-slide-in-right'}
+          pointer-events-auto w-[380px] max-w-[calc(100vw-32px)] rounded-2xl shadow-2xl overflow-hidden
+          ${isExiting ? 'animate-slide-out-center' : 'animate-slide-in-center'}
+          social-popup-content
         `}
       >
         <div className="absolute inset-0 bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-700 animate-gradient" />
@@ -433,7 +482,7 @@ const TPSLNotificationPopup = () => {
 };
 
 // ============================================
-// DRAGGABLE TRADING CHART POPUP COMPONENT
+// DRAGGABLE TRADING CHART POPUP COMPONENT - RESPONSIVE
 // ============================================
 
 const ALL_MARKETS = [
@@ -573,7 +622,7 @@ function calculateChartDigitStats(symbol: string, tickRange: number) {
   };
 }
 
-// Draggable Trading Chart Popup Component
+// Draggable Trading Chart Popup Component - Responsive
 const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunning: boolean }) => {
   const [symbol, setSymbol] = useState('R_100');
   const [selectedContractType, setSelectedContractType] = useState('CALL');
@@ -584,11 +633,24 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
   const [isExiting, setIsExiting] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [position, setPosition] = useState({ x: window.innerWidth - 480, y: 80 });
+  const [position, setPosition] = useState({ x: typeof window !== 'undefined' ? Math.max(10, window.innerWidth - 490) : 10, y: 80 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const popupRef = useRef<HTMLDivElement>(null);
   const dragHandleRef = useRef<HTMLDivElement>(null);
+  
+  // Responsive position adjustment
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 640) {
+        setPosition({ x: 10, y: 80 });
+      } else {
+        setPosition(prev => ({ x: Math.min(prev.x, window.innerWidth - 490), y: prev.y }));
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   
   const lastSpokenSignal = useRef('');
   const subscribedRef = useRef(false);
@@ -804,11 +866,11 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
   if (isMinimized) {
     return (
       <div 
-        className="fixed z-50 pointer-events-none"
+        className="fixed z-50 pointer-events-none trading-chart-minimized"
         style={{ left: position.x, top: position.y }}
       >
         <div 
-          className="pointer-events-auto w-[280px] rounded-xl shadow-2xl bg-gradient-to-br from-slate-900 to-slate-950 border border-blue-500/30 cursor-pointer"
+          className="pointer-events-auto w-[280px] max-w-[calc(100vw-24px)] rounded-xl shadow-2xl bg-gradient-to-br from-slate-900 to-slate-950 border border-blue-500/30 cursor-pointer"
           onClick={() => setIsMinimized(false)}
         >
           <div className="p-2 flex items-center justify-between">
@@ -816,7 +878,7 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
               <div className="p-1 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg">
                 <BarChart3 className="w-3 h-3 text-white" />
               </div>
-              <span className="text-[10px] font-semibold text-white">Ramzfx Ai Signals</span>
+              <span className="text-[10px] font-semibold text-white truncate">Ramzfx Ai Signals</span>
               {isRunning && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />}
             </div>
             <button onClick={handleClose} className="p-0.5 rounded hover:bg-white/10">
@@ -831,14 +893,14 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
   return (
     <div 
       ref={popupRef}
-      className="fixed z-50 pointer-events-none"
+      className="fixed z-50 pointer-events-none trading-chart-content"
       style={{ left: position.x, top: position.y }}
     >
       <div 
         className={`
-          pointer-events-auto w-[480px] max-h-[90vh] overflow-y-auto rounded-xl shadow-2xl
+          pointer-events-auto w-[480px] max-w-[calc(100vw-24px)] max-h-[90vh] overflow-y-auto rounded-xl shadow-2xl
           bg-gradient-to-br from-slate-900 to-slate-950 border border-blue-500/30
-          ${isExiting ? 'animate-slide-out-right' : 'animate-slide-in-right'}
+          ${isExiting ? 'animate-slide-out-center' : 'animate-slide-in-center'}
           ${isDragging ? 'cursor-grabbing' : ''}
         `}
       >
@@ -846,7 +908,7 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
         <div 
           ref={dragHandleRef}
           onMouseDown={handleMouseDown}
-          className="sticky top-0 z-10 bg-gradient-to-r from-slate-900 to-slate-950 border-b border-blue-500/30 p-3 flex items-center justify-between rounded-t-xl cursor-grab active:cursor-grabbing"
+          className="sticky top-0 z-10 bg-gradient-to-r from-slate-900 to-slate-950 border-b border-blue-500/30 p-3 flex items-center justify-between rounded-t-xl cursor-grab active:cursor-grabbing flex-wrap gap-2"
         >
           <div className="flex items-center gap-2">
             <GripVertical className="w-3.5 h-3.5 text-gray-400" />
@@ -855,7 +917,7 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
             </div>
             <div>
               <h3 className="text-sm font-bold text-white">Ramzfx Trading Signals</h3>
-              <p className="text-[8px] text-blue-300">Drag to move • Live Market Analysis</p>
+              <p className="text-[8px] text-blue-300 hidden sm:block">Drag to move • Live Market Analysis</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -969,7 +1031,7 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
             </Badge>
           </div>
           
-          {/* Enhanced Analysis Grid */}
+          {/* Enhanced Analysis Grid - Responsive */}
           <div className="grid grid-cols-2 gap-1.5">
             <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
               <div className="text-[7px] text-blue-300">Odd</div>
@@ -1015,7 +1077,7 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
             </div>
           </div>
           
-          {/* Digits Grid */}
+          {/* Digits Grid - Responsive */}
           <div className="grid grid-cols-5 gap-1">
             {Array.from({ length: 10 }, (_, d) => {
               const pct = percentages[d] || 0;
@@ -1115,9 +1177,9 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
             )}
           </div>
           
-          {/* Last 26 Digits */}
+          {/* Last 26 Digits - Responsive */}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
               <h4 className="text-[9px] font-semibold text-blue-300">Filtration Chamber</h4>
               <Badge className="text-[6px] bg-blue-500/20 text-blue-400 border-blue-500/30">
                 {selectedContractType === 'CALL' ? 'Rise' : 
@@ -1562,7 +1624,7 @@ export default function ProScannerBot() {
       const logId = ++logIdRef.current;
       addLog(logId, {
         time: new Date().toLocaleTimeString(),
-        market: 'SYSTEM',
+        market: 'M1',
         symbol: 'RECONNECT',
         contract: 'RESUME',
         stake: 0,
@@ -1600,7 +1662,7 @@ export default function ProScannerBot() {
             setBotStatus('idle');
             addLog(++logIdRef.current, {
               time: new Date().toLocaleTimeString(),
-              market: 'SYSTEM',
+              market: 'M1',
               symbol: 'ERROR',
               contract: 'DISCONNECT',
               stake: 0,
@@ -2387,7 +2449,7 @@ export default function ProScannerBot() {
     <>
       <style>{notificationStyles}</style>
       
-      {/* Floating Chat Button - Positioned at bottom right */}
+      {/* Floating Chat Button - Positioned at bottom right, responsive */}
       <div className="fixed bottom-6 right-6 z-40">
         <button
           ref={chartButtonRef}
@@ -2406,7 +2468,7 @@ export default function ProScannerBot() {
         </button>
       </div>
 
-      {/* Social Notification Popup - Top Right Corner */}
+      {/* Social Notification Popup - Centered */}
       {showSocialPopup && <SocialNotificationPopup onClose={handleCloseSocialPopup} />}
 
       {/* Trading Chart Popup - Draggable */}
@@ -2415,15 +2477,15 @@ export default function ProScannerBot() {
       )}
 
       <div className="space-y-3 max-w-7xl mx-auto p-4">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-card/80 to-card/50 backdrop-blur-sm border border-blue-500/20 rounded-xl px-4 py-3 shadow-lg">
+        {/* Header - Responsive */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-gradient-to-r from-card/80 to-card/50 backdrop-blur-sm border border-blue-500/20 rounded-xl px-4 py-3 shadow-lg">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-md">
               <Scan className="w-4 h-4 text-white" />
             </div>
             <div>
               <h1 className="text-base font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">Ramzfx Pro Scanner Bot</h1>
-              <p className="text-[10px] text-blue-300/80">Ramzfx Advanced Market Scanning & Recovery System</p>
+              <p className="text-[10px] text-blue-300/80 hidden sm:block">Ramzfx Advanced Market Scanning & Recovery System</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -2438,8 +2500,8 @@ export default function ProScannerBot() {
           </div>
         </div>
 
-        {/* Scanner + Turbo + Stats Row */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {/* Scanner + Turbo + Stats Row - Responsive */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <div className="bg-card border border-blue-500/20 rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-1.5">
@@ -2497,7 +2559,7 @@ export default function ProScannerBot() {
           </div>
 
           <div className="bg-card border border-blue-500/20 rounded-xl p-3">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
               <span className="text-xs font-semibold">Live Stats</span>
               <span className="font-mono text-sm font-bold text-blue-400">${localBalance.toFixed(2)}</span>
             </div>
@@ -2518,12 +2580,12 @@ export default function ProScannerBot() {
           </div>
         </div>
 
-        {/* Main 2-Column Layout */}
+        {/* Main 2-Column Layout - Responsive */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
           {/* LEFT: Config Column */}
           <div className="lg:col-span-4 space-y-3">
-            {/* Market Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-3">
+            {/* Market Cards - Responsive */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
               <div className="bg-card border-2 border-blue-500/30 rounded-xl p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1"><Home className="w-3.5 h-3.5" /> M1 — Home</h3>
@@ -2663,7 +2725,7 @@ export default function ProScannerBot() {
                   </div>
                 </div>
               )}
-              <div className="flex items-center gap-3 pt-1">
+              <div className="flex items-center gap-3 pt-1 flex-wrap">
                 <label className="flex items-center gap-1 text-[10px]">
                   <input type="checkbox" checked={strategyM1Enabled} onChange={e => setStrategyM1Enabled(e.target.checked)} disabled={isRunning} className="rounded w-3 h-3" />
                   Strategy M1
@@ -2787,9 +2849,9 @@ export default function ProScannerBot() {
 
           {/* RIGHT: Digit Stream + Activity Log */}
           <div className="lg:col-span-8 space-y-3">
-            {/* Live Digits */}
+            {/* Live Digits - Responsive */}
             <div className="bg-card border border-blue-500/20 rounded-xl p-3">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-2 gap-1">
                 <h3 className="text-[10px] font-semibold">Live Digits — {activeSymbol}</h3>
                 <span className="text-[9px] text-muted-foreground font-mono">Win Rate: {winRate}% | Staked: ${totalStaked.toFixed(2)}</span>
               </div>
@@ -2874,7 +2936,7 @@ export default function ProScannerBot() {
               )}
             </div>
 
-            {/* DUPLICATE LIVE STATUS - Added below start button and above Activity Log */}
+            {/* DUPLICATE LIVE STATUS - Responsive grid */}
             <div className="bg-card border border-blue-500/20 rounded-xl p-3 shadow-md">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-xs font-semibold flex items-center gap-2">
@@ -2967,9 +3029,9 @@ export default function ProScannerBot() {
               )}
             </div>
 
-            {/* Activity Log - Full Width, Full Height */}
+            {/* Activity Log - Full Width, Full Height - Responsive */}
             <div className="bg-card border border-blue-500/20 rounded-xl overflow-hidden shadow-lg flex flex-col">
-              <div className="px-4 py-3 border-b border-blue-500/20 flex items-center justify-between gap-3 bg-muted/20">
+              <div className="px-4 py-3 border-b border-blue-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-muted/20">
                 <h3 className="text-xs font-semibold text-foreground flex items-center gap-2">
                   <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
                   Activity Log
@@ -2977,90 +3039,88 @@ export default function ProScannerBot() {
                     {logEntries.length} entries
                   </Badge>
                 </h3>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 w-full sm:w-auto">
                   {logEntries.length > 0 && logEntries[0].switchInfo && (
                     <span className="text-[9px] text-muted-foreground font-mono hidden md:inline-block truncate max-w-[300px]">
                       📊 {logEntries[0].switchInfo}
                     </span>
                   )}
-                  <Button variant="ghost" size="sm" onClick={clearLog} className="h-7 w-7 p-0 text-muted-foreground hover:text-loss transition-colors">
+                  <Button variant="ghost" size="sm" onClick={clearLog} className="h-7 w-7 p-0 text-muted-foreground hover:text-loss transition-colors ml-auto sm:ml-0">
                     <Trash2 className="w-3.5 h-3.5" />
                   </Button>
                 </div>
               </div>
               <div className="flex-1 max-h-[calc(100vh-300px)] min-h-[400px] overflow-auto">
-                <table className="w-full text-[10px]">
-                  <thead className="text-[9px] text-muted-foreground bg-muted/40 sticky top-0 z-10">
-                    <tr className="border-b border-blue-500/20">
-                      <th className="text-left p-2 font-semibold">Time</th>
-                      <th className="text-left p-2 font-semibold">Mkt</th>
-                      <th className="text-left p-2 font-semibold">Symbol</th>
-                      <th className="text-left p-2 font-semibold">Type</th>
-                      <th className="text-right p-2 font-semibold">Stake</th>
-                      <th className="text-center p-2 font-semibold">Digit</th>
-                      <th className="text-center p-2 font-semibold">Result</th>
-                      <th className="text-right p-2 font-semibold">P/L</th>
-                      <th className="text-right p-2 font-semibold">Bal</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {logEntries.length === 0 ? (
-                      <tr>
-                        <td colSpan={9} className="text-center text-muted-foreground py-12">
-                          <div className="flex flex-col items-center gap-2">
-                            <Zap className="w-8 h-8 text-muted-foreground/30" />
-                            <span className="text-xs">No trades yet — configure and start the bot</span>
-                          </div>
-                        </td>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[10px] min-w-[600px]">
+                    <thead className="text-[9px] text-muted-foreground bg-muted/40 sticky top-0 z-10">
+                      <tr className="border-b border-blue-500/20">
+                        <th className="text-left p-2 font-semibold">Time</th>
+                        <th className="text-left p-2 font-semibold">Mkt</th>
+                        <th className="text-left p-2 font-semibold">Symbol</th>
+                        <th className="text-left p-2 font-semibold">Type</th>
+                        <th className="text-right p-2 font-semibold">Stake</th>
+                        <th className="text-center p-2 font-semibold">Digit</th>
+                        <th className="text-center p-2 font-semibold">Result</th>
+                        <th className="text-right p-2 font-semibold">P/L</th>
+                        <th className="text-right p-2 font-semibold">Bal</th>
                       </tr>
-                    ) : logEntries.map(e => (
-                      <tr key={e.id} className={`border-b border-border/50 hover:bg-muted/30 transition-colors ${
-                        e.market === 'M1' ? 'border-l-2 border-l-blue-500' :
-                        e.market === 'VH' ? 'border-l-2 border-l-indigo-500' :
-                        e.market === 'SYSTEM' ? 'border-l-2 border-l-orange-500' :
-                        'border-l-2 border-l-purple-500'
-                      }`}>
-                        <td className="p-2 font-mono text-[9px] text-muted-foreground">{e.time}</td>
-                        <td className={`p-2 font-bold text-[10px] ${
-                          e.market === 'M1' ? 'text-blue-400' :
-                          e.market === 'VH' ? 'text-indigo-400' :
-                          e.market === 'SYSTEM' ? 'text-orange-500' :
-                          'text-purple-400'
-                        }`}>{e.market}</td>
-                        <td className="p-2 font-mono text-[9px] text-foreground">{e.symbol}</td>
-                        <td className="p-2 text-[9px] text-muted-foreground">{e.contract.replace('DIGIT', '')}</td>
-                        <td className="p-2 font-mono text-right text-[9px]">
-                          {e.market === 'VH' ? (
-                            <span className="text-indigo-400">FAKE</span>
-                          ) : e.market === 'SYSTEM' ? (
-                            <span className="text-orange-500">SYS</span>
-                          ) : (
-                            <span className="text-foreground">${e.stake.toFixed(2)}</span>
-                          )}
-                          {e.martingaleStep > 0 && e.market !== 'VH' && e.market !== 'SYSTEM' && <span className="text-warning ml-1 font-bold">M{e.martingaleStep}</span>}
-                        </td>
-                        <td className="p-2 text-center font-mono text-[10px] font-bold">{e.exitDigit}</td>
-                        <td className="p-2 text-center">
-                          <span className={`px-2 py-0.5 rounded-full text-[8px] font-bold ${
-                            e.result === 'Win' || e.result === 'V-Win' ? 'bg-profit/20 text-profit border border-profit/30' :
-                            e.result === 'Loss' || e.result === 'V-Loss' ? 'bg-loss/20 text-loss border border-loss/30' :
-                            'bg-warning/20 text-warning animate-pulse border border-warning/30'
-                          }`}>
-                            {e.result === 'Pending' ? '...' : e.result === 'V-Win' ? '✓' : e.result === 'V-Loss' ? '✗' : e.result}
-                          </span>
-                        </td>
-                        <td className={`p-2 font-mono text-right text-[9px] font-bold ${
-                          e.pnl > 0 ? 'text-profit' : e.pnl < 0 ? 'text-loss' : 'text-muted-foreground'
+                    </thead>
+                    <tbody>
+                      {logEntries.length === 0 ? (
+                        <tr>
+                          <td colSpan={9} className="text-center text-muted-foreground py-12">
+                            <div className="flex flex-col items-center gap-2">
+                              <Zap className="w-8 h-8 text-muted-foreground/30" />
+                              <span className="text-xs">No trades yet — configure and start the bot</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : logEntries.map(e => (
+                        <tr key={e.id} className={`border-b border-border/50 hover:bg-muted/30 transition-colors ${
+                          e.market === 'M1' ? 'border-l-2 border-l-blue-500' :
+                          e.market === 'VH' ? 'border-l-2 border-l-indigo-500' :
+                          'border-l-2 border-l-purple-500'
                         }`}>
-                          {e.result === 'Pending' ? '...' : e.market === 'VH' || e.market === 'SYSTEM' ? '-' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
-                        </td>
-                        <td className="p-2 font-mono text-right text-[9px] text-muted-foreground">
-                          {e.market === 'VH' || e.market === 'SYSTEM' ? '-' : `$${e.balance.toFixed(2)}`}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                          <td className="p-2 font-mono text-[9px] text-muted-foreground">{e.time}</td>
+                          <td className={`p-2 font-bold text-[10px] ${
+                            e.market === 'M1' ? 'text-blue-400' :
+                            e.market === 'VH' ? 'text-indigo-400' :
+                            'text-purple-400'
+                          }`}>{e.market}</td>
+                          <td className="p-2 font-mono text-[9px] text-foreground">{e.symbol}</td>
+                          <td className="p-2 text-[9px] text-muted-foreground">{e.contract.replace('DIGIT', '')}</td>
+                          <td className="p-2 font-mono text-right text-[9px]">
+                            {e.market === 'VH' ? (
+                              <span className="text-indigo-400">FAKE</span>
+                            ) : (
+                              <span className="text-foreground">${e.stake.toFixed(2)}</span>
+                            )}
+                            {e.martingaleStep > 0 && e.market !== 'VH' && <span className="text-warning ml-1 font-bold">M{e.martingaleStep}</span>}
+                          </td>
+                          <td className="p-2 text-center font-mono text-[10px] font-bold">{e.exitDigit}</td>
+                          <td className="p-2 text-center">
+                            <span className={`px-2 py-0.5 rounded-full text-[8px] font-bold ${
+                              e.result === 'Win' || e.result === 'V-Win' ? 'bg-profit/20 text-profit border border-profit/30' :
+                              e.result === 'Loss' || e.result === 'V-Loss' ? 'bg-loss/20 text-loss border border-loss/30' :
+                              'bg-warning/20 text-warning animate-pulse border border-warning/30'
+                            }`}>
+                              {e.result === 'Pending' ? '...' : e.result === 'V-Win' ? '✓' : e.result === 'V-Loss' ? '✗' : e.result}
+                            </span>
+                          </td>
+                          <td className={`p-2 font-mono text-right text-[9px] font-bold ${
+                            e.pnl > 0 ? 'text-profit' : e.pnl < 0 ? 'text-loss' : 'text-muted-foreground'
+                          }`}>
+                            {e.result === 'Pending' ? '...' : e.market === 'VH' ? '-' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
+                          </td>
+                          <td className="p-2 font-mono text-right text-[9px] text-muted-foreground">
+                            {e.market === 'VH' ? '-' : `$${e.balance.toFixed(2)}`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
