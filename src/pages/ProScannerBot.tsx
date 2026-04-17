@@ -452,6 +452,7 @@ const TPSLNotificationPopup = () => {
 
 // ============================================
 // DRAGGABLE TRADING CHART POPUP COMPONENT - CENTERED WITH TOP PADDING
+// RESIZED TO MATCH SOCIAL NOTIFICATION POPUP (380px width)
 // ============================================
 
 const ALL_MARKETS = [
@@ -591,7 +592,8 @@ function calculateChartDigitStats(symbol: string, tickRange: number) {
   };
 }
 
-// Draggable Trading Chart Popup Component - Centered with 100px top padding, reduced height on small screens
+// Draggable Trading Chart Popup Component - Centered with 100px top padding
+// RESIZED to match SocialNotificationPopup (w-[380px] max-w-[90vw])
 const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunning: boolean }) => {
   const [symbol, setSymbol] = useState('R_100');
   const [selectedContractType, setSelectedContractType] = useState('CALL');
@@ -602,7 +604,7 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
   const [isExiting, setIsExiting] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [position, setPosition] = useState({ x: window.innerWidth / 2 - 240, y: 100 });
+  const [position, setPosition] = useState({ x: window.innerWidth / 2 - 190, y: 100 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const popupRef = useRef<HTMLDivElement>(null);
@@ -854,11 +856,11 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
     >
       <div 
         className={`
-          pointer-events-auto w-[480px] max-w-[90vw] max-h-[85vh] overflow-y-auto rounded-xl shadow-2xl
+          pointer-events-auto w-[380px] max-w-[90vw] max-h-[85vh] overflow-y-auto rounded-xl shadow-2xl
           bg-gradient-to-br from-slate-900 to-slate-950 border border-blue-500/30
           ${isExiting ? 'animate-slide-out-up' : 'animate-slide-in-down'}
           ${isDragging ? 'cursor-grabbing' : ''}
-          lg:max-h-[90vh] lg:w-[480px]
+          lg:max-h-[90vh]
         `}
         style={{ height: 'auto', maxHeight: 'calc(100vh - 120px)' }}
       >
@@ -3021,7 +3023,7 @@ export default function ProScannerBot() {
                       <th className="text-center p-2 font-semibold">Result</th>
                       <th className="text-right p-2 font-semibold">P/L</th>
                       <th className="text-right p-2 font-semibold">Bal</th>
-                    </tr>
+                    </table>
                   </thead>
                   <tbody>
                     {logEntries.length === 0 ? (
