@@ -590,20 +590,9 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
   const popupRef = useRef<HTMLDivElement>(null);
   const dragHandleRef = useRef<HTMLDivElement>(null);
   
-  const [scrollingMarkets, setScrollingMarkets] = useState(ALL_MARKETS);
-  const [scrollingIndex, setScrollingIndex] = useState(0);
-  
   const lastSpokenSignal = useRef('');
   const subscribedRef = useRef(false);
   const subscriptionRef = useRef<any>(null);
-  
-  // Auto-scroll through markets for the scrolling container
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setScrollingIndex((prev) => (prev + 1) % scrollingMarkets.length);
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [scrollingMarkets.length]);
   
   // Drag handlers
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -812,8 +801,6 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
   const leastCommon = digitStats?.leastCommon || 0;
   const totalTicks = digitStats?.totalTicks || 0;
   
-  const currentScrollingMarket = scrollingMarkets[scrollingIndex];
-  
   if (isMinimized) {
     return (
       <div 
@@ -912,25 +899,6 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
                 ))}
               </SelectContent>
             </Select>
-          </div>
-          
-          {/* Scrolling Markets Container */}
-          <div className="bg-gradient-to-r from-blue-600/20 to-indigo-600/20 rounded-xl p-3 border border-blue-500/30 overflow-hidden">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[9px] text-blue-300 font-semibold">📊 SCANNING ALL MARKETS</span>
-              <span className="text-[8px] text-gray-400 animate-pulse">LIVE</span>
-            </div>
-            <div className="relative h-8 overflow-hidden">
-              <div 
-                key={currentScrollingMarket?.symbol}
-                className="absolute inset-0 flex items-center justify-between animate-slide-in-right"
-              >
-                <span className="text-[11px] font-mono text-blue-300">{currentScrollingMarket?.name || 'Loading...'}</span>
-                <Badge className="text-[8px] bg-blue-500/20 text-blue-400 border-blue-500/30">
-                  {currentScrollingMarket?.symbol}
-                </Badge>
-              </div>
-            </div>
           </div>
           
           {/* Contract Type */}
