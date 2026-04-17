@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   Play, StopCircle, Trash2, Scan,
   Home, RefreshCw, Shield, Zap, Eye, Anchor, Download, Upload, X, Users,
-  MessageCircle, MessageSquare, Youtube, Instagram, Music
+  MessageCircle, MessageSquare, Youtube, Instagram, Music, BarChart3, Activity, TrendingUp, TrendingDown, Target, Volume2, VolumeX, LineChart, Wifi, WifiOff, Trophy, ShieldAlert
 } from 'lucide-react';
 import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
@@ -83,6 +83,16 @@ const notificationStyles = `
   50% { box-shadow: 0 0 20px rgba(34, 197, 94, 0.6); }
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ring {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
 .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }
 .animate-slide-up-center { animation: slideUpCenter 0.4s cubic-bezier(0.34, 1.2, 0.64, 1) forwards; }
 .animate-slide-down-center { animation: slideDownCenter 0.3s ease-out forwards; }
@@ -92,6 +102,8 @@ const notificationStyles = `
 .animate-pulse-slow { animation: pulse 1s ease-in-out infinite; }
 .animate-shimmer { animation: shimmer 2s infinite; }
 .animate-glow-pulse { animation: glowPulse 1.5s ease-in-out infinite; }
+.animate-spin-slow { animation: spin 1s linear infinite; }
+.animate-ring { animation: ring 0.5s ease-in-out 2; }
 `;
 
 // Helper function to show notification (TP/SL)
@@ -430,6 +442,643 @@ const TPSLNotificationPopup = () => {
   );
 };
 
+// ============================================
+// TRADING CHART POPUP COMPONENT
+// ============================================
+
+const ALL_MARKETS = [
+  { symbol: '1HZ10V', name: 'Volatility 10 (1s)', group: 'vol1s' },
+  { symbol: '1HZ15V', name: 'Volatility 15 (1s)', group: 'vol1s' },
+  { symbol: '1HZ25V', name: 'Volatility 25 (1s)', group: 'vol1s' },
+  { symbol: '1HZ30V', name: 'Volatility 30 (1s)', group: 'vol1s' },
+  { symbol: '1HZ50V', name: 'Volatility 50 (1s)', group: 'vol1s' },
+  { symbol: '1HZ75V', name: 'Volatility 75 (1s)', group: 'vol1s' },
+  { symbol: '1HZ100V', name: 'Volatility 100 (1s)', group: 'vol1s' },
+  { symbol: 'R_10', name: 'Volatility 10', group: 'vol' },
+  { symbol: 'R_25', name: 'Volatility 25', group: 'vol' },
+  { symbol: 'R_50', name: 'Volatility 50', group: 'vol' },
+  { symbol: 'R_75', name: 'Volatility 75', group: 'vol' },
+  { symbol: 'R_100', name: 'Volatility 100', group: 'vol' },
+  { symbol: 'JD10', name: 'Jump 10', group: 'jump' },
+  { symbol: 'JD25', name: 'Jump 25', group: 'jump' },
+  { symbol: 'JD50', name: 'Jump 50', group: 'jump' },
+  { symbol: 'JD75', name: 'Jump 75', group: 'jump' },
+  { symbol: 'JD100', name: 'Jump 100', group: 'jump' },
+  { symbol: 'RDBEAR', name: 'Bear Market', group: 'bear' },
+  { symbol: 'RDBULL', name: 'Bull Market', group: 'bull' },
+  { symbol: 'stpRNG', name: 'Step Index', group: 'step' },
+];
+
+const CONTRACT_TYPES_CHART = [
+  { value: 'CALL', label: 'Rise' },
+  { value: 'PUT', label: 'Fall' },
+  { value: 'DIGITMATCH', label: 'Digits Match' },
+  { value: 'DIGITDIFF', label: 'Digits Differs' },
+  { value: 'DIGITEVEN', label: 'Digits Even' },
+  { value: 'DIGITODD', label: 'Digits Odd' },
+  { value: 'DIGITOVER', label: 'Digits Over' },
+  { value: 'DIGITUNDER', label: 'Digits Under' },
+];
+
+// Global tick storage for chart
+const chartTickHistory: { [symbol: string]: number[] } = {};
+const chartTickPrices: { [symbol: string]: number[] } = {};
+const chartTickCallbacks: { [symbol: string]: (() => void)[] } = [];
+
+function getChartTickHistory(symbol: string): number[] {
+  return chartTickHistory[symbol] || [];
+}
+
+function getChartTickPrices(symbol: string): number[] {
+  return chartTickPrices[symbol] || [];
+}
+
+function addChartTick(symbol: string, digit: number, price: number) {
+  if (!chartTickHistory[symbol]) chartTickHistory[symbol] = [];
+  if (!chartTickPrices[symbol]) chartTickPrices[symbol] = [];
+  
+  chartTickHistory[symbol].push(digit);
+  chartTickPrices[symbol].push(price);
+  
+  if (chartTickHistory[symbol].length > 1000) chartTickHistory[symbol].shift();
+  if (chartTickPrices[symbol].length > 1000) chartTickPrices[symbol].shift();
+  
+  if (chartTickCallbacks[symbol]) {
+    chartTickCallbacks[symbol].forEach(cb => cb());
+  }
+}
+
+function subscribeToChartTicks(symbol: string, callback: () => void) {
+  if (!chartTickCallbacks[symbol]) chartTickCallbacks[symbol] = [];
+  chartTickCallbacks[symbol].push(callback);
+  return () => {
+    chartTickCallbacks[symbol] = chartTickCallbacks[symbol].filter(cb => cb !== callback);
+  };
+}
+
+function calculateChartDigitStats(symbol: string, tickRange: number) {
+  const ticks = getChartTickHistory(symbol);
+  const tickPricesData = getChartTickPrices(symbol);
+  const recentTicks = ticks.slice(-tickRange);
+  
+  const frequency: Record<number, number> = {};
+  for (let i = 0; i <= 9; i++) frequency[i] = 0;
+  
+  for (const digit of recentTicks) {
+    frequency[digit] = (frequency[digit] || 0) + 1;
+  }
+  
+  const percentages: Record<number, number> = {};
+  for (let i = 0; i <= 9; i++) {
+    percentages[i] = (frequency[i] / recentTicks.length) * 100;
+  }
+  
+  let mostCommon = 0;
+  let leastCommon = 0;
+  let maxFreq = 0;
+  let minFreq = Infinity;
+  
+  for (let i = 0; i <= 9; i++) {
+    if (frequency[i] > maxFreq) {
+      maxFreq = frequency[i];
+      mostCommon = i;
+    }
+    if (frequency[i] < minFreq) {
+      minFreq = frequency[i];
+      leastCommon = i;
+    }
+  }
+  
+  const evenCount = recentTicks.filter(d => d % 2 === 0).length;
+  const oddCount = recentTicks.length - evenCount;
+  const overCount = recentTicks.filter(d => d > 4).length;
+  const underCount = recentTicks.length - overCount;
+  const last26Digits = ticks.slice(-26);
+  const last26Prices = tickPricesData.slice(-26);
+  
+  return {
+    frequency,
+    percentages,
+    mostCommon,
+    leastCommon,
+    totalTicks: recentTicks.length,
+    evenPercentage: recentTicks.length > 0 ? (evenCount / recentTicks.length * 100) : 50,
+    oddPercentage: recentTicks.length > 0 ? (oddCount / recentTicks.length * 100) : 50,
+    overPercentage: recentTicks.length > 0 ? (overCount / recentTicks.length * 100) : 50,
+    underPercentage: recentTicks.length > 0 ? (underCount / recentTicks.length * 100) : 50,
+    last26Digits,
+    tickPrices: last26Prices,
+  };
+}
+
+// Trading Chart Popup Component
+const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
+  const [symbol, setSymbol] = useState('R_100');
+  const [selectedContractType, setSelectedContractType] = useState('CALL');
+  const [selectedPrediction, setSelectedPrediction] = useState('5');
+  const [tickRange, setTickRange] = useState(1000);
+  const [digitStats, setDigitStats] = useState<any>(null);
+  const [displaySymbols, setDisplaySymbols] = useState<string[]>([]);
+  const [isExiting, setIsExiting] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const lastSpokenSignal = useRef('');
+  const subscribedRef = useRef(false);
+  const subscriptionRef = useRef<any>(null);
+  
+  const speak = useCallback((text: string) => {
+    if (!voiceEnabled || !window.speechSynthesis) return;
+    if (lastSpokenSignal.current === text) return;
+    lastSpokenSignal.current = text;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.1;
+    utterance.pitch = 1;
+    utterance.volume = 0.8;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+  }, [voiceEnabled]);
+  
+  const getDigitSymbol = useCallback((digit: number, price: number, prevPrice: number | null, type: string, barrier: string): string => {
+    const barrierNum = parseInt(barrier);
+    
+    switch (type) {
+      case 'CALL':
+      case 'PUT':
+        if (prevPrice === null) return '?';
+        if (price > prevPrice) return 'R';
+        if (price < prevPrice) return 'F';
+        return 'C';
+      case 'DIGITOVER':
+        if (digit > barrierNum) return 'O';
+        if (digit === barrierNum) return 'S';
+        return 'U';
+      case 'DIGITUNDER':
+        if (digit < barrierNum) return 'U';
+        if (digit === barrierNum) return 'S';
+        return 'O';
+      case 'DIGITEVEN':
+        return digit % 2 === 0 ? 'E' : 'O';
+      case 'DIGITODD':
+        return digit % 2 !== 0 ? 'O' : 'E';
+      case 'DIGITMATCH':
+        return digit === barrierNum ? 'S' : 'D';
+      case 'DIGITDIFF':
+        return digit !== barrierNum ? 'D' : 'S';
+      default:
+        return digit.toString();
+    }
+  }, []);
+  
+  const updateDisplaySymbols = useCallback(() => {
+    if (!digitStats) return;
+    const tickPricesData = digitStats.tickPrices;
+    const symbols = digitStats.last26Digits.map((digit: number, index: number) => {
+      const currentPrice = tickPricesData[index];
+      const prevPrice = index > 0 ? tickPricesData[index - 1] : null;
+      return getDigitSymbol(digit, currentPrice, prevPrice, selectedContractType, selectedPrediction);
+    });
+    setDisplaySymbols(symbols);
+  }, [digitStats, selectedContractType, selectedPrediction, getDigitSymbol]);
+  
+  const updateDigitStats = useCallback(() => {
+    const stats = calculateChartDigitStats(symbol, tickRange);
+    setDigitStats(stats);
+  }, [symbol, tickRange]);
+  
+  useEffect(() => {
+    updateDigitStats();
+    const unsubscribe = subscribeToChartTicks(symbol, () => {
+      updateDigitStats();
+    });
+    return unsubscribe;
+  }, [symbol, tickRange, updateDigitStats]);
+  
+  useEffect(() => {
+    updateDisplaySymbols();
+  }, [selectedContractType, selectedPrediction, updateDisplaySymbols]);
+  
+  useEffect(() => {
+    updateDisplaySymbols();
+  }, [digitStats, updateDisplaySymbols]);
+  
+  useEffect(() => {
+    let active = true;
+    
+    const cleanup = async () => {
+      if (subscriptionRef.current) {
+        try {
+          await derivApi.unsubscribeTicks(symbol as MarketSymbol);
+        } catch (err) {
+          console.error('Error unsubscribing:', err);
+        }
+        subscriptionRef.current = null;
+      }
+    };
+    
+    const load = async () => {
+      if (!derivApi.isConnected) return;
+      
+      await cleanup();
+      
+      try {
+        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, 500);
+        if (!active) return;
+        
+        const historicalDigits = (hist.history.prices || []).map((p: number) => getLastDigit(p));
+        const historicalPrices = hist.history.prices || [];
+        chartTickHistory[symbol] = historicalDigits;
+        chartTickPrices[symbol] = historicalPrices;
+        
+        updateDigitStats();
+        
+        if (!subscribedRef.current || !subscriptionRef.current) {
+          subscriptionRef.current = await derivApi.subscribeTicks(symbol as MarketSymbol, (data: any) => {
+            if (!active || !data.tick) return;
+            const quote = data.tick.quote;
+            const digit = getLastDigit(quote);
+            addChartTick(symbol, digit, quote);
+          });
+          subscribedRef.current = true;
+        }
+      } catch (err) {
+        console.error('Error loading market data:', err);
+      }
+    };
+    
+    load();
+    
+    return () => {
+      active = false;
+      cleanup();
+      subscribedRef.current = false;
+    };
+  }, [symbol, updateDigitStats]);
+  
+  const handleClose = () => {
+    setIsExiting(true);
+    setTimeout(() => {
+      onClose();
+    }, 300);
+  };
+  
+  const legend = (() => {
+    switch (selectedContractType) {
+      case 'CALL':
+        return { symbol1: 'R', meaning1: 'Rise', symbol2: 'F', meaning2: 'Fall', symbol3: 'C', meaning3: 'Constant' };
+      case 'PUT':
+        return { symbol1: 'F', meaning1: 'Fall', symbol2: 'R', meaning2: 'Rise', symbol3: 'C', meaning3: 'Constant' };
+      case 'DIGITOVER':
+        return { symbol1: 'O', meaning1: `Over ${selectedPrediction}`, symbol2: 'S', meaning2: `Same ${selectedPrediction}`, symbol3: 'U', meaning3: `Under ${selectedPrediction}` };
+      case 'DIGITUNDER':
+        return { symbol1: 'U', meaning1: `Under ${selectedPrediction}`, symbol2: 'S', meaning2: `Same ${selectedPrediction}`, symbol3: 'O', meaning3: `Over ${selectedPrediction}` };
+      case 'DIGITEVEN':
+        return { symbol1: 'E', meaning1: 'Even', symbol2: 'O', meaning2: 'Odd', symbol3: '', meaning3: '' };
+      case 'DIGITODD':
+        return { symbol1: 'O', meaning1: 'Odd', symbol2: 'E', meaning2: 'Even', symbol3: '', meaning3: '' };
+      case 'DIGITMATCH':
+        return { symbol1: 'S', meaning1: `Same ${selectedPrediction}`, symbol2: 'D', meaning2: `Diff ${selectedPrediction}`, symbol3: '', meaning3: '' };
+      case 'DIGITDIFF':
+        return { symbol1: 'D', meaning1: `Diff ${selectedPrediction}`, symbol2: 'S', meaning2: `Same ${selectedPrediction}`, symbol3: '', meaning3: '' };
+      default:
+        return { symbol1: '', meaning1: '', symbol2: '', meaning2: '', symbol3: '', meaning3: '' };
+    }
+  })();
+  
+  const percentages = digitStats?.percentages || {};
+  const evenPercentage = digitStats?.evenPercentage || 50;
+  const oddPercentage = digitStats?.oddPercentage || 50;
+  const overPercentage = digitStats?.overPercentage || 50;
+  const underPercentage = digitStats?.underPercentage || 50;
+  const mostCommon = digitStats?.mostCommon || 0;
+  const totalTicks = digitStats?.totalTicks || 0;
+  
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md pointer-events-none">
+      <div 
+        className={`
+          pointer-events-auto w-[450px] max-h-[90vh] overflow-y-auto rounded-xl shadow-2xl
+          bg-gradient-to-br from-gray-900 to-gray-950 border border-gray-700
+          ${isExiting ? 'animate-slide-down-center' : 'animate-slide-up-center'}
+        `}
+      >
+        {/* Header */}
+        <div className="sticky top-0 z-10 bg-gradient-to-r from-gray-900 to-gray-950 border-b border-gray-800 p-3 flex items-center justify-between rounded-t-xl">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 bg-gradient-to-br from-primary to-primary/70 rounded-lg">
+              <BarChart3 className="w-3.5 h-3.5 text-white" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">Ramzfx Trading Signals</h3>
+              <p className="text-[8px] text-gray-400">Live Market Analysis</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant={voiceEnabled ? 'default' : 'outline'}
+              className="h-6 text-[8px] px-1.5 gap-0.5"
+              onClick={() => setVoiceEnabled(!voiceEnabled)}
+            >
+              {voiceEnabled ? <Volume2 className="w-2.5 h-2.5" /> : <VolumeX className="w-2.5 h-2.5" />}
+              {voiceEnabled ? 'ON' : 'OFF'}
+            </Button>
+            <button
+              onClick={handleClose}
+              className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-300 transition-all"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+        
+        <div className="p-3 space-y-3">
+          {/* Market Selector */}
+          <div>
+            <label className="text-[9px] text-gray-400 block mb-1">Market</label>
+            <Select value={symbol} onValueChange={setSymbol}>
+              <SelectTrigger className="h-7 text-[10px] bg-gray-800/50 border-gray-700">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-40">
+                {ALL_MARKETS.map(m => (
+                  <SelectItem key={m.symbol} value={m.symbol} className="text-[10px]">
+                    {m.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          
+          {/* Contract Type */}
+          <div>
+            <label className="text-[9px] text-gray-400 block mb-1">Contract Type</label>
+            <Select value={selectedContractType} onValueChange={setSelectedContractType}>
+              <SelectTrigger className="h-7 text-[10px] bg-gray-800/50 border-gray-700">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CONTRACT_TYPES_CHART.map(c => (
+                  <SelectItem key={c.value} value={c.value} className="text-[10px]">
+                    {c.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          
+          {/* Prediction Digit */}
+          {['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(selectedContractType) && (
+            <div>
+              <label className="text-[9px] text-gray-400 block mb-1">Prediction (0-9)</label>
+              <div className="grid grid-cols-5 gap-1">
+                {Array.from({ length: 10 }, (_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setSelectedPrediction(String(i))}
+                    className={`h-7 rounded text-[10px] font-mono font-bold transition-all ${
+                      selectedPrediction === String(i) 
+                        ? 'bg-primary text-white' 
+                        : 'bg-gray-800/50 text-gray-300 hover:bg-gray-700'
+                    }`}
+                  >
+                    {i}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          
+          {/* Tick Range */}
+          <div className="flex items-center justify-between">
+            <label className="text-[9px] text-gray-400">Tick Range</label>
+            <Select value={String(tickRange)} onValueChange={v => setTickRange(parseInt(v))}>
+              <SelectTrigger className="h-6 text-[9px] w-20 bg-gray-800/50 border-gray-700">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[50, 100, 200, 300, 500, 1000].map(r => (
+                  <SelectItem key={r} value={String(r)}>{r}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          
+          {/* Live Stats Badge */}
+          <div className="flex items-center justify-between bg-gray-800/30 rounded-lg p-1.5">
+            <div className="flex items-center gap-1">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500"></span>
+              </span>
+              <span className="text-[8px] text-gray-400">Live Ticks</span>
+            </div>
+            <Badge variant="outline" className="text-[8px] bg-gray-800/50">
+              {totalTicks} ticks
+            </Badge>
+          </div>
+          
+          {/* Digit Analysis Grid */}
+          <div className="grid grid-cols-2 gap-1.5">
+            <div className="bg-gray-800/30 rounded-lg p-1.5 text-center">
+              <div className="text-[7px] text-gray-400">Odd</div>
+              <div className="font-mono text-[11px] font-bold text-yellow-400">{oddPercentage.toFixed(1)}%</div>
+              <div className="h-1 bg-gray-700 rounded-full mt-0.5">
+                <div className="h-full bg-yellow-500 rounded-full" style={{ width: `${oddPercentage}%` }} />
+              </div>
+            </div>
+            <div className="bg-gray-800/30 rounded-lg p-1.5 text-center">
+              <div className="text-[7px] text-gray-400">Even</div>
+              <div className="font-mono text-[11px] font-bold text-green-400">{evenPercentage.toFixed(1)}%</div>
+              <div className="h-1 bg-gray-700 rounded-full mt-0.5">
+                <div className="h-full bg-green-500 rounded-full" style={{ width: `${evenPercentage}%` }} />
+              </div>
+            </div>
+            <div className="bg-gray-800/30 rounded-lg p-1.5 text-center">
+              <div className="text-[7px] text-gray-400">Over 4</div>
+              <div className="font-mono text-[11px] font-bold text-blue-400">{overPercentage.toFixed(1)}%</div>
+              <div className="h-1 bg-gray-700 rounded-full mt-0.5">
+                <div className="h-full bg-blue-500 rounded-full" style={{ width: `${overPercentage}%` }} />
+              </div>
+            </div>
+            <div className="bg-gray-800/30 rounded-lg p-1.5 text-center">
+              <div className="text-[7px] text-gray-400">Under 5</div>
+              <div className="font-mono text-[11px] font-bold text-yellow-400">{underPercentage.toFixed(1)}%</div>
+              <div className="h-1 bg-gray-700 rounded-full mt-0.5">
+                <div className="h-full bg-yellow-500 rounded-full" style={{ width: `${underPercentage}%` }} />
+              </div>
+            </div>
+          </div>
+          
+          {/* Digits Grid */}
+          <div className="grid grid-cols-5 gap-1">
+            {Array.from({ length: 10 }, (_, d) => {
+              const pct = percentages[d] || 0;
+              const isHot = pct > 12;
+              const isBestMatch = d === mostCommon;
+              return (
+                <button
+                  key={d}
+                  onClick={() => setSelectedPrediction(String(d))}
+                  className={`rounded-lg p-1.5 text-center transition-all border cursor-pointer ${
+                    selectedPrediction === String(d) ? 'ring-2 ring-primary' : ''
+                  } ${isHot ? 'bg-red-500/20 border-red-500/40 text-red-400' :
+                    isBestMatch ? 'bg-green-500/20 border-green-500/40 text-green-400' :
+                    'bg-gray-800/30 border-gray-700 text-gray-300'}`}
+                >
+                  <div className="font-mono text-[13px] font-bold">{d}</div>
+                  <div className="text-[7px]">{pct.toFixed(1)}%</div>
+                  <div className="h-0.5 bg-gray-700 rounded-full mt-0.5">
+                    <div className={`h-full rounded-full ${isHot ? 'bg-red-500' : isBestMatch ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          
+          {/* Legend */}
+          <div className="flex flex-wrap gap-2 text-[7px] justify-center border-t border-gray-800 pt-2">
+            {legend.symbol1 && (
+              <div className="flex items-center gap-1">
+                <div className={`w-3 h-3 rounded flex items-center justify-center text-[6px] font-bold ${
+                  legend.symbol1 === 'R' ? 'bg-green-500/20 text-green-400' :
+                  legend.symbol1 === 'F' ? 'bg-red-500/20 text-red-400' :
+                  legend.symbol1 === 'O' ? 'bg-red-500/20 text-red-400' :
+                  legend.symbol1 === 'U' ? 'bg-green-500/20 text-green-400' :
+                  'bg-blue-500/20 text-blue-400'
+                }`}>
+                  {legend.symbol1}
+                </div>
+                <span className="text-gray-400">{legend.meaning1}</span>
+              </div>
+            )}
+            {legend.symbol2 && (
+              <div className="flex items-center gap-1">
+                <div className={`w-3 h-3 rounded flex items-center justify-center text-[6px] font-bold ${
+                  legend.symbol2 === 'R' ? 'bg-green-500/20 text-green-400' :
+                  legend.symbol2 === 'F' ? 'bg-red-500/20 text-red-400' :
+                  legend.symbol2 === 'O' ? 'bg-red-500/20 text-red-400' :
+                  legend.symbol2 === 'U' ? 'bg-green-500/20 text-green-400' :
+                  'bg-blue-500/20 text-blue-400'
+                }`}>
+                  {legend.symbol2}
+                </div>
+                <span className="text-gray-400">{legend.meaning2}</span>
+              </div>
+            )}
+            {legend.symbol3 && (
+              <div className="flex items-center gap-1">
+                <div className={`w-3 h-3 rounded flex items-center justify-center text-[6px] font-bold ${
+                  legend.symbol3 === 'R' ? 'bg-green-500/20 text-green-400' :
+                  legend.symbol3 === 'F' ? 'bg-red-500/20 text-red-400' :
+                  'bg-gray-500/20 text-gray-400'
+                }`}>
+                  {legend.symbol3}
+                </div>
+                <span className="text-gray-400">{legend.meaning3}</span>
+              </div>
+            )}
+          </div>
+          
+          {/* Last 26 Digits */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <h4 className="text-[9px] font-semibold text-gray-300">Filtration Chamber</h4>
+              <Badge className="text-[6px] bg-primary/20 text-primary">
+                {selectedContractType === 'CALL' ? 'Rise' : 
+                 selectedContractType === 'PUT' ? 'Fall' :
+                 selectedContractType === 'DIGITOVER' ? `Over ${selectedPrediction}` :
+                 selectedContractType === 'DIGITUNDER' ? `Under ${selectedPrediction}` :
+                 selectedContractType === 'DIGITEVEN' ? 'Even' :
+                 selectedContractType === 'DIGITODD' ? 'Odd' :
+                 selectedContractType === 'DIGITMATCH' ? `Match ${selectedPrediction}` :
+                 `Diff ${selectedPrediction}`}
+              </Badge>
+            </div>
+            <div className="flex gap-1 flex-wrap justify-center">
+              {displaySymbols.length > 0 ? (
+                displaySymbols.map((sym, i) => {
+                  const isLast = i === displaySymbols.length - 1;
+                  let bgColor = '';
+                  let textColor = '';
+                  
+                  if (sym === 'R' || sym === 'U') {
+                    bgColor = 'bg-green-500/20';
+                    textColor = 'text-green-400';
+                  } else if (sym === 'F' || sym === 'O') {
+                    bgColor = 'bg-red-500/20';
+                    textColor = 'text-red-400';
+                  } else if (sym === 'E') {
+                    bgColor = 'bg-green-500/20';
+                    textColor = 'text-green-400';
+                  } else if (sym === 'S') {
+                    bgColor = 'bg-blue-500/20';
+                    textColor = 'text-blue-400';
+                  } else if (sym === 'D') {
+                    bgColor = 'bg-yellow-500/20';
+                    textColor = 'text-yellow-400';
+                  } else {
+                    bgColor = 'bg-gray-700/50';
+                    textColor = 'text-gray-300';
+                  }
+                  
+                  return (
+                    <div
+                      key={i}
+                      className={`w-6 h-7 rounded-lg flex items-center justify-center font-mono font-bold text-[11px] border ${
+                        isLast ? 'ring-2 ring-primary w-7 h-8 text-sm' : ''
+                      } ${bgColor} ${textColor} border-gray-700`}
+                    >
+                      {sym}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="text-center text-[9px] text-gray-500 py-2">Waiting for ticks...</div>
+              )}
+            </div>
+          </div>
+          
+          {/* Recommendations */}
+          <div className="grid grid-cols-2 gap-1.5">
+            <div className="bg-gray-800/30 rounded-lg p-1.5 text-center">
+              <div className="text-[7px] text-gray-400">Most Appearing</div>
+              <div className="font-mono text-[13px] font-bold text-green-400">{mostCommon}</div>
+              <div className="text-[6px] text-gray-500">{percentages[mostCommon]?.toFixed(1)}%</div>
+            </div>
+            <div className="bg-gray-800/30 rounded-lg p-1.5 text-center">
+              <div className="text-[7px] text-gray-400">Even/Odd</div>
+              <div className={`font-mono text-[11px] font-bold ${evenPercentage > 50 ? 'text-green-400' : 'text-yellow-400'}`}>
+                {evenPercentage > 50 ? 'EVEN' : 'ODD'}
+              </div>
+              <div className="text-[6px] text-gray-500">{Math.max(evenPercentage, oddPercentage).toFixed(1)}%</div>
+            </div>
+          </div>
+          
+          {/* Connection Status */}
+          <div className={`flex items-center justify-center gap-1 text-[8px] py-1 ${
+            derivApi.isConnected ? 'text-green-400' : 'text-red-400'
+          }`}>
+            {derivApi.isConnected ? (
+              <>
+                <Wifi className="w-2.5 h-2.5" />
+                <span>Connected to Deriv</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-2.5 h-2.5" />
+                <span>Disconnected - Refresh page</span>
+              </>
+            )}
+          </div>
+          
+          <div className="text-center text-[6px] text-gray-500 py-1">
+            🔄 Updates in real-time with each new tick
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const SCANNER_MARKETS: { symbol: string; name: string }[] = [
   { symbol: 'R_10', name: 'Vol 10' },
   { symbol: 'R_25', name: 'Vol 25' },
@@ -471,6 +1120,21 @@ interface LogEntry {
   pnl: number;
   balance: number;
   switchInfo: string;
+}
+
+// Bot state for recovery after reconnection
+interface BotState {
+  cStake: number;
+  mStep: number;
+  inRecovery: boolean;
+  currentPnl: number;
+  currentBalance: number;
+  currentMarket: 1 | 2;
+  vhFakeWins: number;
+  vhFakeLosses: number;
+  vhConsecLosses: number;
+  vhStatus: 'idle' | 'waiting' | 'confirmed' | 'failed';
+  patternTradeTaken: boolean;
 }
 
 class CircularTickBuffer {
@@ -602,10 +1266,17 @@ export default function ProScannerBot() {
   const { isAuthorized, balance: authBalance, activeAccount, refreshBalance } = useAuth();
   const { recordLoss } = useLossRequirement();
   const location = useLocation();
+  
+  const [showTradingChart, setShowTradingChart] = useState(false);
+  const [isChartAnimating, setIsChartAnimating] = useState(false);
 
   const balanceCache = useRef(BalanceCache.getInstance()).current;
   const [localBalance, setLocalBalance] = useState(authBalance);
   const patternTradeTakenRef = useRef(false);
+  
+  // Reconnection state
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const savedBotStateRef = useRef<BotState | null>(null);
   
   useEffect(() => {
     const unsubscribe = balanceCache.subscribe((newBalance) => {
@@ -690,12 +1361,13 @@ export default function ProScannerBot() {
   
   const [isConnected, setIsConnected] = useState(derivApi.isConnected);
   const connectionRetryCountRef = useRef(0);
-  const MAX_CONNECTION_RETRIES = 3;
+  const MAX_CONNECTION_RETRIES = 5;
+  const RECONNECT_DELAY = 2000;
 
   const lastPnlRef = useRef(0);
   const tpNotifiedRef = useRef(false);
   const slNotifiedRef = useRef(false);
-  const shouldStopRef = useRef(false); // CRITICAL FIX: New ref to track stop requests
+  const shouldStopRef = useRef(false);
 
   const updateBalanceImmediately = useCallback(async (pnl?: number): Promise<number> => {
     try {
@@ -714,6 +1386,7 @@ export default function ProScannerBot() {
     }
   }, [refreshBalance, activeAccount?.balance, localBalance, balanceCache]);
 
+  // Enhanced connection with retry logic
   const ensureConnection = useCallback(async (): Promise<boolean> => {
     if (derivApi.isConnected) {
       setIsConnected(true);
@@ -721,6 +1394,7 @@ export default function ProScannerBot() {
       return true;
     }
 
+    setIsReconnecting(true);
     setBotStatus('reconnecting');
     
     for (let i = 0; i < MAX_CONNECTION_RETRIES; i++) {
@@ -729,63 +1403,150 @@ export default function ProScannerBot() {
         await new Promise(r => setTimeout(r, 2000));
         
         if (derivApi.isConnected) {
+          // Resubscribe to all markets
           for (const market of SCANNER_MARKETS) {
             await derivApi.subscribeTicks(market.symbol as MarketSymbol, () => {}).catch(console.error);
           }
           setIsConnected(true);
-          setBotStatus('trading_m1');
+          setBotStatus(savedBotStateRef.current?.inRecovery ? 'recovery' : 'trading_m1');
           connectionRetryCountRef.current = 0;
+          setIsReconnecting(false);
           return true;
         }
       } catch (error) {
         console.error(`Reconnection attempt ${i + 1} failed:`, error);
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, RECONNECT_DELAY * (i + 1))); // Exponential backoff
       }
     }
     
     setIsConnected(false);
     setBotStatus('idle');
+    setIsReconnecting(false);
     return false;
   }, []);
 
-  useEffect(() => {
-    const tpValue = parseFloat(takeProfit);
-    const slValue = parseFloat(stopLoss);
-    const currentPnl = netProfit;
-    const prevPnl = lastPnlRef.current;
-    
-    if (currentPnl >= tpValue && prevPnl < tpValue && currentPnl > 0 && isRunning) {
-      showTPNotification('tp', `Take Profit Target Hit!`, currentPnl);
-      tpNotifiedRef.current = true;
-      slNotifiedRef.current = false;
+  // Save current bot state before disconnection
+  const saveBotState = useCallback(() => {
+    if (isRunning && runningRef.current) {
+      savedBotStateRef.current = {
+        cStake: currentStake,
+        mStep: martingaleStep,
+        inRecovery: currentMarket === 2,
+        currentPnl: netProfit,
+        currentBalance: localBalance,
+        currentMarket: currentMarket,
+        vhFakeWins: vhFakeWins,
+        vhFakeLosses: vhFakeLosses,
+        vhConsecLosses: vhConsecLosses,
+        vhStatus: vhStatus,
+        patternTradeTaken: patternTradeTakenRef.current,
+      };
     }
-    
-    if (currentPnl <= -slValue && prevPnl > -slValue && currentPnl < 0 && isRunning) {
-      showTPNotification('sl', `Stop Loss Target Hit!`, Math.abs(currentPnl));
-      slNotifiedRef.current = true;
-      tpNotifiedRef.current = false;
-    }
-    
-    if (currentPnl > -slValue && currentPnl < tpValue) {
-      tpNotifiedRef.current = false;
-      slNotifiedRef.current = false;
-    }
-    
-    lastPnlRef.current = currentPnl;
-  }, [netProfit, takeProfit, stopLoss, isRunning]);
+  }, [isRunning, currentStake, martingaleStep, currentMarket, netProfit, localBalance, vhFakeWins, vhFakeLosses, vhConsecLosses, vhStatus]);
 
+  // Restore bot state after reconnection
+  const restoreBotState = useCallback(() => {
+    if (savedBotStateRef.current && isRunning && runningRef.current) {
+      setCurrentStakeState(savedBotStateRef.current.cStake);
+      setMartingaleStepState(savedBotStateRef.current.mStep);
+      setCurrentMarket(savedBotStateRef.current.currentMarket);
+      setNetProfit(savedBotStateRef.current.currentPnl);
+      setLocalBalance(savedBotStateRef.current.currentBalance);
+      setVhFakeWins(savedBotStateRef.current.vhFakeWins);
+      setVhFakeLosses(savedBotStateRef.current.vhFakeLosses);
+      setVhConsecLosses(savedBotStateRef.current.vhConsecLosses);
+      setVhStatus(savedBotStateRef.current.vhStatus);
+      patternTradeTakenRef.current = savedBotStateRef.current.patternTradeTaken;
+      
+      // Add log entry for reconnection
+      const logId = ++logIdRef.current;
+      addLog(logId, {
+        time: new Date().toLocaleTimeString(),
+        market: 'SYSTEM',
+        symbol: 'RECONNECT',
+        contract: 'RESUME',
+        stake: 0,
+        martingaleStep: savedBotStateRef.current.mStep,
+        exitDigit: '-',
+        result: 'Pending',
+        pnl: 0,
+        balance: savedBotStateRef.current.currentBalance,
+        switchInfo: `🔄 Connection restored! Resuming with Stake: $${savedBotStateRef.current.cStake}, Step: ${savedBotStateRef.current.mStep}, P/L: $${savedBotStateRef.current.currentPnl.toFixed(2)}`,
+      });
+      
+      savedBotStateRef.current = null;
+      return true;
+    }
+    return false;
+  }, [isRunning]);
+
+  // Enhanced connection checker with state preservation
   useEffect(() => {
-    const connectionChecker = setInterval(() => {
+    const connectionChecker = setInterval(async () => {
       const connected = derivApi.isConnected;
+      const wasConnected = isConnected;
       setIsConnected(connected);
-      if (!connected && isRunning) {
-        ensureConnection().catch(console.error);
+      
+      if (!connected && isRunning && runningRef.current) {
+        saveBotState(); // Save state before attempting reconnection
+        const reconnected = await ensureConnection();
+        if (reconnected) {
+          restoreBotState(); // Restore state after successful reconnection
+        } else {
+          // Stop bot if reconnection fails after all retries
+          if (connectionRetryCountRef.current >= MAX_CONNECTION_RETRIES) {
+            shouldStopRef.current = true;
+            runningRef.current = false;
+            setIsRunning(false);
+            setBotStatus('idle');
+            addLog(++logIdRef.current, {
+              time: new Date().toLocaleTimeString(),
+              market: 'SYSTEM',
+              symbol: 'ERROR',
+              contract: 'DISCONNECT',
+              stake: 0,
+              martingaleStep: 0,
+              exitDigit: '-',
+              result: 'Pending',
+              pnl: 0,
+              balance: localBalance,
+              switchInfo: '❌ Failed to reconnect after multiple attempts. Bot stopped.',
+            });
+          }
+        }
+      } else if (connected && !wasConnected && !isRunning) {
+        // Just update connection status
+        setIsConnected(true);
+        connectionRetryCountRef.current = 0;
       }
-    }, 5000);
+    }, 3000); // Check every 3 seconds
     
     return () => clearInterval(connectionChecker);
-  }, [isRunning, ensureConnection]);
+  }, [isRunning, ensureConnection, saveBotState, restoreBotState, isConnected, localBalance]);
 
+  const addLog = useCallback((id: number, entry: Omit<LogEntry, 'id'>) => {
+    setLogEntries(prev => [{ ...entry, id }, ...prev].slice(0, 100));
+  }, []);
+
+  const updateLog = useCallback((id: number, updates: Partial<LogEntry>) => {
+    setLogEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
+  }, []);
+
+  const clearLog = useCallback(() => {
+    setLogEntries([]);
+    setWins(0); setLosses(0); setTotalStaked(0); setNetProfit(0);
+    setMartingaleStepState(0);
+    setVhFakeWins(0); setVhFakeLosses(0); setVhConsecLosses(0); setVhStatus('idle');
+    setTicksCaptured(0); setTicksMissed(0);
+    tpNotifiedRef.current = false;
+    slNotifiedRef.current = false;
+    lastPnlRef.current = 0;
+    patternTradeTakenRef.current = false;
+    shouldStopRef.current = false;
+    savedBotStateRef.current = null;
+  }, []);
+
+  // Tick subscription
   useEffect(() => {
     if (!derivApi.isConnected) return;
     let active = true;
@@ -875,28 +1636,7 @@ export default function ProScannerBot() {
     return null;
   }, [checkStrategyForMarket]);
 
-  const addLog = useCallback((id: number, entry: Omit<LogEntry, 'id'>) => {
-    setLogEntries(prev => [{ ...entry, id }, ...prev].slice(0, 100));
-  }, []);
-
-  const updateLog = useCallback((id: number, updates: Partial<LogEntry>) => {
-    setLogEntries(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
-  }, []);
-
-  const clearLog = useCallback(() => {
-    setLogEntries([]);
-    setWins(0); setLosses(0); setTotalStaked(0); setNetProfit(0);
-    setMartingaleStepState(0);
-    setVhFakeWins(0); setVhFakeLosses(0); setVhConsecLosses(0); setVhStatus('idle');
-    setTicksCaptured(0); setTicksMissed(0);
-    tpNotifiedRef.current = false;
-    slNotifiedRef.current = false;
-    lastPnlRef.current = 0;
-    patternTradeTakenRef.current = false;
-    shouldStopRef.current = false;
-  }, []);
-
-  // FIXED: executeRealTrade with proper TP/SL stop handling
+  // executeRealTrade with enhanced connection handling
   const executeRealTrade = useCallback(async (
     cfg: { contract: string; barrier: string; symbol: string },
     tradeSymbol: string,
@@ -915,6 +1655,7 @@ export default function ProScannerBot() {
     shouldBreak: boolean;
     won: boolean;
   }> => {
+    // Ensure connection before trading
     if (!derivApi.isConnected) {
       const connected = await ensureConnection();
       if (!connected) {
@@ -925,7 +1666,6 @@ export default function ProScannerBot() {
     const logId = ++logIdRef.current;
     const now = new Date().toLocaleTimeString();
     
-    // Update UI state
     setTotalStaked(prev => prev + cStake);
     setCurrentStakeState(cStake);
 
@@ -976,16 +1716,13 @@ export default function ProScannerBot() {
       won = result.status === 'won';
       const pnl = result.profit;
       
-      // Update balances
       updatedPnl = currentPnl + pnl;
       updatedBalance = currentBalance + pnl;
       
-      // Optimistic UI update
       setLocalBalance(updatedBalance);
       balanceCache.optimisticUpdate(updatedBalance);
       setNetProfit(updatedPnl);
       
-      // Background refresh
       updateBalanceImmediately(pnl).catch(console.error);
 
       const exitDigit = String(getLastDigit(result.sellPrice || 0));
@@ -1039,7 +1776,6 @@ export default function ProScannerBot() {
         switchInfo 
       });
 
-      // CRITICAL FIX: Check TP/SL conditions and set stop flag
       let shouldBreak = false;
       const tpValue = parseFloat(takeProfit);
       const slValue = parseFloat(stopLoss);
@@ -1047,12 +1783,12 @@ export default function ProScannerBot() {
       if (updatedPnl >= tpValue) {
         showTPNotification('tp', `Take Profit Target Hit!`, updatedPnl);
         shouldBreak = true;
-        shouldStopRef.current = true; // Set global stop flag
+        shouldStopRef.current = true;
       }
       if (updatedPnl <= -slValue) {
         showTPNotification('sl', `Stop Loss Target Hit!`, Math.abs(updatedPnl));
         shouldBreak = true;
-        shouldStopRef.current = true; // Set global stop flag
+        shouldStopRef.current = true;
       }
       if (updatedBalance < newCStake) {
         shouldBreak = true;
@@ -1071,6 +1807,16 @@ export default function ProScannerBot() {
     } catch (err: any) {
       console.error('Trade execution error:', err);
       updateLog(logId, { result: 'Loss', pnl: 0, exitDigit: '-', switchInfo: `Error: ${err.message}` });
+      
+      // If connection error, save state and attempt reconnection
+      if (err.message?.includes('connection') || !derivApi.isConnected) {
+        saveBotState();
+        const reconnected = await ensureConnection();
+        if (reconnected) {
+          restoreBotState();
+        }
+      }
+      
       if (!turboMode) await new Promise(r => setTimeout(r, 2000));
       return { 
         localPnl: updatedPnl, 
@@ -1082,24 +1828,46 @@ export default function ProScannerBot() {
         won: false
       };
     }
-  }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, turboMode, ensureConnection, activeAccount, recordLoss, updateBalanceImmediately, balanceCache]);
+  }, [addLog, updateLog, m2Enabled, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss, turboMode, ensureConnection, saveBotState, restoreBotState, activeAccount, recordLoss, updateBalanceImmediately, balanceCache]);
 
-  // FIXED: startBot with proper TP/SL stop handling
+  // Modified startBot with state restoration
   const startBot = useCallback(async () => {
     if (!isAuthorized || isRunning) return;
     
-    const connected = await ensureConnection();
-    if (!connected) {
-      return;
+    // Try to restore previous state first
+    let currentBalanceLocal: number;
+    let baseStakeLocal = parseFloat(stake);
+    let cStakeLocal = baseStakeLocal;
+    let mStepLocal = 0;
+    let inRecoveryLocal = false;
+    let currentPnlLocal = 0;
+    
+    // Check if we have saved state to restore
+    if (savedBotStateRef.current) {
+      cStakeLocal = savedBotStateRef.current.cStake;
+      mStepLocal = savedBotStateRef.current.mStep;
+      inRecoveryLocal = savedBotStateRef.current.inRecovery;
+      currentPnlLocal = savedBotStateRef.current.currentPnl;
+      currentBalanceLocal = savedBotStateRef.current.currentBalance;
+      setCurrentMarket(savedBotStateRef.current.currentMarket);
+      setVhFakeWins(savedBotStateRef.current.vhFakeWins);
+      setVhFakeLosses(savedBotStateRef.current.vhFakeLosses);
+      setVhConsecLosses(savedBotStateRef.current.vhConsecLosses);
+      setVhStatus(savedBotStateRef.current.vhStatus);
+      patternTradeTakenRef.current = savedBotStateRef.current.patternTradeTaken;
+      savedBotStateRef.current = null;
+    } else {
+      const connected = await ensureConnection();
+      if (!connected) {
+        return;
+      }
+      currentBalanceLocal = await balanceCache.getBalance(async () => {
+        await refreshBalance();
+        return authBalance;
+      }, true);
     }
     
-    const currentBalance = await balanceCache.getBalance(async () => {
-      await refreshBalance();
-      return authBalance;
-    }, true);
-    
-    const baseStake = parseFloat(stake);
-    if (baseStake < 0.35) { 
+    if (baseStakeLocal < 0.35) { 
       return; 
     }
     if (!m1Enabled && !m2Enabled) { 
@@ -1112,26 +1880,22 @@ export default function ProScannerBot() {
       return; 
     }
 
-    // Reset stop flag before starting
     shouldStopRef.current = false;
     setIsRunning(true);
     runningRef.current = true;
-    setCurrentMarket(1);
-    setBotStatus('trading_m1');
-    setCurrentStakeState(baseStake);
-    setMartingaleStepState(0);
-    setVhFakeWins(0); setVhFakeLosses(0); setVhConsecLosses(0); setVhStatus('idle');
+    setBotStatus(inRecoveryLocal ? 'recovery' : 'trading_m1');
+    setCurrentStakeState(cStakeLocal);
+    setMartingaleStepState(mStepLocal);
+    setNetProfit(currentPnlLocal);
     tpNotifiedRef.current = false;
     slNotifiedRef.current = false;
-    lastPnlRef.current = 0;
-    setNetProfit(0);
-    patternTradeTakenRef.current = false;
+    lastPnlRef.current = currentPnlLocal;
 
-    let cStake = baseStake;
-    let mStep = 0;
-    let inRecovery = false;
-    let currentPnl = 0;
-    let currentBalanceLocal = currentBalance;
+    let cStake = cStakeLocal;
+    let mStep = mStepLocal;
+    let inRecovery = inRecoveryLocal;
+    let currentPnl = currentPnlLocal;
+    let currentBalance = currentBalanceLocal;
 
     const getConfig = (market: 1 | 2) => ({
       contract: market === 1 ? m1Contract : m2Contract,
@@ -1139,18 +1903,26 @@ export default function ProScannerBot() {
       symbol: market === 1 ? m1Symbol : m2Symbol,
     });
 
-    while (runningRef.current && !shouldStopRef.current) { // CRITICAL FIX: Check stop flag
-      // Check TP/SL again at loop start for safety
+    while (runningRef.current && !shouldStopRef.current) {
+      // Check TP/SL
       if (currentPnl >= parseFloat(takeProfit) || currentPnl <= -parseFloat(stopLoss)) {
         shouldStopRef.current = true;
         break;
       }
       
       if (!derivApi.isConnected) {
+        saveBotState(); // Save current state
         const reconnected = await ensureConnection();
         if (!reconnected) {
           break;
         }
+        restoreBotState(); // Restore after reconnection
+        // Update local variables after restoration
+        cStake = currentStake;
+        mStep = martingaleStep;
+        inRecovery = currentMarket === 2;
+        currentPnl = netProfit;
+        currentBalance = localBalance;
       }
       
       const mkt: 1 | 2 = inRecovery ? 2 : 1;
@@ -1173,7 +1945,6 @@ export default function ProScannerBot() {
       const requiredLosses = parseInt(mkt === 1 ? m1VirtualLossCount : m2VirtualLossCount) || 3;
       const realCount = parseInt(mkt === 1 ? m1RealCount : m2RealCount) || 2;
 
-      // Reset pattern trade flag
       if ((mkt === 2 && strategyEnabled) || (mkt === 1 && strategyM1Enabled)) {
         patternTradeTakenRef.current = false;
       }
@@ -1187,6 +1958,11 @@ export default function ProScannerBot() {
         const MAX_ATTEMPTS = 100;
         
         while (runningRef.current && !matched && attempts < MAX_ATTEMPTS && !shouldStopRef.current) {
+          if (!derivApi.isConnected) {
+            const reconnected = await ensureConnection();
+            if (!reconnected) break;
+          }
+          
           if (scannerActive) {
             const found = findScannerMatchForMarket(2);
             if (found) { 
@@ -1220,6 +1996,11 @@ export default function ProScannerBot() {
         const MAX_ATTEMPTS = 100;
         
         while (runningRef.current && !matched && attempts < MAX_ATTEMPTS && !shouldStopRef.current) {
+          if (!derivApi.isConnected) {
+            const reconnected = await ensureConnection();
+            if (!reconnected) break;
+          }
+          
           if (checkStrategyForMarket(cfg.symbol, 1)) { 
             matched = true; 
           }
@@ -1241,16 +2022,14 @@ export default function ProScannerBot() {
         tradeSymbol = cfg.symbol;
       }
 
-      // Check stop flag before trading
       if (shouldStopRef.current) break;
 
-      // Check if trade already taken after pattern
       if (((inRecovery && strategyEnabled) || (!inRecovery && strategyM1Enabled)) && patternTradeTakenRef.current) {
         patternTradeTakenRef.current = false;
         continue;
       }
 
-      // VIRTUAL HOOK LOGIC
+      // VIRTUAL HOOK LOGIC with connection resilience
       if (hookEnabled) {
         setBotStatus('virtual_hook');
         setVhStatus('waiting');
@@ -1260,8 +2039,13 @@ export default function ProScannerBot() {
         let consecLosses = 0;
         let virtualTradeNum = 0;
 
-        // VIRTUAL PHASE: Accumulate consecutive losses
         while (consecLosses < requiredLosses && runningRef.current && !shouldStopRef.current) {
+          // Ensure connection before virtual trade
+          if (!derivApi.isConnected) {
+            const reconnected = await ensureConnection();
+            if (!reconnected) break;
+          }
+          
           virtualTradeNum++;
           const vLogId = ++logIdRef.current;
           const vNow = new Date().toLocaleTimeString();
@@ -1275,7 +2059,7 @@ export default function ProScannerBot() {
             exitDigit: '...', 
             result: 'Pending', 
             pnl: 0, 
-            balance: currentBalanceLocal,
+            balance: currentBalance,
             switchInfo: `Virtual #${virtualTradeNum} (losses: ${consecLosses}/${requiredLosses})`,
           });
 
@@ -1313,29 +2097,26 @@ export default function ProScannerBot() {
 
         setVhStatus('confirmed');
 
-        // REAL PHASE: Execute real trades - BREAK ON FIRST WIN OR TP/SL
         let winOccurred = false;
         
         for (let ri = 0; ri < realCount && runningRef.current && !winOccurred && !shouldStopRef.current; ri++) {
           const result = await executeRealTrade(
-            cfg, tradeSymbol, cStake, mStep, mkt, currentBalanceLocal, currentPnl, baseStake
+            cfg, tradeSymbol, cStake, mStep, mkt, currentBalance, currentPnl, baseStakeLocal
           );
           if (!result || !runningRef.current) break;
           
           currentPnl = result.localPnl;
-          currentBalanceLocal = result.localBalance;
+          currentBalance = result.localBalance;
           cStake = result.cStake;
           mStep = result.mStep;
           inRecovery = result.inRecovery;
 
-          // Check if we need to stop due to TP/SL
           if (result.shouldBreak) {
             shouldStopRef.current = true;
             runningRef.current = false;
             break;
           }
 
-          // CRITICAL: Exit real trading loop immediately on WIN
           if (result.won) {
             winOccurred = true;
             const winLogId = ++logIdRef.current;
@@ -1349,47 +2130,41 @@ export default function ProScannerBot() {
               exitDigit: '-',
               result: 'Pending',
               pnl: 0,
-              balance: currentBalanceLocal,
+              balance: currentBalance,
               switchInfo: `✅ REAL WIN DETECTED! Immediate exit from hook mode.`
             });
             break;
           }
         }
 
-        // Reset hook state
         setVhStatus('idle');
         setVhConsecLosses(0);
         
-        // Mark trade taken
         if ((inRecovery && strategyEnabled) || (!inRecovery && strategyM1Enabled)) {
           patternTradeTakenRef.current = true;
         }
         
         if (!runningRef.current || shouldStopRef.current) break;
-        
-        // Continue to next iteration - will re-enter virtual phase
         continue;
       }
 
-      // NON-HOOK MODE: Regular trading
+      // NON-HOOK MODE
       const result = await executeRealTrade(
-        cfg, tradeSymbol, cStake, mStep, mkt, currentBalanceLocal, currentPnl, baseStake
+        cfg, tradeSymbol, cStake, mStep, mkt, currentBalance, currentPnl, baseStakeLocal
       );
       if (!result || !runningRef.current) break;
       
       currentPnl = result.localPnl;
-      currentBalanceLocal = result.localBalance;
+      currentBalance = result.localBalance;
       cStake = result.cStake;
       mStep = result.mStep;
       inRecovery = result.inRecovery;
 
-      // Check if we need to stop due to TP/SL
       if (result.shouldBreak) {
         shouldStopRef.current = true;
         break;
       }
 
-      // Mark trade taken after pattern
       if ((inRecovery && strategyEnabled) || (!inRecovery && strategyM1Enabled)) {
         patternTradeTakenRef.current = true;
       }
@@ -1401,7 +2176,8 @@ export default function ProScannerBot() {
     runningRef.current = false;
     setBotStatus('idle');
     patternTradeTakenRef.current = false;
-    shouldStopRef.current = false; // Reset stop flag
+    shouldStopRef.current = false;
+    savedBotStateRef.current = null;
     
     updateBalanceImmediately().catch(console.error);
   }, [isAuthorized, isRunning, stake, m1Enabled, m2Enabled, m1Contract, m2Contract,
@@ -1410,14 +2186,17 @@ export default function ProScannerBot() {
     m1PatternValid, m2PatternValid, scannerActive, findScannerMatchForMarket, checkStrategyForMarket, 
     addLog, updateLog, turboMode, m1HookEnabled, m2HookEnabled, m1VirtualLossCount, m2VirtualLossCount, 
     m1RealCount, m2RealCount, ensureConnection, executeRealTrade, updateBalanceImmediately, 
-    balanceCache, refreshBalance, authBalance]);
+    balanceCache, refreshBalance, authBalance, currentStake, martingaleStep, currentMarket, 
+    netProfit, localBalance, vhFakeWins, vhFakeLosses, vhConsecLosses, vhStatus, saveBotState, 
+    restoreBotState]);
 
   const stopBot = useCallback(() => {
-    shouldStopRef.current = true; // Set stop flag to break the main loop
+    shouldStopRef.current = true;
     runningRef.current = false;
     setIsRunning(false);
     setBotStatus('idle');
     patternTradeTakenRef.current = false;
+    // Don't clear saved state - we might want to resume later
   }, []);
 
   const statusConfig: Record<BotStatus, { icon: string; label: string; color: string }> = {
@@ -1500,9 +2279,45 @@ export default function ProScannerBot() {
   const activeSymbol = currentMarket === 1 ? m1Symbol : m2Symbol;
   const activeDigits = (tickMapRef.current.get(activeSymbol) || []).slice(-8);
 
+  const handleOpenTradingChart = () => {
+    setIsChartAnimating(true);
+    setShowTradingChart(true);
+    setTimeout(() => setIsChartAnimating(false), 400);
+  };
+
+  const handleCloseTradingChart = () => {
+    setIsChartAnimating(true);
+    setShowTradingChart(false);
+    setTimeout(() => setIsChartAnimating(false), 400);
+  };
+
   return (
     <>
       <style>{notificationStyles}</style>
+      
+      {/* Floating Chat Button */}
+      <div className="fixed bottom-6 right-6 z-40">
+        <button
+          onClick={handleOpenTradingChart}
+          className={`
+            group relative w-12 h-12 rounded-full bg-gradient-to-br from-primary to-primary/80 
+            shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 
+            transition-all duration-300 hover:scale-110 active:scale-95
+            flex items-center justify-center
+            before:absolute before:inset-0 before:rounded-full before:bg-primary/30 before:animate-ping before:opacity-75
+          `}
+        >
+          <div className="absolute inset-0 rounded-full bg-gradient-to-br from-white/20 to-transparent" />
+          <BarChart3 className="w-5 h-5 text-white relative z-10" />
+          <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse ring-2 ring-white" />
+        </button>
+      </div>
+
+      {/* Trading Chart Popup */}
+      {showTradingChart && (
+        <TradingChartPopup onClose={handleCloseTradingChart} />
+      )}
+
       <div className="space-y-3 max-w-7xl mx-auto p-4">
         {/* Header */}
         <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-card/80 to-card/50 backdrop-blur-sm border border-border rounded-xl px-4 py-3 shadow-lg">
@@ -1524,9 +2339,14 @@ export default function ProScannerBot() {
                 P/L: ${netProfit.toFixed(2)}
               </Badge>
             )}
-            {!isConnected && (
+            {!isConnected && !isReconnecting && (
               <Badge variant="destructive" className="text-[9px]">
                 🔌 DISCONNECTED
+              </Badge>
+            )}
+            {isReconnecting && (
+              <Badge variant="warning" className="text-[9px] animate-pulse">
+                🔄 RECONNECTING...
               </Badge>
             )}
           </div>
@@ -1908,7 +2728,7 @@ export default function ProScannerBot() {
             <div className="relative">
               <button
                 onClick={isRunning ? stopBot : startBot}
-                disabled={(!isRunning && (!isAuthorized || localBalance < parseFloat(stake) || !isConnected))}
+                disabled={(!isRunning && (!isAuthorized || localBalance < parseFloat(stake) || (!isConnected && !isReconnecting)))}
                 className={`
                   relative w-full h-16 text-lg font-bold rounded-xl transition-all duration-300 ease-out overflow-hidden group
                   ${isRunning 
@@ -1961,7 +2781,8 @@ export default function ProScannerBot() {
                      botStatus === 'recovery' ? '🟣 RECOVERY' :
                      botStatus === 'waiting_pattern' ? '🟡 SCANNING' :
                      botStatus === 'virtual_hook' ? '🎣 HOOK' : 
-                     botStatus === 'pattern_matched' ? '✅ MATCHED' : '⚪ RUNNING'}
+                     botStatus === 'pattern_matched' ? '✅ MATCHED' : 
+                     botStatus === 'reconnecting' ? '🔄 RECONNECTING' : '⚪ RUNNING'}
                   </Badge>
                 </div>
               )}
@@ -2051,6 +2872,14 @@ export default function ProScannerBot() {
                   </div>
                 </div>
               )}
+              {botStatus === 'reconnecting' && (
+                <div className="mt-2 text-center bg-orange-500/10 border border-orange-500/30 rounded-lg p-1.5">
+                  <div className="text-[9px] text-orange-500 animate-pulse flex items-center justify-center gap-2">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    Reconnecting to Deriv... Preserving bot state...
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Activity Log - Full Width, Full Height */}
@@ -2087,7 +2916,7 @@ export default function ProScannerBot() {
                       <th className="text-center p-2 font-semibold">Result</th>
                       <th className="text-right p-2 font-semibold">P/L</th>
                       <th className="text-right p-2 font-semibold">Bal</th>
-                    </tr>
+                     </tr>
                   </thead>
                   <tbody>
                     {logEntries.length === 0 ? (
@@ -2103,12 +2932,14 @@ export default function ProScannerBot() {
                       <tr key={e.id} className={`border-b border-border/50 hover:bg-muted/30 transition-colors ${
                         e.market === 'M1' ? 'border-l-2 border-l-profit' :
                         e.market === 'VH' ? 'border-l-2 border-l-primary' :
+                        e.market === 'SYSTEM' ? 'border-l-2 border-l-orange-500' :
                         'border-l-2 border-l-purple-500'
                       }`}>
                         <td className="p-2 font-mono text-[9px] text-muted-foreground">{e.time}</td>
                         <td className={`p-2 font-bold text-[10px] ${
                           e.market === 'M1' ? 'text-profit' :
                           e.market === 'VH' ? 'text-primary' :
+                          e.market === 'SYSTEM' ? 'text-orange-500' :
                           'text-purple-400'
                         }`}>{e.market}</td>
                         <td className="p-2 font-mono text-[9px] text-foreground">{e.symbol}</td>
@@ -2116,10 +2947,12 @@ export default function ProScannerBot() {
                         <td className="p-2 font-mono text-right text-[9px]">
                           {e.market === 'VH' ? (
                             <span className="text-primary">FAKE</span>
+                          ) : e.market === 'SYSTEM' ? (
+                            <span className="text-orange-500">SYS</span>
                           ) : (
                             <span className="text-foreground">${e.stake.toFixed(2)}</span>
                           )}
-                          {e.martingaleStep > 0 && e.market !== 'VH' && <span className="text-warning ml-1 font-bold">M{e.martingaleStep}</span>}
+                          {e.martingaleStep > 0 && e.market !== 'VH' && e.market !== 'SYSTEM' && <span className="text-warning ml-1 font-bold">M{e.martingaleStep}</span>}
                         </td>
                         <td className="p-2 text-center font-mono text-[10px] font-bold">{e.exitDigit}</td>
                         <td className="p-2 text-center">
@@ -2134,10 +2967,10 @@ export default function ProScannerBot() {
                         <td className={`p-2 font-mono text-right text-[9px] font-bold ${
                           e.pnl > 0 ? 'text-profit' : e.pnl < 0 ? 'text-loss' : 'text-muted-foreground'
                         }`}>
-                          {e.result === 'Pending' ? '...' : e.market === 'VH' ? '-' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
+                          {e.result === 'Pending' ? '...' : e.market === 'VH' || e.market === 'SYSTEM' ? '-' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
                         </td>
                         <td className="p-2 font-mono text-right text-[9px] text-muted-foreground">
-                          {e.market === 'VH' ? '-' : `$${e.balance.toFixed(2)}`}
+                          {e.market === 'VH' || e.market === 'SYSTEM' ? '-' : `$${e.balance.toFixed(2)}`}
                         </td>
                       </tr>
                     ))}
