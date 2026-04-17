@@ -19,7 +19,7 @@ import {
 import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
 // ============================================
-// SOCIAL NOTIFICATION POPUP - CENTERED
+// SOCIAL NOTIFICATION POPUP - CENTERED WITH TOP PADDING
 // ============================================
 
 // Animation Styles
@@ -29,25 +29,47 @@ const notificationStyles = `
   to { opacity: 1; }
 }
 
-@keyframes slideInCenter {
+@keyframes slideInDown {
   from {
     opacity: 0;
-    transform: translate(-50%, -50%) scale(0.95);
+    transform: translateY(-30px) scale(0.95);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
+    transform: translateY(0) scale(1);
   }
 }
 
-@keyframes slideOutCenter {
+@keyframes slideOutUp {
   from {
     opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
+    transform: translateY(0) scale(1);
   }
   to {
     opacity: 0;
-    transform: translate(-50%, -50%) scale(0.95);
+    transform: translateY(-30px) scale(0.95);
+  }
+}
+
+@keyframes slideUpCenter {
+  from {
+    opacity: 0;
+    transform: translateY(40px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes slideDownCenter {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(40px) scale(0.9);
   }
 }
 
@@ -88,14 +110,11 @@ const notificationStyles = `
   to { transform: rotate(360deg); }
 }
 
-@keyframes ring {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
 .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }
-.animate-slide-in-center { animation: slideInCenter 0.4s cubic-bezier(0.34, 1.2, 0.64, 1) forwards; }
-.animate-slide-out-center { animation: slideOutCenter 0.3s ease-out forwards; }
+.animate-slide-in-down { animation: slideInDown 0.4s cubic-bezier(0.34, 1.2, 0.64, 1) forwards; }
+.animate-slide-out-up { animation: slideOutUp 0.3s ease-out forwards; }
+.animate-slide-up-center { animation: slideUpCenter 0.4s cubic-bezier(0.34, 1.2, 0.64, 1) forwards; }
+.animate-slide-down-center { animation: slideDownCenter 0.3s ease-out forwards; }
 .animate-gradient { background-size: 200% 200%; animation: gradientShift 3s ease infinite; }
 .animate-float { animation: float 3s ease-in-out infinite; }
 .animate-bounce { animation: bounce 0.4s ease-in-out 2; }
@@ -103,7 +122,6 @@ const notificationStyles = `
 .animate-shimmer { animation: shimmer 2s infinite; }
 .animate-glow-pulse { animation: glowPulse 1.5s ease-in-out infinite; }
 .animate-spin-slow { animation: spin 1s linear infinite; }
-.animate-ring { animation: ring 0.5s ease-in-out 2; }
 `;
 
 // Helper function to show notification (TP/SL)
@@ -113,7 +131,7 @@ export const showTPNotification = (type: 'tp' | 'sl', message: string, amount?: 
   }
 };
 
-// Social Notification Component - Centered
+// Social Notification Component - Centered with 100px top padding
 const SocialNotificationPopup = ({ onClose }: { onClose: () => void }) => {
   const [isExiting, setIsExiting] = useState(false);
 
@@ -135,63 +153,62 @@ const SocialNotificationPopup = ({ onClose }: { onClose: () => void }) => {
     {
       name: 'WhatsApp',
       url: 'https://wa.me/+254757261120',
-      icon: <MessageCircle className="w-3 h-3 sm:w-4 sm:h-4" />,
+      icon: <MessageCircle className="w-4 h-4" />,
       color: 'hover:text-[#25D366]',
       bgGradient: 'from-green-500/20 to-green-600/20',
     },
     {
       name: 'Telegram Group',
       url: 'https://t.me/+YDUwvuuVDYg5NjE0',
-      icon: <MessageSquare className="w-3 h-3 sm:w-4 sm:h-4" />,
+      icon: <MessageSquare className="w-4 h-4" />,
       color: 'hover:text-[#26A5E4]',
       bgGradient: 'from-blue-500/20 to-blue-600/20',
     },
     {
       name: 'Facebook Channel',
       url: 'https://www.facebook.com/profile.php?id=61573399294689',
-      icon: <MessageSquare className="w-3 h-3 sm:w-4 sm:h-4" />,
+      icon: <MessageSquare className="w-4 h-4" />,
       color: 'hover:text-[#26A5E4]',
       bgGradient: 'from-blue-500/20 to-blue-600/20',
     },
     {
       name: 'YouTube',
       url: 'www.youtube.com/@ceoramz',
-      icon: <Youtube className="w-3 h-3 sm:w-4 sm:h-4" />,
+      icon: <Youtube className="w-4 h-4" />,
       color: 'hover:text-[#FF0000]',
       bgGradient: 'from-red-500/20 to-red-600/20',
     },
     {
       name: 'TikTok',
       url: 'https://tiktok.com/@ceoramz',
-      icon: <Music className="w-3 h-3 sm:w-4 sm:h-4" />,
+      icon: <Music className="w-4 h-4" />,
       color: 'hover:text-foreground',
       bgGradient: 'from-gray-500/20 to-gray-600/20',
     },
     {
       name: 'Instagram',
       url: 'https://www.instagram.com/ramztrader.site?igsh=aDY1aGFiMGpobHJi',
-      icon: <Instagram className="w-3 h-3 sm:w-4 sm:h-4" />,
+      icon: <Instagram className="w-4 h-4" />,
       color: 'hover:text-[#E4405F]',
       bgGradient: 'from-pink-500/20 to-pink-600/20',
     },
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+    <div className="fixed inset-0 z-50 flex items-start justify-center pointer-events-none" style={{ paddingTop: '100px' }}>
       <div 
         className={`
-          pointer-events-auto w-[90vw] max-w-[380px] rounded-2xl shadow-2xl overflow-hidden
-          ${isExiting ? 'animate-slide-out-center' : 'animate-slide-in-center'}
+          pointer-events-auto w-[380px] max-w-[90vw] rounded-2xl shadow-2xl overflow-hidden
+          ${isExiting ? 'animate-slide-out-up' : 'animate-slide-in-down'}
         `}
-        style={{ transform: 'translate(-50%, -50%)', top: '50%', left: '50%', position: 'absolute' }}
       >
         <div className="absolute inset-0 bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-700 animate-gradient" />
         <div className="absolute inset-0 bg-black/20 backdrop-blur-[1px]" />
         <div className="absolute inset-0 overflow-hidden">
-          {[...Array(8)].map((_, i) => (
+          {[...Array(10)].map((_, i) => (
             <div
               key={i}
-              className="absolute text-white/15 text-xl animate-float"
+              className="absolute text-white/15 text-2xl animate-float"
               style={{
                 left: `${Math.random() * 100}%`,
                 top: `${Math.random() * 100}%`,
@@ -209,25 +226,25 @@ const SocialNotificationPopup = ({ onClose }: { onClose: () => void }) => {
             onClick={handleClose}
             className="absolute top-2 right-2 p-1 rounded-lg bg-white/20 hover:bg-white/30 text-white transition-all duration-200 backdrop-blur-sm z-20"
           >
-            <X className="w-3 h-3" />
+            <X className="w-3.5 h-3.5" />
           </button>
           
-          <div className="p-3 sm:p-4">
-            <div className="flex items-center gap-2 sm:gap-3 mb-2 sm:mb-3">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center shadow-lg">
-                <Users className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+          <div className="p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center shadow-lg">
+                <Users className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h2 className="text-sm sm:text-lg font-bold text-white">Join Our Trading Community</h2>
-                <p className="text-[8px] sm:text-[10px] text-white/80">Connect & Grow Together</p>
+                <h2 className="text-lg font-bold text-white">Join Our Trading Community</h2>
+                <p className="text-[10px] text-white/80">Connect & Grow Together</p>
               </div>
             </div>
             
-            <p className="text-[9px] sm:text-[11px] text-white/80 mb-2 sm:mb-3">
+            <p className="text-[11px] text-white/80 mb-3">
               Connect with fellow traders! Share experiences, strategies, and get updates on new features.
             </p>
             
-            <div className="grid grid-cols-2 gap-1.5 sm:gap-2 mb-2 sm:mb-3">
+            <div className="grid grid-cols-2 gap-2 mb-3">
               {socialLinks.map((social) => (
                 <a
                   key={social.name}
@@ -236,36 +253,36 @@ const SocialNotificationPopup = ({ onClose }: { onClose: () => void }) => {
                   rel="noopener noreferrer"
                   onClick={handleClose}
                   className={`
-                    flex items-center gap-1.5 sm:gap-2 px-1.5 sm:px-2 py-1 sm:py-1.5 rounded-lg bg-white/15 backdrop-blur-sm
+                    flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white/15 backdrop-blur-sm
                     border border-white/30 text-white transition-all duration-300
                     hover:scale-105 hover:bg-white/25 ${social.color}
                   `}
                 >
-                  <div className={`p-0.5 sm:p-1 rounded-lg bg-gradient-to-r ${social.bgGradient}`}>
+                  <div className={`p-1 rounded-lg bg-gradient-to-r ${social.bgGradient}`}>
                     {social.icon}
                   </div>
-                  <span className="text-[7px] sm:text-[9px] font-medium truncate">{social.name}</span>
+                  <span className="text-[9px] font-medium truncate">{social.name}</span>
                 </a>
               ))}
             </div>
             
-            <div className="bg-blue-500/20 border border-blue-400/30 rounded-lg p-1.5 sm:p-2 mb-2 sm:mb-3">
-              <p className="text-[7px] sm:text-[8px] text-blue-100 text-center">
+            <div className="bg-blue-500/20 border border-blue-400/30 rounded-lg p-2 mb-3">
+              <p className="text-[8px] text-blue-100 text-center">
                 📢 Get access to strategies, bots and guides sent earlier on our channels
               </p>
             </div>
           </div>
           
-          <div className="p-2 sm:p-3 pt-0 flex gap-2">
+          <div className="p-3 pt-0 flex gap-2">
             <button
               onClick={handleClose}
-              className="flex-1 py-1 sm:py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white text-[9px] sm:text-[11px] font-semibold transition-all duration-200 backdrop-blur-sm border border-white/30"
+              className="flex-1 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white text-[11px] font-semibold transition-all duration-200 backdrop-blur-sm border border-white/30"
             >
               NO THANKS
             </button>
             <button
               onClick={handleMaybeLater}
-              className="flex-1 py-1 sm:py-1.5 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white text-[9px] sm:text-[11px] font-semibold transition-all duration-200 shadow-lg"
+              className="flex-1 py-1.5 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white text-[11px] font-semibold transition-all duration-200 shadow-lg"
             >
               MAYBE LATER
             </button>
@@ -357,7 +374,7 @@ const TPSLNotificationPopup = () => {
     <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
       <div 
         className={`
-          pointer-events-auto w-[300px] h-[300px] sm:w-[350px] sm:h-[350px] rounded-xl shadow-2xl overflow-hidden
+          pointer-events-auto w-[350px] h-[350px] rounded-xl shadow-2xl overflow-hidden
           ${isExiting ? 'animate-slide-down-center' : 'animate-slide-up-center'}
         `}
       >
@@ -380,7 +397,7 @@ const TPSLNotificationPopup = () => {
           <div className="relative w-full h-full flex flex-col p-3 z-10">
             <div className="flex items-center gap-2 mb-2">
               <div className={`
-                w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-base sm:text-xl
+                w-10 h-10 rounded-full flex items-center justify-center text-xl
                 ${isTP 
                   ? 'bg-emerald-400/30' 
                   : 'bg-rose-400/30'
@@ -392,21 +409,21 @@ const TPSLNotificationPopup = () => {
                 {isTP ? '🎉' : '😢'}
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className={`text-xs sm:text-sm font-bold text-white truncate`}>
+                <h3 className={`text-sm font-bold text-white truncate`}>
                   {isTP ? 'TAKE PROFIT!' : 'STOP LOSS!'}
                 </h3>
-                <p className="text-[7px] sm:text-[8px] text-white/70">
+                <p className="text-[8px] text-white/70">
                   {new Date().toLocaleTimeString()}
                 </p>
               </div>
             </div>
             
             <div className="flex-1 flex flex-col items-center justify-center text-center mb-2">
-              <p className="text-white text-[10px] sm:text-xs font-medium leading-tight px-2">
+              <p className="text-white text-xs font-medium leading-tight">
                 {notification.message}
               </p>
               {amount && (
-                <p className={`text-base sm:text-xl font-bold mt-1 ${isTP ? 'text-emerald-200' : 'text-rose-200'} animate-bounce`}>
+                <p className={`text-xl font-bold mt-1 ${isTP ? 'text-emerald-200' : 'text-rose-200'} animate-bounce`}>
                   {isTP ? '+' : '-'}${Math.abs(amount).toFixed(2)}
                 </p>
               )}
@@ -415,7 +432,7 @@ const TPSLNotificationPopup = () => {
             <button
               onClick={handleClose}
               className={`
-                w-full py-1 sm:py-1.5 rounded-lg font-semibold text-[10px] sm:text-xs transition-all duration-200
+                w-full py-1.5 rounded-lg font-semibold text-xs transition-all duration-200
                 ${isTP 
                   ? 'bg-white/95 text-emerald-600 hover:bg-white hover:scale-[1.02]' 
                   : 'bg-white/95 text-rose-600 hover:bg-white hover:scale-[1.02]'
@@ -434,7 +451,7 @@ const TPSLNotificationPopup = () => {
 };
 
 // ============================================
-// DRAGGABLE TRADING CHART POPUP COMPONENT (Responsive)
+// DRAGGABLE TRADING CHART POPUP COMPONENT - CENTERED WITH TOP PADDING
 // ============================================
 
 const ALL_MARKETS = [
@@ -574,7 +591,7 @@ function calculateChartDigitStats(symbol: string, tickRange: number) {
   };
 }
 
-// Draggable Trading Chart Popup Component (Responsive)
+// Draggable Trading Chart Popup Component - Centered with 100px top padding, reduced height on small screens
 const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunning: boolean }) => {
   const [symbol, setSymbol] = useState('R_100');
   const [selectedContractType, setSelectedContractType] = useState('CALL');
@@ -585,7 +602,7 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
   const [isExiting, setIsExiting] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [position, setPosition] = useState({ x: typeof window !== 'undefined' ? Math.max(20, window.innerWidth - 420) : 20, y: 80 });
+  const [position, setPosition] = useState({ x: window.innerWidth / 2 - 240, y: 100 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const popupRef = useRef<HTMLDivElement>(null);
@@ -809,19 +826,19 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
         style={{ left: position.x, top: position.y }}
       >
         <div 
-          className="pointer-events-auto w-[200px] sm:w-[280px] rounded-xl shadow-2xl bg-gradient-to-br from-slate-900 to-slate-950 border border-blue-500/30 cursor-pointer"
+          className="pointer-events-auto w-[280px] max-w-[85vw] rounded-xl shadow-2xl bg-gradient-to-br from-slate-900 to-slate-950 border border-blue-500/30 cursor-pointer"
           onClick={() => setIsMinimized(false)}
         >
-          <div className="p-1.5 sm:p-2 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <div className="p-0.5 sm:p-1 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg">
-                <BarChart3 className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-white" />
+          <div className="p-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="p-1 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg">
+                <BarChart3 className="w-3 h-3 text-white" />
               </div>
-              <span className="text-[8px] sm:text-[10px] font-semibold text-white">Ramzfx Ai Signals</span>
-              {isRunning && <span className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-green-500 animate-pulse" />}
+              <span className="text-[10px] font-semibold text-white">Ramzfx Ai Signals</span>
+              {isRunning && <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />}
             </div>
             <button onClick={handleClose} className="p-0.5 rounded hover:bg-white/10">
-              <X className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-gray-400" />
+              <X className="w-3 h-3 text-gray-400" />
             </button>
           </div>
         </div>
@@ -837,64 +854,66 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
     >
       <div 
         className={`
-          pointer-events-auto w-[95vw] max-w-[480px] max-h-[85vh] overflow-y-auto rounded-xl shadow-2xl
+          pointer-events-auto w-[480px] max-w-[90vw] max-h-[85vh] overflow-y-auto rounded-xl shadow-2xl
           bg-gradient-to-br from-slate-900 to-slate-950 border border-blue-500/30
-          ${isExiting ? 'animate-slide-out-right' : 'animate-slide-in-right'}
+          ${isExiting ? 'animate-slide-out-up' : 'animate-slide-in-down'}
           ${isDragging ? 'cursor-grabbing' : ''}
+          lg:max-h-[90vh] lg:w-[480px]
         `}
+        style={{ height: 'auto', maxHeight: 'calc(100vh - 120px)' }}
       >
         {/* Draggable Header */}
         <div 
           ref={dragHandleRef}
           onMouseDown={handleMouseDown}
-          className="sticky top-0 z-10 bg-gradient-to-r from-slate-900 to-slate-950 border-b border-blue-500/30 p-2 sm:p-3 flex items-center justify-between rounded-t-xl cursor-grab active:cursor-grabbing"
+          className="sticky top-0 z-10 bg-gradient-to-r from-slate-900 to-slate-950 border-b border-blue-500/30 p-3 flex items-center justify-between rounded-t-xl cursor-grab active:cursor-grabbing"
         >
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            <GripVertical className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-gray-400" />
-            <div className="p-1 sm:p-1.5 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg">
-              <BarChart3 className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-white" />
+          <div className="flex items-center gap-2">
+            <GripVertical className="w-3.5 h-3.5 text-gray-400" />
+            <div className="p-1.5 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg">
+              <BarChart3 className="w-3.5 h-3.5 text-white" />
             </div>
             <div>
-              <h3 className="text-[11px] sm:text-sm font-bold text-white">Ramzfx Trading Signals</h3>
-              <p className="text-[6px] sm:text-[8px] text-blue-300">Drag to move • Live Market Analysis</p>
+              <h3 className="text-sm font-bold text-white">Ramzfx Trading Signals</h3>
+              <p className="text-[8px] text-blue-300">Drag to move • Live Market Analysis</p>
             </div>
           </div>
-          <div className="flex items-center gap-1 sm:gap-2">
+          <div className="flex items-center gap-2">
             <Button
               size="sm"
               variant={voiceEnabled ? 'default' : 'outline'}
-              className="h-5 sm:h-6 text-[7px] sm:text-[8px] px-1 sm:px-1.5 gap-0.5"
+              className="h-6 text-[8px] px-1.5 gap-0.5"
               onClick={() => setVoiceEnabled(!voiceEnabled)}
             >
-              {voiceEnabled ? <Volume2 className="w-2 h-2 sm:w-2.5 sm:h-2.5" /> : <VolumeX className="w-2 h-2 sm:w-2.5 sm:h-2.5" />}
+              {voiceEnabled ? <Volume2 className="w-2.5 h-2.5" /> : <VolumeX className="w-2.5 h-2.5" />}
               {voiceEnabled ? 'ON' : 'OFF'}
-            </button>
+            </Button>
             <button
               onClick={() => setIsMinimized(true)}
-              className="p-0.5 sm:p-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-300 transition-all"
+              className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-300 transition-all"
             >
-              <span className="text-[8px] sm:text-[10px]">━</span>
+              <span className="text-[10px]">━</span>
             </button>
             <button
               onClick={handleClose}
-              className="p-0.5 sm:p-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-300 transition-all"
+              className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-gray-300 transition-all"
             >
-              <X className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
         
-        <div className="p-2 sm:p-3 space-y-2 sm:space-y-3">
+        <div className="p-3 space-y-3">
           {/* Market Selector */}
           <div>
-            <label className="text-[7px] sm:text-[9px] text-blue-300 block mb-0.5 sm:mb-1">Market</label>
+            <label className="text-[9px] text-blue-300 block mb-1">Market</label>
             <Select value={symbol} onValueChange={setSymbol}>
-              <SelectTrigger className="h-6 sm:h-7 text-[8px] sm:text-[10px] bg-slate-800/50 border-slate-700">
+              <SelectTrigger className="h-7 text-[10px] bg-slate-800/50 border-slate-700">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="max-h-40">
                 {ALL_MARKETS.map(m => (
-                  <SelectItem key={m.symbol} value={m.symbol} className="text-[8px] sm:text-[10px]">
+                  <SelectItem key={m.symbol} value={m.symbol} className="text-[10px]">
                     {m.name}
                   </SelectItem>
                 ))}
@@ -904,14 +923,14 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
           
           {/* Contract Type */}
           <div>
-            <label className="text-[7px] sm:text-[9px] text-blue-300 block mb-0.5 sm:mb-1">Contract Type</label>
+            <label className="text-[9px] text-blue-300 block mb-1">Contract Type</label>
             <Select value={selectedContractType} onValueChange={setSelectedContractType}>
-              <SelectTrigger className="h-6 sm:h-7 text-[8px] sm:text-[10px] bg-slate-800/50 border-slate-700">
+              <SelectTrigger className="h-7 text-[10px] bg-slate-800/50 border-slate-700">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {CONTRACT_TYPES_CHART.map(c => (
-                  <SelectItem key={c.value} value={c.value} className="text-[8px] sm:text-[10px]">
+                  <SelectItem key={c.value} value={c.value} className="text-[10px]">
                     {c.label}
                   </SelectItem>
                 ))}
@@ -922,13 +941,13 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
           {/* Prediction Digit */}
           {['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(selectedContractType) && (
             <div>
-              <label className="text-[7px] sm:text-[9px] text-blue-300 block mb-0.5 sm:mb-1">Prediction (0-9)</label>
-              <div className="grid grid-cols-5 gap-0.5 sm:gap-1">
+              <label className="text-[9px] text-blue-300 block mb-1">Prediction (0-9)</label>
+              <div className="grid grid-cols-5 gap-1">
                 {Array.from({ length: 10 }, (_, i) => (
                   <button
                     key={i}
                     onClick={() => setSelectedPrediction(String(i))}
-                    className={`h-6 sm:h-7 rounded text-[8px] sm:text-[10px] font-mono font-bold transition-all ${
+                    className={`h-7 rounded text-[10px] font-mono font-bold transition-all ${
                       selectedPrediction === String(i) 
                         ? 'bg-blue-500 text-white' 
                         : 'bg-slate-800/50 text-gray-300 hover:bg-slate-700'
@@ -943,9 +962,9 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
           
           {/* Tick Range */}
           <div className="flex items-center justify-between">
-            <label className="text-[7px] sm:text-[9px] text-blue-300">Tick Range</label>
+            <label className="text-[9px] text-blue-300">Tick Range</label>
             <Select value={String(tickRange)} onValueChange={v => setTickRange(parseInt(v))}>
-              <SelectTrigger className="h-5 sm:h-6 text-[7px] sm:text-[9px] w-16 sm:w-20 bg-slate-800/50 border-slate-700">
+              <SelectTrigger className="h-6 text-[9px] w-20 bg-slate-800/50 border-slate-700">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -957,67 +976,67 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
           </div>
           
           {/* Live Stats Badge */}
-          <div className="flex items-center justify-between bg-slate-800/30 rounded-lg p-1 sm:p-1.5 border border-blue-500/20">
-            <div className="flex items-center gap-0.5 sm:gap-1">
-              <span className="relative flex h-1 w-1 sm:h-1.5 sm:w-1.5">
+          <div className="flex items-center justify-between bg-slate-800/30 rounded-lg p-1.5 border border-blue-500/20">
+            <div className="flex items-center gap-1">
+              <span className="relative flex h-1.5 w-1.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-1 w-1 sm:h-1.5 sm:w-1.5 bg-green-500"></span>
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500"></span>
               </span>
-              <span className="text-[6px] sm:text-[8px] text-gray-400">Live Ticks</span>
+              <span className="text-[8px] text-gray-400">Live Ticks</span>
             </div>
-            <Badge variant="outline" className="text-[6px] sm:text-[8px] bg-slate-800/50 border-blue-500/30 text-blue-300">
+            <Badge variant="outline" className="text-[8px] bg-slate-800/50 border-blue-500/30 text-blue-300">
               {totalTicks} ticks
             </Badge>
           </div>
           
           {/* Enhanced Analysis Grid */}
-          <div className="grid grid-cols-2 gap-1 sm:gap-1.5">
-            <div className="bg-slate-800/30 rounded-lg p-1 sm:p-1.5 text-center border border-blue-500/20">
-              <div className="text-[6px] sm:text-[7px] text-blue-300">Odd</div>
-              <div className="font-mono text-[9px] sm:text-[11px] font-bold text-yellow-400">{oddPercentage.toFixed(1)}%</div>
-              <div className="h-0.5 sm:h-1 bg-slate-700 rounded-full mt-0.5 sm:mt-1">
+          <div className="grid grid-cols-2 gap-1.5">
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+              <div className="text-[7px] text-blue-300">Odd</div>
+              <div className="font-mono text-[11px] font-bold text-yellow-400">{oddPercentage.toFixed(1)}%</div>
+              <div className="h-1 bg-slate-700 rounded-full mt-0.5">
                 <div className="h-full bg-yellow-500 rounded-full" style={{ width: `${oddPercentage}%` }} />
               </div>
             </div>
-            <div className="bg-slate-800/30 rounded-lg p-1 sm:p-1.5 text-center border border-blue-500/20">
-              <div className="text-[6px] sm:text-[7px] text-blue-300">Even</div>
-              <div className="font-mono text-[9px] sm:text-[11px] font-bold text-green-400">{evenPercentage.toFixed(1)}%</div>
-              <div className="h-0.5 sm:h-1 bg-slate-700 rounded-full mt-0.5 sm:mt-1">
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+              <div className="text-[7px] text-blue-300">Even</div>
+              <div className="font-mono text-[11px] font-bold text-green-400">{evenPercentage.toFixed(1)}%</div>
+              <div className="h-1 bg-slate-700 rounded-full mt-0.5">
                 <div className="h-full bg-green-500 rounded-full" style={{ width: `${evenPercentage}%` }} />
               </div>
             </div>
-            <div className="bg-slate-800/30 rounded-lg p-1 sm:p-1.5 text-center border border-blue-500/20">
-              <div className="text-[6px] sm:text-[7px] text-blue-300">Over 4</div>
-              <div className="font-mono text-[9px] sm:text-[11px] font-bold text-blue-400">{overPercentage.toFixed(1)}%</div>
-              <div className="h-0.5 sm:h-1 bg-slate-700 rounded-full mt-0.5 sm:mt-1">
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+              <div className="text-[7px] text-blue-300">Over 4</div>
+              <div className="font-mono text-[11px] font-bold text-blue-400">{overPercentage.toFixed(1)}%</div>
+              <div className="h-1 bg-slate-700 rounded-full mt-0.5">
                 <div className="h-full bg-blue-500 rounded-full" style={{ width: `${overPercentage}%` }} />
               </div>
             </div>
-            <div className="bg-slate-800/30 rounded-lg p-1 sm:p-1.5 text-center border border-blue-500/20">
-              <div className="text-[6px] sm:text-[7px] text-blue-300">Under 5</div>
-              <div className="font-mono text-[9px] sm:text-[11px] font-bold text-yellow-400">{underPercentage.toFixed(1)}%</div>
-              <div className="h-0.5 sm:h-1 bg-slate-700 rounded-full mt-0.5 sm:mt-1">
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+              <div className="text-[7px] text-blue-300">Under 5</div>
+              <div className="font-mono text-[11px] font-bold text-yellow-400">{underPercentage.toFixed(1)}%</div>
+              <div className="h-1 bg-slate-700 rounded-full mt-0.5">
                 <div className="h-full bg-yellow-500 rounded-full" style={{ width: `${underPercentage}%` }} />
               </div>
             </div>
-            <div className="bg-slate-800/30 rounded-lg p-1 sm:p-1.5 text-center border border-purple-500/20">
-              <div className="text-[6px] sm:text-[7px] text-purple-300">Over 3</div>
-              <div className="font-mono text-[9px] sm:text-[11px] font-bold text-purple-400">{over3Percentage.toFixed(1)}%</div>
-              <div className="h-0.5 sm:h-1 bg-slate-700 rounded-full mt-0.5 sm:mt-1">
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-purple-500/20">
+              <div className="text-[7px] text-purple-300">Over 3</div>
+              <div className="font-mono text-[11px] font-bold text-purple-400">{over3Percentage.toFixed(1)}%</div>
+              <div className="h-1 bg-slate-700 rounded-full mt-0.5">
                 <div className="h-full bg-purple-500 rounded-full" style={{ width: `${over3Percentage}%` }} />
               </div>
             </div>
-            <div className="bg-slate-800/30 rounded-lg p-1 sm:p-1.5 text-center border border-purple-500/20">
-              <div className="text-[6px] sm:text-[7px] text-purple-300">Under 6</div>
-              <div className="font-mono text-[9px] sm:text-[11px] font-bold text-purple-400">{under6Percentage.toFixed(1)}%</div>
-              <div className="h-0.5 sm:h-1 bg-slate-700 rounded-full mt-0.5 sm:mt-1">
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-purple-500/20">
+              <div className="text-[7px] text-purple-300">Under 6</div>
+              <div className="font-mono text-[11px] font-bold text-purple-400">{under6Percentage.toFixed(1)}%</div>
+              <div className="h-1 bg-slate-700 rounded-full mt-0.5">
                 <div className="h-full bg-purple-500 rounded-full" style={{ width: `${under6Percentage}%` }} />
               </div>
             </div>
           </div>
           
           {/* Digits Grid */}
-          <div className="grid grid-cols-5 gap-0.5 sm:gap-1">
+          <div className="grid grid-cols-5 gap-1">
             {Array.from({ length: 10 }, (_, d) => {
               const pct = percentages[d] || 0;
               const isHot = pct > 12;
@@ -1027,15 +1046,15 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
                 <button
                   key={d}
                   onClick={() => setSelectedPrediction(String(d))}
-                  className={`rounded-lg p-1 sm:p-1.5 text-center transition-all border cursor-pointer ${
-                    selectedPrediction === String(d) ? 'ring-1 sm:ring-2 ring-blue-500' : ''
+                  className={`rounded-lg p-1.5 text-center transition-all border cursor-pointer ${
+                    selectedPrediction === String(d) ? 'ring-2 ring-blue-500' : ''
                   } ${isHot ? 'bg-red-500/20 border-red-500/40 text-red-400' :
                     isBestMatch ? 'bg-green-500/20 border-green-500/40 text-green-400' :
                     isSecondBest ? 'bg-blue-500/20 border-blue-500/40 text-blue-400' :
                     'bg-slate-800/30 border-slate-700 text-gray-300'}`}
                 >
-                  <div className="font-mono text-[10px] sm:text-[13px] font-bold">{d}</div>
-                  <div className="text-[5px] sm:text-[7px]">{pct.toFixed(1)}%</div>
+                  <div className="font-mono text-[13px] font-bold">{d}</div>
+                  <div className="text-[7px]">{pct.toFixed(1)}%</div>
                   <div className="h-0.5 bg-slate-700 rounded-full mt-0.5">
                     <div className={`h-full rounded-full ${isHot ? 'bg-red-500' : isBestMatch ? 'bg-green-500' : isSecondBest ? 'bg-blue-500' : 'bg-gray-500'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
                   </div>
@@ -1045,38 +1064,38 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
           </div>
           
           {/* Digit Analysis Summary */}
-          <div className="grid grid-cols-3 gap-1 sm:gap-1.5">
-            <div className="bg-slate-800/30 rounded-lg p-1 sm:p-1.5 text-center border border-green-500/20">
-              <div className="text-[5px] sm:text-[7px] text-green-400">🔥 Most Appearing</div>
-              <div className="font-mono text-[10px] sm:text-[13px] font-bold text-green-400">{mostCommon}</div>
-              <div className="text-[5px] sm:text-[6px] text-gray-500">{percentages[mostCommon]?.toFixed(1)}%</div>
+          <div className="grid grid-cols-3 gap-1.5">
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-green-500/20">
+              <div className="text-[7px] text-green-400">🔥 Most Appearing</div>
+              <div className="font-mono text-[13px] font-bold text-green-400">{mostCommon}</div>
+              <div className="text-[6px] text-gray-500">{percentages[mostCommon]?.toFixed(1)}%</div>
             </div>
-            <div className="bg-slate-800/30 rounded-lg p-1 sm:p-1.5 text-center border border-blue-500/20">
-              <div className="text-[5px] sm:text-[7px] text-blue-400">⭐ Second Most</div>
-              <div className="font-mono text-[10px] sm:text-[13px] font-bold text-blue-400">{secondMost}</div>
-              <div className="text-[5px] sm:text-[6px] text-gray-500">{percentages[secondMost]?.toFixed(1)}%</div>
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+              <div className="text-[7px] text-blue-400">⭐ Second Most</div>
+              <div className="font-mono text-[13px] font-bold text-blue-400">{secondMost}</div>
+              <div className="text-[6px] text-gray-500">{percentages[secondMost]?.toFixed(1)}%</div>
             </div>
-            <div className="bg-slate-800/30 rounded-lg p-1 sm:p-1.5 text-center border border-red-500/20">
-              <div className="text-[5px] sm:text-[7px] text-red-400">❄️ Least Appearing</div>
-              <div className="font-mono text-[10px] sm:text-[13px] font-bold text-red-400">{leastCommon}</div>
-              <div className="text-[5px] sm:text-[6px] text-gray-500">{percentages[leastCommon]?.toFixed(1)}%</div>
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-red-500/20">
+              <div className="text-[7px] text-red-400">❄️ Least Appearing</div>
+              <div className="font-mono text-[13px] font-bold text-red-400">{leastCommon}</div>
+              <div className="text-[6px] text-gray-500">{percentages[leastCommon]?.toFixed(1)}%</div>
             </div>
           </div>
           
           {/* Even/Odd Recommendation */}
-          <div className="bg-slate-800/30 rounded-lg p-1 sm:p-1.5 text-center border border-blue-500/20">
-            <div className="text-[5px] sm:text-[7px] text-blue-300">Even/Odd Recommendation</div>
-            <div className={`font-mono text-[9px] sm:text-[11px] font-bold ${evenPercentage > 50 ? 'text-green-400' : 'text-yellow-400'}`}>
+          <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+            <div className="text-[7px] text-blue-300">Even/Odd Recommendation</div>
+            <div className={`font-mono text-[11px] font-bold ${evenPercentage > 50 ? 'text-green-400' : 'text-yellow-400'}`}>
               {evenPercentage > 50 ? 'EVEN' : 'ODD'}
             </div>
-            <div className="text-[5px] sm:text-[6px] text-gray-500">Confidence: {Math.max(evenPercentage, oddPercentage).toFixed(1)}%</div>
+            <div className="text-[6px] text-gray-500">Confidence: {Math.max(evenPercentage, oddPercentage).toFixed(1)}%</div>
           </div>
           
           {/* Legend */}
-          <div className="flex flex-wrap gap-1 sm:gap-2 text-[5px] sm:text-[7px] justify-center border-t border-slate-800 pt-1.5 sm:pt-2">
+          <div className="flex flex-wrap gap-2 text-[7px] justify-center border-t border-slate-800 pt-2">
             {legend.symbol1 && (
-              <div className="flex items-center gap-0.5 sm:gap-1">
-                <div className={`w-2 h-2 sm:w-3 sm:h-3 rounded flex items-center justify-center text-[4px] sm:text-[6px] font-bold ${
+              <div className="flex items-center gap-1">
+                <div className={`w-3 h-3 rounded flex items-center justify-center text-[6px] font-bold ${
                   legend.symbol1 === 'R' ? 'bg-green-500/20 text-green-400' :
                   legend.symbol1 === 'F' ? 'bg-red-500/20 text-red-400' :
                   legend.symbol1 === 'O' ? 'bg-red-500/20 text-red-400' :
@@ -1089,8 +1108,8 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
               </div>
             )}
             {legend.symbol2 && (
-              <div className="flex items-center gap-0.5 sm:gap-1">
-                <div className={`w-2 h-2 sm:w-3 sm:h-3 rounded flex items-center justify-center text-[4px] sm:text-[6px] font-bold ${
+              <div className="flex items-center gap-1">
+                <div className={`w-3 h-3 rounded flex items-center justify-center text-[6px] font-bold ${
                   legend.symbol2 === 'R' ? 'bg-green-500/20 text-green-400' :
                   legend.symbol2 === 'F' ? 'bg-red-500/20 text-red-400' :
                   legend.symbol2 === 'O' ? 'bg-red-500/20 text-red-400' :
@@ -1103,8 +1122,8 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
               </div>
             )}
             {legend.symbol3 && (
-              <div className="flex items-center gap-0.5 sm:gap-1">
-                <div className={`w-2 h-2 sm:w-3 sm:h-3 rounded flex items-center justify-center text-[4px] sm:text-[6px] font-bold ${
+              <div className="flex items-center gap-1">
+                <div className={`w-3 h-3 rounded flex items-center justify-center text-[6px] font-bold ${
                   legend.symbol3 === 'R' ? 'bg-green-500/20 text-green-400' :
                   legend.symbol3 === 'F' ? 'bg-red-500/20 text-red-400' :
                   'bg-gray-500/20 text-gray-400'
@@ -1118,9 +1137,9 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
           
           {/* Last 26 Digits */}
           <div>
-            <div className="flex items-center justify-between mb-1 sm:mb-1.5">
-              <h4 className="text-[7px] sm:text-[9px] font-semibold text-blue-300">Filtration Chamber</h4>
-              <Badge className="text-[5px] sm:text-[6px] bg-blue-500/20 text-blue-400 border-blue-500/30">
+            <div className="flex items-center justify-between mb-1.5">
+              <h4 className="text-[9px] font-semibold text-blue-300">Filtration Chamber</h4>
+              <Badge className="text-[6px] bg-blue-500/20 text-blue-400 border-blue-500/30">
                 {selectedContractType === 'CALL' ? 'Rise' : 
                  selectedContractType === 'PUT' ? 'Fall' :
                  selectedContractType === 'DIGITOVER' ? `Over ${selectedPrediction}` :
@@ -1131,7 +1150,7 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
                  `Diff ${selectedPrediction}`}
               </Badge>
             </div>
-            <div className="flex gap-0.5 sm:gap-1 flex-wrap justify-center">
+            <div className="flex gap-1 flex-wrap justify-center">
               {displaySymbols.length > 0 ? (
                 displaySymbols.map((sym, i) => {
                   const isLast = i === displaySymbols.length - 1;
@@ -1161,8 +1180,8 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
                   return (
                     <div
                       key={i}
-                      className={`w-5 h-6 sm:w-6 sm:h-7 rounded-lg flex items-center justify-center font-mono font-bold text-[9px] sm:text-[11px] border ${
-                        isLast ? 'ring-1 sm:ring-2 ring-blue-500 w-6 h-7 sm:w-7 sm:h-8 text-[10px] sm:text-sm' : ''
+                      className={`w-6 h-7 rounded-lg flex items-center justify-center font-mono font-bold text-[11px] border ${
+                        isLast ? 'ring-2 ring-blue-500 w-7 h-8 text-sm' : ''
                       } ${bgColor} ${textColor} border-slate-700`}
                     >
                       {sym}
@@ -1170,12 +1189,12 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
                   );
                 })
               ) : (
-                <div className="text-center text-[7px] sm:text-[9px] text-gray-500 py-2">Waiting for ticks...</div>
+                <div className="text-center text-[9px] text-gray-500 py-2">Waiting for ticks...</div>
               )}
             </div>
           </div>
           
-          <div className="text-center text-[5px] sm:text-[6px] text-gray-500 py-1">
+          <div className="text-center text-[6px] text-gray-500 py-1">
             🔄 Updates in real-time with each new tick
           </div>
         </div>
@@ -1215,7 +1234,7 @@ type BotStatus = 'idle' | 'trading_m1' | 'recovery' | 'waiting_pattern' | 'patte
 interface LogEntry {
   id: number;
   time: string;
-  market: 'M1' | 'M2' | 'VH' | 'SYSTEM';
+  market: 'M1' | 'M2' | 'VH';
   symbol: string;
   contract: string;
   stake: number;
@@ -2388,13 +2407,13 @@ export default function ProScannerBot() {
     <>
       <style>{notificationStyles}</style>
       
-      {/* Floating Chat Button - Positioned at bottom right */}
-      <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-40">
+      {/* Floating Chart Button - Positioned at bottom right */}
+      <div className="fixed bottom-6 right-6 z-40">
         <button
           ref={chartButtonRef}
           onClick={handleOpenTradingChart}
           className={`
-            group relative w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 
+            group relative w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 
             shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 
             transition-all duration-300 hover:scale-110 active:scale-95
             flex items-center justify-center
@@ -2402,63 +2421,62 @@ export default function ProScannerBot() {
           `}
         >
           <div className="absolute inset-0 rounded-full bg-gradient-to-br from-white/20 to-transparent" />
-          <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5 text-white relative z-10" />
-          <span className="absolute -top-1 -right-1 w-2 h-2 sm:w-3 sm:h-3 bg-green-500 rounded-full animate-pulse ring-1 sm:ring-2 ring-white" />
+          <BarChart3 className="w-5 h-5 text-white relative z-10" />
+          <span className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse ring-2 ring-white" />
         </button>
       </div>
 
-      {/* Social Notification Popup - Centered */}
+      {/* Social Notification Popup - Centered with 100px top padding */}
       {showSocialPopup && <SocialNotificationPopup onClose={handleCloseSocialPopup} />}
 
-      {/* Trading Chart Popup - Draggable */}
+      {/* Trading Chart Popup - Centered with 100px top padding */}
       {showTradingChart && (
         <TradingChartPopup onClose={handleCloseTradingChart} isRunning={isRunning} />
       )}
 
-      {/* Main Content - Responsive padding and spacing */}
-      <div className="space-y-2 sm:space-y-3 max-w-7xl mx-auto p-2 sm:p-4">
-        {/* Header - Reduced height on mobile */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-3 bg-gradient-to-r from-card/80 to-card/50 backdrop-blur-sm border border-blue-500/20 rounded-xl px-3 py-2 sm:px-4 sm:py-3 shadow-lg">
-          <div className="flex items-center gap-2 sm:gap-3">
-            <div className="p-1.5 sm:p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-md">
-              <Scan className="w-3 h-3 sm:w-4 sm:h-4 text-white" />
+      <div className="space-y-3 max-w-7xl mx-auto p-4">
+        {/* Header */}
+        <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-card/80 to-card/50 backdrop-blur-sm border border-blue-500/20 rounded-xl px-4 py-3 shadow-lg">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-md">
+              <Scan className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h1 className="text-sm sm:text-base font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">Ramzfx Pro Scanner Bot</h1>
-              <p className="text-[8px] sm:text-[10px] text-blue-300/80">Advanced Market Scanning & Recovery System</p>
+              <h1 className="text-base font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">Ramzfx Pro Scanner Bot</h1>
+              <p className="text-[10px] text-blue-300/80">Ramzfx Advanced Market Scanning & Recovery System</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 self-end sm:self-auto">
-            <Badge className={`${status.color} text-[8px] sm:text-[9px] px-1.5 py-0.5 sm:px-2 bg-muted/50 border-blue-500/20`}>
+          <div className="flex items-center gap-2">
+            <Badge className={`${status.color} text-[9px] px-2 py-0.5 bg-muted/50 border-blue-500/20`}>
               {status.icon} {status.label}
             </Badge>
             {isRunning && (
-              <Badge variant="outline" className="text-[8px] sm:text-[9px] text-warning animate-pulse font-mono border-yellow-500/30">
+              <Badge variant="outline" className="text-[9px] text-warning animate-pulse font-mono border-yellow-500/30">
                 P/L: ${netProfit.toFixed(2)}
               </Badge>
             )}
           </div>
         </div>
 
-        {/* Scanner + Turbo + Stats Row - Responsive grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
-          <div className="bg-card border border-blue-500/20 rounded-xl p-2 sm:p-3">
-            <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-              <div className="flex items-center gap-1 sm:gap-1.5">
-                <Eye className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-blue-400" />
-                <span className="text-[10px] sm:text-xs font-semibold">Scan All Markets</span>
-                <Badge variant={scannerActive ? 'default' : 'secondary'} className="text-[7px] sm:text-[9px] h-3.5 sm:h-4 px-1 sm:px-1.5">
+        {/* Scanner + Turbo + Stats Row */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="bg-card border border-blue-500/20 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5 text-blue-400" />
+                <span className="text-xs font-semibold">Scan All Markets </span>
+                <Badge variant={scannerActive ? 'default' : 'secondary'} className="text-[9px] h-4 px-1.5">
                   {scannerActive ? '🟢 ON' : '⚫ OFF'}
                 </Badge>
               </div>
-              <Switch checked={scannerActive} onCheckedChange={setScannerActive} disabled={isRunning} className="scale-75 sm:scale-100" />
+              <Switch checked={scannerActive} onCheckedChange={setScannerActive} disabled={isRunning} />
             </div>
-            <div className="flex flex-wrap gap-0.5 sm:gap-1 max-h-16 sm:max-h-20 overflow-y-auto">
+            <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
               {SCANNER_MARKETS.map(m => {
                 const count = tickCounts[m.symbol] || 0;
                 return (
                   <Badge key={m.symbol} variant="outline"
-                    className={`text-[6px] sm:text-[8px] h-4 sm:h-5 px-0.5 sm:px-1 font-mono ${count > 0 ? 'border-blue-500/50 text-blue-400' : 'text-muted-foreground'}`}>
+                    className={`text-[8px] h-5 px-1 font-mono ${count > 0 ? 'border-blue-500/50 text-blue-400' : 'text-muted-foreground'}`}>
                     {m.name}
                   </Badge>
                 );
@@ -2466,138 +2484,138 @@ export default function ProScannerBot() {
             </div>
           </div>
 
-          <div className="bg-card border border-blue-500/20 rounded-xl p-2 sm:p-3">
-            <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-              <div className="flex items-center gap-1 sm:gap-1.5">
-                <Zap className={`w-3 h-3 sm:w-3.5 sm:h-3.5 ${turboMode ? 'text-blue-400 animate-pulse' : 'text-muted-foreground'}`} />
-                <span className="text-[10px] sm:text-xs font-semibold">Turbo Mode</span>
+          <div className="bg-card border border-blue-500/20 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-1.5">
+                <Zap className={`w-3.5 h-3.5 ${turboMode ? 'text-blue-400 animate-pulse' : 'text-muted-foreground'}`} />
+                <span className="text-xs font-semibold">Turbo Mode</span>
               </div>
               <Button
                 size="sm"
                 variant={turboMode ? 'default' : 'outline'}
-                className={`h-5 sm:h-6 text-[7px] sm:text-[9px] px-1.5 sm:px-2 ${turboMode ? 'bg-blue-500 hover:bg-blue-600 text-white animate-pulse' : ''}`}
+                className={`h-6 text-[9px] px-2 ${turboMode ? 'bg-blue-500 hover:bg-blue-600 text-white animate-pulse' : ''}`}
                 onClick={() => setTurboMode(!turboMode)}
                 disabled={isRunning}
               >
                 {turboMode ? '⚡ ON' : 'OFF'}
               </Button>
             </div>
-            <div className="grid grid-cols-3 gap-0.5 sm:gap-1 text-center">
-              <div className="bg-muted/50 rounded p-0.5 sm:p-1">
-                <div className="text-[6px] sm:text-[8px] text-muted-foreground">Latency</div>
-                <div className="font-mono text-[8px] sm:text-[10px] text-blue-400 font-bold">{turboLatency}ms</div>
+            <div className="grid grid-cols-3 gap-1 text-center">
+              <div className="bg-muted/50 rounded p-1">
+                <div className="text-[8px] text-muted-foreground">Latency</div>
+                <div className="font-mono text-[10px] text-blue-400 font-bold">{turboLatency}ms</div>
               </div>
-              <div className="bg-muted/50 rounded p-0.5 sm:p-1">
-                <div className="text-[6px] sm:text-[8px] text-muted-foreground">Captured</div>
-                <div className="font-mono text-[8px] sm:text-[10px] text-profit font-bold">{ticksCaptured}</div>
+              <div className="bg-muted/50 rounded p-1">
+                <div className="text-[8px] text-muted-foreground">Captured</div>
+                <div className="font-mono text-[10px] text-profit font-bold">{ticksCaptured}</div>
               </div>
-              <div className="bg-muted/50 rounded p-0.5 sm:p-1">
-                <div className="text-[6px] sm:text-[8px] text-muted-foreground">Missed</div>
-                <div className="font-mono text-[8px] sm:text-[10px] text-loss font-bold">{ticksMissed}</div>
+              <div className="bg-muted/50 rounded p-1">
+                <div className="text-[8px] text-muted-foreground">Missed</div>
+                <div className="font-mono text-[10px] text-loss font-bold">{ticksMissed}</div>
               </div>
             </div>
           </div>
 
-          <div className="bg-card border border-blue-500/20 rounded-xl p-2 sm:p-3">
-            <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-              <span className="text-[10px] sm:text-xs font-semibold">Live Stats</span>
-              <span className="font-mono text-xs sm:text-sm font-bold text-blue-400">${localBalance.toFixed(2)}</span>
+          <div className="bg-card border border-blue-500/20 rounded-xl p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold">Live Stats</span>
+              <span className="font-mono text-sm font-bold text-blue-400">${localBalance.toFixed(2)}</span>
             </div>
-            <div className="grid grid-cols-3 gap-0.5 sm:gap-1 text-center">
-              <div className="bg-muted/50 rounded p-0.5 sm:p-1">
-                <div className="text-[6px] sm:text-[8px] text-muted-foreground">W/L</div>
-                <div className="font-mono text-[8px] sm:text-[10px] font-bold"><span className="text-profit">{wins}</span>/<span className="text-loss">{losses}</span></div>
+            <div className="grid grid-cols-3 gap-1 text-center">
+              <div className="bg-muted/50 rounded p-1">
+                <div className="text-[8px] text-muted-foreground">W/L</div>
+                <div className="font-mono text-[10px] font-bold"><span className="text-profit">{wins}</span>/<span className="text-loss">{losses}</span></div>
               </div>
-              <div className="bg-muted/50 rounded p-0.5 sm:p-1">
-                <div className="text-[6px] sm:text-[8px] text-muted-foreground">P/L</div>
-                <div className={`font-mono text-[8px] sm:text-[10px] font-bold ${netProfit >= 0 ? 'text-profit' : 'text-loss'}`}>${netProfit.toFixed(2)}</div>
+              <div className="bg-muted/50 rounded p-1">
+                <div className="text-[8px] text-muted-foreground">P/L</div>
+                <div className={`font-mono text-[10px] font-bold ${netProfit >= 0 ? 'text-profit' : 'text-loss'}`}>${netProfit.toFixed(2)}</div>
               </div>
-              <div className="bg-muted/50 rounded p-0.5 sm:p-1">
-                <div className="text-[6px] sm:text-[8px] text-muted-foreground">Stake</div>
-                <div className="font-mono text-[8px] sm:text-[10px] font-bold text-foreground">${currentStake.toFixed(2)}{martingaleStep > 0 && <span className="text-warning ml-0.5">M{martingaleStep}</span>}</div>
+              <div className="bg-muted/50 rounded p-1">
+                <div className="text-[8px] text-muted-foreground">Stake</div>
+                <div className="font-mono text-[10px] font-bold text-foreground">${currentStake.toFixed(2)}{martingaleStep > 0 && <span className="text-warning ml-0.5">M{martingaleStep}</span>}</div>
               </div>
             </div>
           </div>
         </div>
 
         {/* Main 2-Column Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 sm:gap-3">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
           {/* LEFT: Config Column */}
-          <div className="lg:col-span-4 space-y-2 sm:space-y-3">
+          <div className="lg:col-span-4 space-y-3">
             {/* Market Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2 sm:gap-3">
-              <div className="bg-card border-2 border-blue-500/30 rounded-xl p-2 sm:p-3 space-y-1.5 sm:space-y-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-3">
+              <div className="bg-card border-2 border-blue-500/30 rounded-xl p-3 space-y-2">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-[10px] sm:text-xs font-bold text-blue-400 flex items-center gap-1"><Home className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> M1 — Home</h3>
-                  <div className="flex items-center gap-1 sm:gap-1.5">
-                    {currentMarket === 1 && isRunning && <span className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-blue-400 animate-pulse" />}
-                    <Switch checked={m1Enabled} onCheckedChange={setM1Enabled} disabled={isRunning} className="scale-75 sm:scale-100" />
+                  <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1"><Home className="w-3.5 h-3.5" /> M1 — Home</h3>
+                  <div className="flex items-center gap-1.5">
+                    {currentMarket === 1 && isRunning && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />}
+                    <Switch checked={m1Enabled} onCheckedChange={setM1Enabled} disabled={isRunning} />
                   </div>
                 </div>
                 <Select value={m1Symbol} onValueChange={v => setM1Symbol(v)} disabled={isRunning}>
-                  <SelectTrigger className="h-6 sm:h-7 text-[9px] sm:text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>{SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol} className="text-[9px] sm:text-xs">{m.name}</SelectItem>)}</SelectContent>
+                  <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>{SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name}</SelectItem>)}</SelectContent>
                 </Select>
                 <Select value={m1Contract} onValueChange={v => setM1Contract(v)} disabled={isRunning}>
-                  <SelectTrigger className="h-6 sm:h-7 text-[9px] sm:text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c} value={c} className="text-[9px] sm:text-xs">{c}</SelectItem>)}</SelectContent>
+                  <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                 </Select>
                 {needsBarrier(m1Contract) && (
-                  <Input type="number" min="0" max="9" value={m1Barrier} onChange={e => setM1Barrier(e.target.value)} className="h-6 sm:h-7 text-[9px] sm:text-xs" disabled={isRunning} />
+                  <Input type="number" min="0" max="9" value={m1Barrier} onChange={e => setM1Barrier(e.target.value)} className="h-7 text-xs" disabled={isRunning} />
                 )}
-                <div className="border-t border-border/30 pt-1.5 sm:pt-2">
+                <div className="border-t border-border/30 pt-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[8px] sm:text-[9px] font-semibold text-blue-400 flex items-center gap-1"><Anchor className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Virtual Hook</span>
-                    <Switch checked={m1HookEnabled} onCheckedChange={setM1HookEnabled} disabled={isRunning} className="scale-75 sm:scale-100" />
+                    <span className="text-[9px] font-semibold text-blue-400 flex items-center gap-1"><Anchor className="w-3 h-3" /> Virtual Hook</span>
+                    <Switch checked={m1HookEnabled} onCheckedChange={setM1HookEnabled} disabled={isRunning} />
                   </div>
                   {m1HookEnabled && (
-                    <div className="grid grid-cols-2 gap-1 sm:gap-1.5 mt-1">
+                    <div className="grid grid-cols-2 gap-1.5 mt-1">
                       <div>
-                        <label className="text-[7px] sm:text-[8px] text-muted-foreground">V-Losses</label>
-                        <Input type="number" min="1" max="20" value={m1VirtualLossCount} onChange={e => setM1VirtualLossCount(e.target.value)} disabled={isRunning} className="h-5 sm:h-6 text-[8px] sm:text-[10px]" />
+                        <label className="text-[8px] text-muted-foreground">V-Losses</label>
+                        <Input type="number" min="1" max="20" value={m1VirtualLossCount} onChange={e => setM1VirtualLossCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                       </div>
                       <div>
-                        <label className="text-[7px] sm:text-[8px] text-muted-foreground">Real Trades</label>
-                        <Input type="number" min="1" max="10" value={m1RealCount} onChange={e => setM1RealCount(e.target.value)} disabled={isRunning} className="h-5 sm:h-6 text-[8px] sm:text-[10px]" />
+                        <label className="text-[8px] text-muted-foreground">Real Trades</label>
+                        <Input type="number" min="1" max="10" value={m1RealCount} onChange={e => setM1RealCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                       </div>
                     </div>
                   )}
                 </div>
               </div>
 
-              <div className="bg-card border-2 border-purple-500/30 rounded-xl p-2 sm:p-3 space-y-1.5 sm:space-y-2">
+              <div className="bg-card border-2 border-purple-500/30 rounded-xl p-3 space-y-2">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-[10px] sm:text-xs font-bold text-purple-400 flex items-center gap-1"><RefreshCw className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> M2 — Recovery</h3>
-                  <div className="flex items-center gap-1 sm:gap-1.5">
-                    {currentMarket === 2 && isRunning && <span className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-purple-400 animate-pulse" />}
-                    <Switch checked={m2Enabled} onCheckedChange={setM2Enabled} disabled={isRunning} className="scale-75 sm:scale-100" />
+                  <h3 className="text-xs font-bold text-purple-400 flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5" /> M2 — Recovery</h3>
+                  <div className="flex items-center gap-1.5">
+                    {currentMarket === 2 && isRunning && <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />}
+                    <Switch checked={m2Enabled} onCheckedChange={setM2Enabled} disabled={isRunning} />
                   </div>
                 </div>
                 <Select value={m2Symbol} onValueChange={v => setM2Symbol(v)} disabled={isRunning}>
-                  <SelectTrigger className="h-6 sm:h-7 text-[9px] sm:text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>{SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol} className="text-[9px] sm:text-xs">{m.name}</SelectItem>)}</SelectContent>
+                  <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>{SCANNER_MARKETS.map(m => <SelectItem key={m.symbol} value={m.symbol}>{m.name}</SelectItem>)}</SelectContent>
                 </Select>
                 <Select value={m2Contract} onValueChange={v => setM2Contract(v)} disabled={isRunning}>
-                  <SelectTrigger className="h-6 sm:h-7 text-[9px] sm:text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c} value={c} className="text-[9px] sm:text-xs">{c}</SelectItem>)}</SelectContent>
+                  <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>{CONTRACT_TYPES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                 </Select>
                 {needsBarrier(m2Contract) && (
-                  <Input type="number" min="0" max="9" value={m2Barrier} onChange={e => setM2Barrier(e.target.value)} className="h-6 sm:h-7 text-[9px] sm:text-xs" disabled={isRunning} />
+                  <Input type="number" min="0" max="9" value={m2Barrier} onChange={e => setM2Barrier(e.target.value)} className="h-7 text-xs" disabled={isRunning} />
                 )}
-                <div className="border-t border-border/30 pt-1.5 sm:pt-2">
+                <div className="border-t border-border/30 pt-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[8px] sm:text-[9px] font-semibold text-blue-400 flex items-center gap-1"><Anchor className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Virtual Hook</span>
-                    <Switch checked={m2HookEnabled} onCheckedChange={setM2HookEnabled} disabled={isRunning} className="scale-75 sm:scale-100" />
+                    <span className="text-[9px] font-semibold text-blue-400 flex items-center gap-1"><Anchor className="w-3 h-3" /> Virtual Hook</span>
+                    <Switch checked={m2HookEnabled} onCheckedChange={setM2HookEnabled} disabled={isRunning} />
                   </div>
                   {m2HookEnabled && (
-                    <div className="grid grid-cols-2 gap-1 sm:gap-1.5 mt-1">
+                    <div className="grid grid-cols-2 gap-1.5 mt-1">
                       <div>
-                        <label className="text-[7px] sm:text-[8px] text-muted-foreground">V-Losses</label>
-                        <Input type="number" min="1" max="20" value={m2VirtualLossCount} onChange={e => setM2VirtualLossCount(e.target.value)} disabled={isRunning} className="h-5 sm:h-6 text-[8px] sm:text-[10px]" />
+                        <label className="text-[8px] text-muted-foreground">V-Losses</label>
+                        <Input type="number" min="1" max="20" value={m2VirtualLossCount} onChange={e => setM2VirtualLossCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                       </div>
                       <div>
-                        <label className="text-[7px] sm:text-[8px] text-muted-foreground">Real Trades</label>
-                        <Input type="number" min="1" max="10" value={m2RealCount} onChange={e => setM2RealCount(e.target.value)} disabled={isRunning} className="h-5 sm:h-6 text-[8px] sm:text-[10px]" />
+                        <label className="text-[8px] text-muted-foreground">Real Trades</label>
+                        <Input type="number" min="1" max="10" value={m2RealCount} onChange={e => setM2RealCount(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" />
                       </div>
                     </div>
                   )}
@@ -2607,24 +2625,24 @@ export default function ProScannerBot() {
 
             {/* Virtual Hook Stats */}
             {(m1HookEnabled || m2HookEnabled) && (
-              <div className="bg-card border border-blue-500/30 rounded-xl p-2 sm:p-3">
-                <h3 className="text-[9px] sm:text-[10px] font-semibold text-blue-400 flex items-center gap-1 mb-1.5 sm:mb-2"><Anchor className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Hook Status</h3>
-                <div className="grid grid-cols-4 gap-0.5 sm:gap-1 text-center">
-                  <div className="bg-muted/50 rounded p-0.5 sm:p-1">
-                    <div className="text-[6px] sm:text-[8px] text-muted-foreground">V-Win</div>
-                    <div className="font-mono text-[8px] sm:text-[10px] font-bold text-profit">{vhFakeWins}</div>
+              <div className="bg-card border border-blue-500/30 rounded-xl p-3">
+                <h3 className="text-[10px] font-semibold text-blue-400 flex items-center gap-1 mb-2"><Anchor className="w-3 h-3" /> Hook Status</h3>
+                <div className="grid grid-cols-4 gap-1 text-center">
+                  <div className="bg-muted/50 rounded p-1">
+                    <div className="text-[8px] text-muted-foreground">V-Win</div>
+                    <div className="font-mono text-[10px] font-bold text-profit">{vhFakeWins}</div>
                   </div>
-                  <div className="bg-muted/50 rounded p-0.5 sm:p-1">
-                    <div className="text-[6px] sm:text-[8px] text-muted-foreground">V-Loss</div>
-                    <div className="font-mono text-[8px] sm:text-[10px] font-bold text-loss">{vhFakeLosses}</div>
+                  <div className="bg-muted/50 rounded p-1">
+                    <div className="text-[8px] text-muted-foreground">V-Loss</div>
+                    <div className="font-mono text-[10px] font-bold text-loss">{vhFakeLosses}</div>
                   </div>
-                  <div className="bg-muted/50 rounded p-0.5 sm:p-1">
-                    <div className="text-[6px] sm:text-[8px] text-muted-foreground">Streak</div>
-                    <div className="font-mono text-[8px] sm:text-[10px] font-bold text-warning">{vhConsecLosses}</div>
+                  <div className="bg-muted/50 rounded p-1">
+                    <div className="text-[8px] text-muted-foreground">Streak</div>
+                    <div className="font-mono text-[10px] font-bold text-warning">{vhConsecLosses}</div>
                   </div>
-                  <div className="bg-muted/50 rounded p-0.5 sm:p-1">
-                    <div className="text-[6px] sm:text-[8px] text-muted-foreground">State</div>
-                    <div className={`text-[7px] sm:text-[9px] font-bold ${vhStatus === 'confirmed' ? 'text-profit' : vhStatus === 'waiting' ? 'text-warning animate-pulse' : 'text-muted-foreground'}`}>
+                  <div className="bg-muted/50 rounded p-1">
+                    <div className="text-[8px] text-muted-foreground">State</div>
+                    <div className={`text-[9px] font-bold ${vhStatus === 'confirmed' ? 'text-profit' : vhStatus === 'waiting' ? 'text-warning animate-pulse' : 'text-muted-foreground'}`}>
                       {vhStatus === 'confirmed' ? '✓' : vhStatus === 'waiting' ? '⏳' : '—'}
                     </div>
                   </div>
@@ -2633,45 +2651,45 @@ export default function ProScannerBot() {
             )}
 
             {/* Risk */}
-            <div className="bg-card border border-blue-500/20 rounded-xl p-2 sm:p-3 space-y-1.5 sm:space-y-2">
-              <h3 className="text-[10px] sm:text-xs font-semibold flex items-center gap-1"><Shield className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> Risk Management</h3>
-              <div className="grid grid-cols-3 gap-1 sm:gap-2">
+            <div className="bg-card border border-blue-500/20 rounded-xl p-3 space-y-2">
+              <h3 className="text-xs font-semibold flex items-center gap-1"><Shield className="w-3.5 h-3.5" /> Risk Management</h3>
+              <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="text-[7px] sm:text-[8px] text-muted-foreground">Stake ($)</label>
-                  <Input type="number" min="0.35" step="0.01" value={stake} onChange={e => setStake(e.target.value)} disabled={isRunning} className="h-6 sm:h-7 text-[9px] sm:text-xs" />
+                  <label className="text-[8px] text-muted-foreground">Stake ($)</label>
+                  <Input type="number" min="0.35" step="0.01" value={stake} onChange={e => setStake(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
                 </div>
                 <div>
-                  <label className="text-[7px] sm:text-[8px] text-muted-foreground">Take Profit</label>
-                  <Input type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunning} className="h-6 sm:h-7 text-[9px] sm:text-xs" />
+                  <label className="text-[8px] text-muted-foreground">Take Profit</label>
+                  <Input type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
                 </div>
                 <div>
-                  <label className="text-[7px] sm:text-[8px] text-muted-foreground">Stop Loss</label>
-                  <Input type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunning} className="h-6 sm:h-7 text-[9px] sm:text-xs" />
+                  <label className="text-[8px] text-muted-foreground">Stop Loss</label>
+                  <Input type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
                 </div>
               </div>
               <div className="flex items-center justify-between">
-                <label className="text-[8px] sm:text-[10px]">Martingale</label>
-                <Switch checked={martingaleOn} onCheckedChange={setMartingaleOn} disabled={isRunning} className="scale-75 sm:scale-100" />
+                <label className="text-[10px]">Martingale</label>
+                <Switch checked={martingaleOn} onCheckedChange={setMartingaleOn} disabled={isRunning} />
               </div>
               {martingaleOn && (
-                <div className="grid grid-cols-2 gap-1 sm:gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="text-[7px] sm:text-[8px] text-muted-foreground">Multiplier</label>
-                    <Input type="number" min="1.1" step="0.1" value={martingaleMultiplier} onChange={e => setMartingaleMultiplier(e.target.value)} disabled={isRunning} className="h-6 sm:h-7 text-[9px] sm:text-xs" />
+                    <label className="text-[8px] text-muted-foreground">Multiplier</label>
+                    <Input type="number" min="1.1" step="0.1" value={martingaleMultiplier} onChange={e => setMartingaleMultiplier(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
                   </div>
                   <div>
-                    <label className="text-[7px] sm:text-[8px] text-muted-foreground">Max Steps</label>
-                    <Input type="number" min="1" max="10" value={martingaleMaxSteps} onChange={e => setMartingaleMaxSteps(e.target.value)} disabled={isRunning} className="h-6 sm:h-7 text-[9px] sm:text-xs" />
+                    <label className="text-[8px] text-muted-foreground">Max Steps</label>
+                    <Input type="number" min="1" max="10" value={martingaleMaxSteps} onChange={e => setMartingaleMaxSteps(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
                   </div>
                 </div>
               )}
-              <div className="flex items-center gap-2 sm:gap-3 pt-1">
-                <label className="flex items-center gap-0.5 sm:gap-1 text-[8px] sm:text-[10px]">
-                  <input type="checkbox" checked={strategyM1Enabled} onChange={e => setStrategyM1Enabled(e.target.checked)} disabled={isRunning} className="rounded w-2.5 h-2.5 sm:w-3 sm:h-3" />
+              <div className="flex items-center gap-3 pt-1">
+                <label className="flex items-center gap-1 text-[10px]">
+                  <input type="checkbox" checked={strategyM1Enabled} onChange={e => setStrategyM1Enabled(e.target.checked)} disabled={isRunning} className="rounded w-3 h-3" />
                   Strategy M1
                 </label>
-                <label className="flex items-center gap-0.5 sm:gap-1 text-[8px] sm:text-[10px]">
-                  <input type="checkbox" checked={strategyEnabled} onChange={e => setStrategyEnabled(e.target.checked)} disabled={isRunning} className="rounded w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                <label className="flex items-center gap-1 text-[10px]">
+                  <input type="checkbox" checked={strategyEnabled} onChange={e => setStrategyEnabled(e.target.checked)} disabled={isRunning} className="rounded w-3 h-3" />
                   Strategy M2
                 </label>
               </div>
@@ -2679,79 +2697,79 @@ export default function ProScannerBot() {
 
             {/* Strategy Card */}
             {(strategyEnabled || strategyM1Enabled) && (
-              <div className="bg-card border border-yellow-500/30 rounded-xl p-2 sm:p-3 space-y-1.5 sm:space-y-2">
-                <h3 className="text-[10px] sm:text-xs font-semibold text-yellow-500 flex items-center gap-1"><Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> Strategy Conditions</h3>
+              <div className="bg-card border border-yellow-500/30 rounded-xl p-3 space-y-2">
+                <h3 className="text-xs font-semibold text-yellow-500 flex items-center gap-1"><Zap className="w-3.5 h-3.5" /> Strategy Conditions</h3>
                 {strategyM1Enabled && (
-                  <div className="border border-blue-500/20 rounded-lg p-1.5 sm:p-2 space-y-1">
+                  <div className="border border-blue-500/20 rounded-lg p-2 space-y-1">
                     <div className="flex items-center justify-between">
-                      <label className="text-[8px] sm:text-[9px] font-semibold text-blue-400">M1 Strategy</label>
+                      <label className="text-[9px] font-semibold text-blue-400">M1 Strategy</label>
                       <div className="flex gap-0.5">
-                        <Button size="sm" variant={m1StrategyMode === 'pattern' ? 'default' : 'outline'} className="text-[7px] sm:text-[9px] h-4 sm:h-5 px-1 sm:px-1.5" onClick={() => setM1StrategyMode('pattern')} disabled={isRunning}>Pattern</Button>
-                        <Button size="sm" variant={m1StrategyMode === 'digit' ? 'default' : 'outline'} className="text-[7px] sm:text-[9px] h-4 sm:h-5 px-1 sm:px-1.5" onClick={() => setM1StrategyMode('digit')} disabled={isRunning}>Digit</Button>
+                        <Button size="sm" variant={m1StrategyMode === 'pattern' ? 'default' : 'outline'} className="text-[9px] h-5 px-1.5" onClick={() => setM1StrategyMode('pattern')} disabled={isRunning}>Pattern</Button>
+                        <Button size="sm" variant={m1StrategyMode === 'digit' ? 'default' : 'outline'} className="text-[9px] h-5 px-1.5" onClick={() => setM1StrategyMode('digit')} disabled={isRunning}>Digit</Button>
                       </div>
                     </div>
                     {m1StrategyMode === 'pattern' ? (
                       <>
-                        <Textarea placeholder="E=Even O=Odd e.g. EEEOE" value={m1Pattern} onChange={e => setM1Pattern(e.target.value.toUpperCase().replace(/[^EO]/g, ''))} disabled={isRunning} className="h-8 sm:h-10 text-[8px] sm:text-[10px] font-mono min-h-0" />
-                        <div className={`text-[7px] sm:text-[9px] font-mono ${m1PatternValid ? 'text-profit' : 'text-loss'}`}>
+                        <Textarea placeholder="E=Even O=Odd e.g. EEEOE" value={m1Pattern} onChange={e => setM1Pattern(e.target.value.toUpperCase().replace(/[^EO]/g, ''))} disabled={isRunning} className="h-10 text-[10px] font-mono min-h-0" />
+                        <div className={`text-[9px] font-mono ${m1PatternValid ? 'text-profit' : 'text-loss'}`}>
                           {cleanM1Pattern.length === 0 ? 'Enter pattern...' : m1PatternValid ? `✓ ${cleanM1Pattern}` : `✗ Need 2+`}
                         </div>
                       </>
                     ) : (
-                      <div className="grid grid-cols-3 gap-0.5 sm:gap-1">
-                        <Input type="number" min="1" max="50" value={m1DigitWindow} onChange={e => setM1DigitWindow(e.target.value)} disabled={isRunning} className="h-5 sm:h-6 text-[8px] sm:text-[10px]" placeholder="Window" />
+                      <div className="grid grid-cols-3 gap-1">
+                        <Input type="number" min="1" max="50" value={m1DigitWindow} onChange={e => setM1DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" placeholder="Window" />
                         <Select value={m1DigitCondition} onValueChange={setM1DigitCondition} disabled={isRunning}>
-                          <SelectTrigger className="h-5 sm:h-6 text-[8px] sm:text-[10px]"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="h-6 text-[10px]"><SelectValue /></SelectTrigger>
                           <SelectContent>{['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                         </Select>
-                        <Input type="number" min="0" max="9" value={m1DigitCompare} onChange={e => setM1DigitCompare(e.target.value)} disabled={isRunning} className="h-5 sm:h-6 text-[8px] sm:text-[10px]" placeholder="Digit" />
+                        <Input type="number" min="0" max="9" value={m1DigitCompare} onChange={e => setM1DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" placeholder="Digit" />
                       </div>
                     )}
                   </div>
                 )}
                 {strategyEnabled && (
-                  <div className="border border-purple-500/20 rounded-lg p-1.5 sm:p-2 space-y-1">
+                  <div className="border border-purple-500/20 rounded-lg p-2 space-y-1">
                     <div className="flex items-center justify-between">
-                      <label className="text-[8px] sm:text-[9px] font-semibold text-purple-400">M2 Strategy</label>
+                      <label className="text-[9px] font-semibold text-purple-400">M2 Strategy</label>
                       <div className="flex gap-0.5">
-                        <Button size="sm" variant={m2StrategyMode === 'pattern' ? 'default' : 'outline'} className="text-[7px] sm:text-[9px] h-4 sm:h-5 px-1 sm:px-1.5" onClick={() => setM2StrategyMode('pattern')} disabled={isRunning}>Pattern</Button>
-                        <Button size="sm" variant={m2StrategyMode === 'digit' ? 'default' : 'outline'} className="text-[7px] sm:text-[9px] h-4 sm:h-5 px-1 sm:px-1.5" onClick={() => setM2StrategyMode('digit')} disabled={isRunning}>Digit</Button>
+                        <Button size="sm" variant={m2StrategyMode === 'pattern' ? 'default' : 'outline'} className="text-[9px] h-5 px-1.5" onClick={() => setM2StrategyMode('pattern')} disabled={isRunning}>Pattern</Button>
+                        <Button size="sm" variant={m2StrategyMode === 'digit' ? 'default' : 'outline'} className="text-[9px] h-5 px-1.5" onClick={() => setM2StrategyMode('digit')} disabled={isRunning}>Digit</Button>
                       </div>
                     </div>
                     {m2StrategyMode === 'pattern' ? (
                       <>
-                        <Textarea placeholder="E=Even O=Odd e.g. OOEEO" value={m2Pattern} onChange={e => setM2Pattern(e.target.value.toUpperCase().replace(/[^EO]/g, ''))} disabled={isRunning} className="h-8 sm:h-10 text-[8px] sm:text-[10px] font-mono min-h-0" />
-                        <div className={`text-[7px] sm:text-[9px] font-mono ${m2PatternValid ? 'text-profit' : 'text-loss'}`}>
+                        <Textarea placeholder="E=Even O=Odd e.g. OOEEO" value={m2Pattern} onChange={e => setM2Pattern(e.target.value.toUpperCase().replace(/[^EO]/g, ''))} disabled={isRunning} className="h-10 text-[10px] font-mono min-h-0" />
+                        <div className={`text-[9px] font-mono ${m2PatternValid ? 'text-profit' : 'text-loss'}`}>
                           {cleanM2Pattern.length === 0 ? 'Enter pattern...' : m2PatternValid ? `✓ ${cleanM2Pattern}` : `✗ Need 2+`}
                         </div>
                       </>
                     ) : (
-                      <div className="grid grid-cols-3 gap-0.5 sm:gap-1">
-                        <Input type="number" min="1" max="50" value={m2DigitWindow} onChange={e => setM2DigitWindow(e.target.value)} disabled={isRunning} className="h-5 sm:h-6 text-[8px] sm:text-[10px]" placeholder="Window" />
+                      <div className="grid grid-cols-3 gap-1">
+                        <Input type="number" min="1" max="50" value={m2DigitWindow} onChange={e => setM2DigitWindow(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" placeholder="Window" />
                         <Select value={m2DigitCondition} onValueChange={setM2DigitCondition} disabled={isRunning}>
-                          <SelectTrigger className="h-5 sm:h-6 text-[8px] sm:text-[10px]"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="h-6 text-[10px]"><SelectValue /></SelectTrigger>
                           <SelectContent>{['==', '>', '<', '>=', '<='].map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                         </Select>
-                        <Input type="number" min="0" max="9" value={m2DigitCompare} onChange={e => setM2DigitCompare(e.target.value)} disabled={isRunning} className="h-5 sm:h-6 text-[8px] sm:text-[10px]" placeholder="Digit" />
+                        <Input type="number" min="0" max="9" value={m2DigitCompare} onChange={e => setM2DigitCompare(e.target.value)} disabled={isRunning} className="h-6 text-[10px]" placeholder="Digit" />
                       </div>
                     )}
                   </div>
                 )}
                 {botStatus === 'waiting_pattern' && (
-                  <div className="bg-yellow-500/10 border border-yellow-500/30 rounded p-1 text-[7px] sm:text-[9px] text-yellow-500 animate-pulse text-center font-semibold">⏳ WAITING FOR PATTERN...</div>
+                  <div className="bg-yellow-500/10 border border-yellow-500/30 rounded p-1.5 text-[9px] text-yellow-500 animate-pulse text-center font-semibold">⏳ WAITING FOR PATTERN...</div>
                 )}
                 {botStatus === 'pattern_matched' && (
-                  <div className="bg-green-500/10 border border-green-500/30 rounded p-1 text-[7px] sm:text-[9px] text-green-500 text-center font-semibold animate-pulse">✅ PATTERN MATCHED! Taking trade...</div>
+                  <div className="bg-green-500/10 border border-green-500/30 rounded p-1.5 text-[9px] text-green-500 text-center font-semibold animate-pulse">✅ PATTERN MATCHED! Taking trade...</div>
                 )}
               </div>
             )}
 
             {/* Config Save/Load */}
-            <div className="bg-card border border-blue-500/20 rounded-xl p-2 sm:p-3 space-y-1.5 sm:space-y-2">
-              <h3 className="text-[10px] sm:text-xs font-semibold">💾 Bot Config</h3>
-              <Input placeholder="Enter bot name..." value={botName} onChange={e => setBotName(e.target.value)} disabled={isRunning} className="h-6 sm:h-7 text-[9px] sm:text-xs" />
-              <div className="grid grid-cols-2 gap-1 sm:gap-2">
-                <Button size="sm" variant="outline" className="h-6 sm:h-7 text-[8px] sm:text-[10px] gap-0.5 sm:gap-1" disabled={isRunning || !botName.trim()} onClick={() => {
+            <div className="bg-card border border-blue-500/20 rounded-xl p-3 space-y-2">
+              <h3 className="text-xs font-semibold">💾 Bot Config</h3>
+              <Input placeholder="Enter bot name..." value={botName} onChange={e => setBotName(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
+              <div className="grid grid-cols-2 gap-2">
+                <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1" disabled={isRunning || !botName.trim()} onClick={() => {
                   const safeName = botName.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
                   const config = { version: 1, botName: botName.trim(), m1: { enabled: m1Enabled, symbol: m1Symbol, contract: m1Contract, barrier: m1Barrier, hookEnabled: m1HookEnabled, virtualLossCount: m1VirtualLossCount, realCount: m1RealCount }, m2: { enabled: m2Enabled, symbol: m2Symbol, contract: m2Contract, barrier: m2Barrier, hookEnabled: m2HookEnabled, virtualLossCount: m2VirtualLossCount, realCount: m2RealCount }, risk: { stake, martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss }, strategy: { m1Enabled: strategyM1Enabled, m2Enabled: strategyEnabled, m1Mode: m1StrategyMode, m2Mode: m2StrategyMode, m1Pattern, m1DigitCondition, m1DigitCompare, m1DigitWindow, m2Pattern, m2DigitCondition, m2DigitCompare, m2DigitWindow }, scanner: { active: scannerActive }, turbo: { enabled: turboMode } };
                   const ts = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
@@ -2761,9 +2779,9 @@ export default function ProScannerBot() {
                   a.href = url; a.download = `${safeName}_${ts}.json`; a.click();
                   URL.revokeObjectURL(url);
                 }}>
-                  <Download className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Save
+                  <Download className="w-3 h-3" /> Save
                 </Button>
-                <Button size="sm" variant="outline" className="h-6 sm:h-7 text-[8px] sm:text-[10px] gap-0.5 sm:gap-1" disabled={isRunning} onClick={() => {
+                <Button size="sm" variant="outline" className="h-7 text-[10px] gap-1" disabled={isRunning} onClick={() => {
                   const input = document.createElement('input');
                   input.type = 'file'; input.accept = '.json';
                   input.onchange = (ev: any) => {
@@ -2781,44 +2799,44 @@ export default function ProScannerBot() {
                   };
                   input.click();
                 }}>
-                  <Upload className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Load
+                  <Upload className="w-3 h-3" /> Load
                 </Button>
               </div>
             </div>
           </div>
 
           {/* RIGHT: Digit Stream + Activity Log */}
-          <div className="lg:col-span-8 space-y-2 sm:space-y-3">
+          <div className="lg:col-span-8 space-y-3">
             {/* Live Digits */}
-            <div className="bg-card border border-blue-500/20 rounded-xl p-2 sm:p-3">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1 sm:gap-2 mb-1.5 sm:mb-2">
-                <h3 className="text-[9px] sm:text-[10px] font-semibold">Live Digits — {activeSymbol}</h3>
-                <span className="text-[7px] sm:text-[9px] text-muted-foreground font-mono">Win Rate: {winRate}% | Staked: ${totalStaked.toFixed(2)}</span>
+            <div className="bg-card border border-blue-500/20 rounded-xl p-3">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-[10px] font-semibold">Live Digits — {activeSymbol}</h3>
+                <span className="text-[9px] text-muted-foreground font-mono">Win Rate: {winRate}% | Staked: ${totalStaked.toFixed(2)}</span>
               </div>
-              <div className="flex gap-0.5 sm:gap-1 justify-center flex-wrap">
+              <div className="flex gap-1 justify-center flex-wrap">
                 {activeDigits.length === 0 ? (
-                  <span className="text-[8px] sm:text-[10px] text-muted-foreground">Waiting for ticks...</span>
+                  <span className="text-[10px] text-muted-foreground">Waiting for ticks...</span>
                 ) : activeDigits.map((d, i) => {
                   const isOver = d >= 5;
                   const isEven = d % 2 === 0;
                   const isLast = i === activeDigits.length - 1;
                   return (
-                    <div key={i} className={`w-6 h-8 sm:w-8 sm:h-10 rounded-lg flex flex-col items-center justify-center text-[10px] sm:text-xs font-mono font-bold border ${isLast ? 'ring-1 sm:ring-2 ring-blue-500 shadow-lg' : ''} ${isOver ? 'bg-loss/10 border-loss/30 text-loss' : 'bg-profit/10 border-profit/30 text-profit'}`}>
-                      <span className="text-[11px] sm:text-sm">{d}</span>
-                      <span className="text-[5px] sm:text-[7px] opacity-60">{isOver ? 'O' : 'U'}{isEven ? 'E' : 'O'}</span>
+                    <div key={i} className={`w-8 h-10 rounded-lg flex flex-col items-center justify-center text-xs font-mono font-bold border ${isLast ? 'ring-2 ring-blue-500 shadow-lg' : ''} ${isOver ? 'bg-loss/10 border-loss/30 text-loss' : 'bg-profit/10 border-profit/30 text-profit'}`}>
+                      <span className="text-sm">{d}</span>
+                      <span className="text-[7px] opacity-60">{isOver ? 'O' : 'U'}{isEven ? 'E' : 'O'}</span>
                     </div>
                   );
                 })}
               </div>
             </div>
 
-            {/* Animated Single Start/Stop Button - Responsive height */}
+            {/* Animated Single Start/Stop Button */}
             <div className="relative">
               <button
                 onClick={isRunning ? stopBot : startBot}
                 disabled={(!isRunning && (!isAuthorized || localBalance < parseFloat(stake) || (!isConnected && !isReconnecting)))}
                 className={`
-                  relative w-full h-12 sm:h-16 text-base sm:text-lg font-bold rounded-xl transition-all duration-300 ease-out overflow-hidden group
+                  relative w-full h-16 text-lg font-bold rounded-xl transition-all duration-300 ease-out overflow-hidden group
                   ${isRunning 
                     ? 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white shadow-lg shadow-red-500/30 animate-glow-pulse' 
                     : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-500/30'
@@ -2834,27 +2852,27 @@ export default function ProScannerBot() {
                   </>
                 )}
                 
-                <div className="relative flex items-center justify-center gap-2 sm:gap-3">
+                <div className="relative flex items-center justify-center gap-3">
                   {isRunning ? (
                     <>
-                      <StopCircle className="w-4 h-4 sm:w-6 sm:h-6 animate-pulse" />
-                      <span className="flex items-center gap-1 sm:gap-2 text-sm sm:text-base">
+                      <StopCircle className="w-6 h-6 animate-pulse" />
+                      <span className="flex items-center gap-2">
                         STOP BOT
                         <span className="flex gap-0.5">
-                          <span className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                          <span className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                          <span className="w-1 h-1 sm:w-1.5 sm:h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                          <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                         </span>
                       </span>
                     </>
                   ) : (
                     <>
-                      <Play className="w-4 h-4 sm:w-6 sm:h-6 transition-transform group-hover:scale-110" />
-                      <span className="flex items-center gap-1 sm:gap-2 text-sm sm:text-base">
+                      <Play className="w-6 h-6 transition-transform group-hover:scale-110" />
+                      <span className="flex items-center gap-2">
                         START BOT
-                        <span className="relative flex h-1.5 w-1.5 sm:h-2 sm:w-2">
+                        <span className="relative flex h-2 w-2">
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
-                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 sm:h-2 sm:w-2 bg-white" />
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-white" />
                         </span>
                       </span>
                     </>
@@ -2863,8 +2881,8 @@ export default function ProScannerBot() {
               </button>
               
               {isRunning && botStatus !== 'idle' && (
-                <div className="absolute -top-1.5 -right-1.5 sm:-top-2 sm:-right-2">
-                  <Badge className="bg-blue-500 text-white text-[6px] sm:text-[8px] animate-pulse">
+                <div className="absolute -top-2 -right-2">
+                  <Badge className="bg-blue-500 text-white text-[8px] animate-pulse">
                     {botStatus === 'trading_m1' ? '🟢 ACTIVE' : 
                      botStatus === 'recovery' ? '🟣 RECOVERY' :
                      botStatus === 'waiting_pattern' ? '🟡 SCANNING' :
@@ -2876,66 +2894,66 @@ export default function ProScannerBot() {
               )}
             </div>
 
-            {/* DUPLICATE LIVE STATUS - Responsive grid */}
-            <div className="bg-card border border-blue-500/20 rounded-xl p-2 sm:p-3 shadow-md">
-              <div className="flex items-center justify-between mb-1.5 sm:mb-2">
-                <h3 className="text-[10px] sm:text-xs font-semibold flex items-center gap-1 sm:gap-2">
-                  <Zap className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-blue-400" />
+            {/* DUPLICATE LIVE STATUS - Added below start button and above Activity Log */}
+            <div className="bg-card border border-blue-500/20 rounded-xl p-3 shadow-md">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-semibold flex items-center gap-2">
+                  <Zap className="w-3.5 h-3.5 text-blue-400" />
                   Live Status (Realtime)
                 </h3>
                 {isRunning && (
-                  <span className="flex items-center gap-0.5 sm:gap-1 text-[7px] sm:text-[9px] text-profit animate-pulse">
-                    <span className="relative flex h-1 w-1 sm:h-1.5 sm:w-1.5">
+                  <span className="flex items-center gap-1 text-[9px] text-profit animate-pulse">
+                    <span className="relative flex h-1.5 w-1.5">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-profit opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-1 w-1 sm:h-1.5 sm:w-1.5 bg-profit"></span>
+                      <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-profit"></span>
                     </span>
                     ACTIVE
                   </span>
                 )}
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 sm:gap-2">
-                <div className="bg-muted/40 rounded-lg p-1.5 sm:p-2 text-center">
-                  <div className="text-[6px] sm:text-[8px] text-muted-foreground uppercase tracking-wider">Status</div>
-                  <div className={`text-[9px] sm:text-[11px] font-bold ${status.color} flex items-center justify-center gap-0.5 sm:gap-1`}>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Status</div>
+                  <div className={`text-[11px] font-bold ${status.color} flex items-center justify-center gap-1`}>
                     <span>{status.icon}</span> {status.label}
                   </div>
                 </div>
-                <div className="bg-muted/40 rounded-lg p-1.5 sm:p-2 text-center">
-                  <div className="text-[6px] sm:text-[8px] text-muted-foreground uppercase tracking-wider">Market</div>
-                  <div className={`text-[9px] sm:text-[11px] font-bold ${currentMarket === 1 ? 'text-blue-400' : 'text-purple-400'}`}>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Market</div>
+                  <div className={`text-[11px] font-bold ${currentMarket === 1 ? 'text-blue-400' : 'text-purple-400'}`}>
                     {currentMarket === 1 ? 'M1 (HOME)' : 'M2 (RECOVERY)'}
                   </div>
                 </div>
-                <div className="bg-muted/40 rounded-lg p-1.5 sm:p-2 text-center">
-                  <div className="text-[6px] sm:text-[8px] text-muted-foreground uppercase tracking-wider">Win Rate</div>
-                  <div className="text-[9px] sm:text-[11px] font-bold font-mono text-blue-400">{winRate}%</div>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Win Rate</div>
+                  <div className="text-[11px] font-bold font-mono text-blue-400">{winRate}%</div>
                 </div>
-                <div className="bg-muted/40 rounded-lg p-1.5 sm:p-2 text-center">
-                  <div className="text-[6px] sm:text-[8px] text-muted-foreground uppercase tracking-wider">Current P/L</div>
-                  <div className={`text-[9px] sm:text-[11px] font-bold font-mono ${netProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Current P/L</div>
+                  <div className={`text-[11px] font-bold font-mono ${netProfit >= 0 ? 'text-profit' : 'text-loss'}`}>
                     ${netProfit.toFixed(2)}
                   </div>
                 </div>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 sm:gap-2 mt-1 sm:mt-2">
-                <div className="bg-muted/40 rounded-lg p-1.5 sm:p-2 text-center">
-                  <div className="text-[6px] sm:text-[8px] text-muted-foreground uppercase tracking-wider">Current Stake</div>
-                  <div className="text-[9px] sm:text-[11px] font-bold font-mono">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Current Stake</div>
+                  <div className="text-[11px] font-bold font-mono">
                     ${currentStake.toFixed(2)}
-                    {martingaleStep > 0 && <span className="text-warning ml-0.5 sm:ml-1">M{martingaleStep}</span>}
+                    {martingaleStep > 0 && <span className="text-warning ml-1">M{martingaleStep}</span>}
                   </div>
                 </div>
-                <div className="bg-muted/40 rounded-lg p-1.5 sm:p-2 text-center">
-                  <div className="text-[6px] sm:text-[8px] text-muted-foreground uppercase tracking-wider">Balance</div>
-                  <div className="text-[9px] sm:text-[11px] font-bold font-mono text-blue-400">${localBalance.toFixed(2)}</div>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Balance</div>
+                  <div className="text-[11px] font-bold font-mono text-blue-400">${localBalance.toFixed(2)}</div>
                 </div>
-                <div className="bg-muted/40 rounded-lg p-1.5 sm:p-2 text-center">
-                  <div className="text-[6px] sm:text-[8px] text-muted-foreground uppercase tracking-wider">Total Staked</div>
-                  <div className="text-[9px] sm:text-[11px] font-bold font-mono">${totalStaked.toFixed(2)}</div>
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Total Staked</div>
+                  <div className="text-[11px] font-bold font-mono">${totalStaked.toFixed(2)}</div>
                 </div>
-                <div className="bg-muted/40 rounded-lg p-1.5 sm:p-2 text-center">
-                  <div className="text-[6px] sm:text-[8px] text-muted-foreground uppercase tracking-wider">W/L (Session)</div>
-                  <div className="text-[9px] sm:text-[11px] font-bold font-mono">
+                <div className="bg-muted/40 rounded-lg p-2 text-center">
+                  <div className="text-[8px] text-muted-foreground uppercase tracking-wider">W/L (Session)</div>
+                  <div className="text-[11px] font-bold font-mono">
                     <span className="text-profit">{wins}</span>
                     <span className="text-muted-foreground mx-0.5">/</span>
                     <span className="text-loss">{losses}</span>
@@ -2943,75 +2961,75 @@ export default function ProScannerBot() {
                 </div>
               </div>
               {botStatus === 'virtual_hook' && (
-                <div className="mt-1.5 sm:mt-2 text-center bg-blue-500/10 border border-blue-500/30 rounded-lg p-1 sm:p-1.5">
-                  <div className="text-[7px] sm:text-[9px] text-blue-400 animate-pulse flex items-center justify-center gap-1 sm:gap-2">
-                    <Anchor className="w-2 h-2 sm:w-3 sm:h-3" />
+                <div className="mt-2 text-center bg-blue-500/10 border border-blue-500/30 rounded-lg p-1.5">
+                  <div className="text-[9px] text-blue-400 animate-pulse flex items-center justify-center gap-2">
+                    <Anchor className="w-3 h-3" />
                     Virtual Hook Active — Waiting for {m1HookEnabled ? m1VirtualLossCount : m2VirtualLossCount} consecutive losses...
                     <span className="font-bold">({vhConsecLosses}/{m1HookEnabled ? m1VirtualLossCount : m2VirtualLossCount})</span>
                   </div>
                 </div>
               )}
               {botStatus === 'waiting_pattern' && (
-                <div className="mt-1.5 sm:mt-2 text-center bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-1 sm:p-1.5">
-                  <div className="text-[7px] sm:text-[9px] text-yellow-500 animate-pulse flex items-center justify-center gap-1 sm:gap-2">
-                    <Scan className="w-2 h-2 sm:w-3 sm:h-3" />
+                <div className="mt-2 text-center bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-1.5">
+                  <div className="text-[9px] text-yellow-500 animate-pulse flex items-center justify-center gap-2">
+                    <Scan className="w-3 h-3" />
                     Scanning for pattern match...
                   </div>
                 </div>
               )}
               {botStatus === 'reconnecting' && (
-                <div className="mt-1.5 sm:mt-2 text-center bg-orange-500/10 border border-orange-500/30 rounded-lg p-1 sm:p-1.5">
-                  <div className="text-[7px] sm:text-[9px] text-orange-500 animate-pulse flex items-center justify-center gap-1 sm:gap-2">
-                    <RefreshCw className="w-2 h-2 sm:w-3 sm:h-3 animate-spin" />
+                <div className="mt-2 text-center bg-orange-500/10 border border-orange-500/30 rounded-lg p-1.5">
+                  <div className="text-[9px] text-orange-500 animate-pulse flex items-center justify-center gap-2">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
                     Reconnecting to Deriv... Preserving bot state...
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Activity Log - Full Width, Full Height, Responsive */}
+            {/* Activity Log - Full Width, Full Height */}
             <div className="bg-card border border-blue-500/20 rounded-xl overflow-hidden shadow-lg flex flex-col">
-              <div className="px-2 sm:px-4 py-2 sm:py-3 border-b border-blue-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1 sm:gap-3 bg-muted/20">
-                <h3 className="text-[10px] sm:text-xs font-semibold text-foreground flex items-center gap-1 sm:gap-2">
-                  <RefreshCw className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-blue-400" />
+              <div className="px-4 py-3 border-b border-blue-500/20 flex items-center justify-between gap-3 bg-muted/20">
+                <h3 className="text-xs font-semibold text-foreground flex items-center gap-2">
+                  <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
                   Activity Log
-                  <Badge variant="outline" className="text-[7px] sm:text-[9px] bg-blue-500/10 border-blue-500/30 text-blue-400">
+                  <Badge variant="outline" className="text-[9px] bg-blue-500/10 border-blue-500/30 text-blue-400">
                     {logEntries.length} entries
                   </Badge>
                 </h3>
-                <div className="flex items-center gap-1 sm:gap-2 w-full sm:w-auto justify-between sm:justify-end">
+                <div className="flex items-center gap-2">
                   {logEntries.length > 0 && logEntries[0].switchInfo && (
-                    <span className="text-[7px] sm:text-[9px] text-muted-foreground font-mono hidden sm:inline-block truncate max-w-[300px]">
+                    <span className="text-[9px] text-muted-foreground font-mono hidden md:inline-block truncate max-w-[300px]">
                       📊 {logEntries[0].switchInfo}
                     </span>
                   )}
-                  <Button variant="ghost" size="sm" onClick={clearLog} className="h-6 w-6 sm:h-7 sm:w-7 p-0 text-muted-foreground hover:text-loss transition-colors">
-                    <Trash2 className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                  <Button variant="ghost" size="sm" onClick={clearLog} className="h-7 w-7 p-0 text-muted-foreground hover:text-loss transition-colors">
+                    <Trash2 className="w-3.5 h-3.5" />
                   </Button>
                 </div>
               </div>
-              <div className="flex-1 max-h-[300px] sm:max-h-[calc(100vh-300px)] min-h-[300px] sm:min-h-[400px] overflow-auto">
-                <table className="w-full text-[7px] sm:text-[10px]">
-                  <thead className="text-[7px] sm:text-[9px] text-muted-foreground bg-muted/40 sticky top-0 z-10">
+              <div className="flex-1 max-h-[calc(100vh-300px)] min-h-[400px] overflow-auto">
+                <table className="w-full text-[10px]">
+                  <thead className="text-[9px] text-muted-foreground bg-muted/40 sticky top-0 z-10">
                     <tr className="border-b border-blue-500/20">
-                      <th className="text-left p-1 sm:p-2 font-semibold">Time</th>
-                      <th className="text-left p-1 sm:p-2 font-semibold">Mkt</th>
-                      <th className="text-left p-1 sm:p-2 font-semibold hidden sm:table-cell">Symbol</th>
-                      <th className="text-left p-1 sm:p-2 font-semibold">Type</th>
-                      <th className="text-right p-1 sm:p-2 font-semibold">Stake</th>
-                      <th className="text-center p-1 sm:p-2 font-semibold">Digit</th>
-                      <th className="text-center p-1 sm:p-2 font-semibold">Result</th>
-                      <th className="text-right p-1 sm:p-2 font-semibold">P/L</th>
-                      <th className="text-right p-1 sm:p-2 font-semibold hidden sm:table-cell">Bal</th>
-                    </table>
+                      <th className="text-left p-2 font-semibold">Time</th>
+                      <th className="text-left p-2 font-semibold">Mkt</th>
+                      <th className="text-left p-2 font-semibold">Symbol</th>
+                      <th className="text-left p-2 font-semibold">Type</th>
+                      <th className="text-right p-2 font-semibold">Stake</th>
+                      <th className="text-center p-2 font-semibold">Digit</th>
+                      <th className="text-center p-2 font-semibold">Result</th>
+                      <th className="text-right p-2 font-semibold">P/L</th>
+                      <th className="text-right p-2 font-semibold">Bal</th>
+                    </tr>
                   </thead>
                   <tbody>
                     {logEntries.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="text-center text-muted-foreground py-6 sm:py-12">
-                          <div className="flex flex-col items-center gap-1 sm:gap-2">
-                            <Zap className="w-6 h-6 sm:w-8 sm:h-8 text-muted-foreground/30" />
-                            <span className="text-[9px] sm:text-xs">No trades yet — configure and start the bot</span>
+                        <td colSpan={9} className="text-center text-muted-foreground py-12">
+                          <div className="flex flex-col items-center gap-2">
+                            <Zap className="w-8 h-8 text-muted-foreground/30" />
+                            <span className="text-xs">No trades yet — configure and start the bot</span>
                           </div>
                         </td>
                       </tr>
@@ -3022,16 +3040,16 @@ export default function ProScannerBot() {
                         e.market === 'SYSTEM' ? 'border-l-2 border-l-orange-500' :
                         'border-l-2 border-l-purple-500'
                       }`}>
-                        <td className="p-1 sm:p-2 font-mono text-[6px] sm:text-[9px] text-muted-foreground">{e.time}</td>
-                        <td className={`p-1 sm:p-2 font-bold text-[8px] sm:text-[10px] ${
+                        <td className="p-2 font-mono text-[9px] text-muted-foreground">{e.time}</td>
+                        <td className={`p-2 font-bold text-[10px] ${
                           e.market === 'M1' ? 'text-blue-400' :
                           e.market === 'VH' ? 'text-indigo-400' :
                           e.market === 'SYSTEM' ? 'text-orange-500' :
                           'text-purple-400'
                         }`}>{e.market}</td>
-                        <td className="p-1 sm:p-2 font-mono text-[7px] sm:text-[9px] text-foreground hidden sm:table-cell">{e.symbol}</td>
-                        <td className="p-1 sm:p-2 text-[7px] sm:text-[9px] text-muted-foreground">{e.contract.replace('DIGIT', '')}</td>
-                        <td className="p-1 sm:p-2 font-mono text-right text-[7px] sm:text-[9px]">
+                        <td className="p-2 font-mono text-[9px] text-foreground">{e.symbol}</td>
+                        <td className="p-2 text-[9px] text-muted-foreground">{e.contract.replace('DIGIT', '')}</td>
+                        <td className="p-2 font-mono text-right text-[9px]">
                           {e.market === 'VH' ? (
                             <span className="text-indigo-400">FAKE</span>
                           ) : e.market === 'SYSTEM' ? (
@@ -3039,11 +3057,11 @@ export default function ProScannerBot() {
                           ) : (
                             <span className="text-foreground">${e.stake.toFixed(2)}</span>
                           )}
-                          {e.martingaleStep > 0 && e.market !== 'VH' && e.market !== 'SYSTEM' && <span className="text-warning ml-0.5 font-bold">M{e.martingaleStep}</span>}
+                          {e.martingaleStep > 0 && e.market !== 'VH' && e.market !== 'SYSTEM' && <span className="text-warning ml-1 font-bold">M{e.martingaleStep}</span>}
                         </td>
-                        <td className="p-1 sm:p-2 text-center font-mono text-[8px] sm:text-[10px] font-bold">{e.exitDigit}</td>
-                        <td className="p-1 sm:p-2 text-center">
-                          <span className={`px-1 sm:px-2 py-0.5 rounded-full text-[6px] sm:text-[8px] font-bold ${
+                        <td className="p-2 text-center font-mono text-[10px] font-bold">{e.exitDigit}</td>
+                        <td className="p-2 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-[8px] font-bold ${
                             e.result === 'Win' || e.result === 'V-Win' ? 'bg-profit/20 text-profit border border-profit/30' :
                             e.result === 'Loss' || e.result === 'V-Loss' ? 'bg-loss/20 text-loss border border-loss/30' :
                             'bg-warning/20 text-warning animate-pulse border border-warning/30'
@@ -3051,12 +3069,12 @@ export default function ProScannerBot() {
                             {e.result === 'Pending' ? '...' : e.result === 'V-Win' ? '✓' : e.result === 'V-Loss' ? '✗' : e.result}
                           </span>
                         </td>
-                        <td className={`p-1 sm:p-2 font-mono text-right text-[7px] sm:text-[9px] font-bold ${
+                        <td className={`p-2 font-mono text-right text-[9px] font-bold ${
                           e.pnl > 0 ? 'text-profit' : e.pnl < 0 ? 'text-loss' : 'text-muted-foreground'
                         }`}>
                           {e.result === 'Pending' ? '...' : e.market === 'VH' || e.market === 'SYSTEM' ? '-' : `${e.pnl > 0 ? '+' : ''}${e.pnl.toFixed(2)}`}
                         </td>
-                        <td className="p-1 sm:p-2 font-mono text-right text-[7px] sm:text-[9px] text-muted-foreground hidden sm:table-cell">
+                        <td className="p-2 font-mono text-right text-[9px] text-muted-foreground">
                           {e.market === 'VH' || e.market === 'SYSTEM' ? '-' : `$${e.balance.toFixed(2)}`}
                         </td>
                       </tr>
