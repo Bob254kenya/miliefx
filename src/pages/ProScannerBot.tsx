@@ -19,7 +19,7 @@ import {
 import ConfigPreview, { type BotConfig } from '@/components/bot-config/ConfigPreview';
 
 // ============================================
-// SOCIAL NOTIFICATION POPUP - CENTERED 500px x 400px (No Backdrop)
+// SOCIAL NOTIFICATION POPUP - REPOSITIONED TO TOP-RIGHT CORNER
 // ============================================
 
 // Animation Styles
@@ -29,25 +29,25 @@ const notificationStyles = `
   to { opacity: 1; }
 }
 
-@keyframes slideUpCenter {
+@keyframes slideInRight {
   from {
     opacity: 0;
-    transform: translateY(30px) scale(0.95);
+    transform: translateX(50px) scale(0.95);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateX(0) scale(1);
   }
 }
 
-@keyframes slideDownCenter {
+@keyframes slideOutRight {
   from {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateX(0) scale(1);
   }
   to {
     opacity: 0;
-    transform: translateY(30px) scale(0.95);
+    transform: translateX(50px) scale(0.95);
   }
 }
 
@@ -59,13 +59,13 @@ const notificationStyles = `
 
 @keyframes float {
   0% { transform: translateY(0px) rotate(0deg); }
-  50% { transform: translateY(-10px) rotate(5deg); }
+  50% { transform: translateY(-8px) rotate(2deg); }
   100% { transform: translateY(0px) rotate(0deg); }
 }
 
 @keyframes bounce {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-5px); }
+  50% { transform: translateY(-4px); }
 }
 
 @keyframes pulse {
@@ -79,8 +79,8 @@ const notificationStyles = `
 }
 
 @keyframes glowPulse {
-  0%, 100% { box-shadow: 0 0 5px rgba(34, 197, 94, 0.3); }
-  50% { box-shadow: 0 0 20px rgba(34, 197, 94, 0.6); }
+  0%, 100% { box-shadow: 0 0 5px rgba(59, 130, 246, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.6); }
 }
 
 @keyframes spin {
@@ -94,8 +94,8 @@ const notificationStyles = `
 }
 
 .animate-fadeIn { animation: fadeIn 0.3s ease-out forwards; }
-.animate-slide-up-center { animation: slideUpCenter 0.4s cubic-bezier(0.34, 1.2, 0.64, 1) forwards; }
-.animate-slide-down-center { animation: slideDownCenter 0.3s ease-out forwards; }
+.animate-slide-in-right { animation: slideInRight 0.4s cubic-bezier(0.34, 1.2, 0.64, 1) forwards; }
+.animate-slide-out-right { animation: slideOutRight 0.3s ease-out forwards; }
 .animate-gradient { background-size: 200% 200%; animation: gradientShift 3s ease infinite; }
 .animate-float { animation: float 3s ease-in-out infinite; }
 .animate-bounce { animation: bounce 0.4s ease-in-out 2; }
@@ -113,26 +113,21 @@ export const showTPNotification = (type: 'tp' | 'sl', message: string, amount?: 
   }
 };
 
-// Social Notification Component
-const SocialNotificationPopup = () => {
-  const [isVisible, setIsVisible] = useState(false);
+// Social Notification Component - Positioned at Top-Right Corner
+const SocialNotificationPopup = ({ onClose }: { onClose: () => void }) => {
   const [isExiting, setIsExiting] = useState(false);
-
-  useEffect(() => {
-    setIsVisible(true);
-  }, []);
 
   const handleClose = () => {
     setIsExiting(true);
     setTimeout(() => {
-      setIsVisible(false);
+      onClose();
     }, 300);
   };
 
   const handleMaybeLater = () => {
     setIsExiting(true);
     setTimeout(() => {
-      setIsVisible(false);
+      onClose();
     }, 300);
   };
 
@@ -181,23 +176,21 @@ const SocialNotificationPopup = () => {
     },
   ];
 
-  if (!isVisible) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+    <div className="fixed top-4 right-4 z-50 pointer-events-none">
       <div 
         className={`
-          pointer-events-auto w-[500px] h-[400px] rounded-2xl shadow-2xl overflow-hidden
-          ${isExiting ? 'animate-slide-down-center' : 'animate-slide-up-center'}
+          pointer-events-auto w-[380px] rounded-2xl shadow-2xl overflow-hidden
+          ${isExiting ? 'animate-slide-out-right' : 'animate-slide-in-right'}
         `}
       >
-        <div className="absolute inset-0 bg-gradient-to-br from-cyan-500 via-blue-500 to-purple-600 animate-gradient" />
-        <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" />
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-700 animate-gradient" />
+        <div className="absolute inset-0 bg-black/20 backdrop-blur-[1px]" />
         <div className="absolute inset-0 overflow-hidden">
-          {[...Array(15)].map((_, i) => (
+          {[...Array(10)].map((_, i) => (
             <div
               key={i}
-              className="absolute text-white/20 text-3xl animate-float"
+              className="absolute text-white/15 text-2xl animate-float"
               style={{
                 left: `${Math.random() * 100}%`,
                 top: `${Math.random() * 100}%`,
@@ -210,33 +203,30 @@ const SocialNotificationPopup = () => {
           ))}
         </div>
         
-        <div className="relative z-10 h-full flex flex-col">
+        <div className="relative z-10 flex flex-col">
           <button
             onClick={handleClose}
-            className="absolute top-3 right-3 p-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white transition-all duration-200 backdrop-blur-sm z-20"
+            className="absolute top-2 right-2 p-1 rounded-lg bg-white/20 hover:bg-white/30 text-white transition-all duration-200 backdrop-blur-sm z-20"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
           </button>
           
-          <div className="flex-1 flex flex-col items-center justify-center p-6">
-            <div className="mb-4">
-              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center shadow-xl animate-pulse-slow">
-                <Users className="w-7 h-7 text-white" />
+          <div className="p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center shadow-lg">
+                <Users className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-white">Join Our Community</h2>
+                <p className="text-[10px] text-white/80">Connect & Grow Together</p>
               </div>
             </div>
             
-            <h2 className="text-2xl font-bold text-white mb-1 text-center">
-              Join Our Trading Community
-            </h2>
-            <p className="text-sm text-white/90 mb-3 text-center">
-              Connect & Grow Together
+            <p className="text-[11px] text-white/80 mb-3">
+              Connect with fellow traders! Share experiences, strategies, and get updates on new features.
             </p>
             
-            <p className="text-xs text-white/80 text-center max-w-md mb-4">
-              Connect with fellow traders! Share your trading experiences, strategies, and get the latest updates on new features and classes.
-            </p>
-            
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-4 w-full max-w-md">
+            <div className="grid grid-cols-2 gap-2 mb-3">
               {socialLinks.map((social) => (
                 <a
                   key={social.name}
@@ -245,36 +235,36 @@ const SocialNotificationPopup = () => {
                   rel="noopener noreferrer"
                   onClick={handleClose}
                   className={`
-                    flex items-center gap-2 px-3 py-2 rounded-lg bg-white/15 backdrop-blur-sm
+                    flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white/15 backdrop-blur-sm
                     border border-white/30 text-white transition-all duration-300
                     hover:scale-105 hover:bg-white/25 ${social.color}
                   `}
                 >
-                  <div className={`p-1.5 rounded-lg bg-gradient-to-r ${social.bgGradient}`}>
+                  <div className={`p-1 rounded-lg bg-gradient-to-r ${social.bgGradient}`}>
                     {social.icon}
                   </div>
-                  <span className="text-[10px] font-medium truncate">{social.name}</span>
+                  <span className="text-[9px] font-medium truncate">{social.name}</span>
                 </a>
               ))}
             </div>
             
-            <div className="bg-cyan-500/30 border border-cyan-400/40 rounded-lg p-2 mb-3 max-w-md">
-              <p className="text-[9px] text-cyan-100 text-center">
+            <div className="bg-blue-500/20 border border-blue-400/30 rounded-lg p-2 mb-3">
+              <p className="text-[8px] text-blue-100 text-center">
                 📢 Get access to strategies, bots and guides sent earlier on our channels
               </p>
             </div>
           </div>
           
-          <div className="p-4 pt-0 flex gap-2">
+          <div className="p-3 pt-0 flex gap-2">
             <button
               onClick={handleClose}
-              className="flex-1 py-2 rounded-lg bg-white/20 hover:bg-white/30 text-white text-sm font-semibold transition-all duration-200 backdrop-blur-sm border border-white/30"
+              className="flex-1 py-1.5 rounded-lg bg-white/20 hover:bg-white/30 text-white text-[11px] font-semibold transition-all duration-200 backdrop-blur-sm border border-white/30"
             >
               NO THANKS
             </button>
             <button
               onClick={handleMaybeLater}
-              className="flex-1 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-500 hover:to-blue-700 text-white text-sm font-semibold transition-all duration-200 shadow-lg"
+              className="flex-1 py-1.5 rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white text-[11px] font-semibold transition-all duration-200 shadow-lg"
             >
               MAYBE LATER
             </button>
@@ -285,7 +275,7 @@ const SocialNotificationPopup = () => {
   );
 };
 
-// TP/SL Notification Component
+// TP/SL Notification Component (stays centered)
 const TPSLNotificationPopup = () => {
   const [notification, setNotification] = useState<{ type: 'tp' | 'sl'; message: string; amount?: number } | null>(null);
   const [isVisible, setIsVisible] = useState(false);
@@ -443,7 +433,7 @@ const TPSLNotificationPopup = () => {
 };
 
 // ============================================
-// TRADING CHART POPUP COMPONENT
+// TRADING CHART POPUP COMPONENT (Positioned near button)
 // ============================================
 
 const ALL_MARKETS = [
@@ -571,8 +561,8 @@ function calculateChartDigitStats(symbol: string, tickRange: number) {
   };
 }
 
-// Trading Chart Popup Component
-const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
+// Trading Chart Popup Component - Positioned near the button
+const TradingChartPopup = ({ onClose, anchorRef }: { onClose: () => void; anchorRef: React.RefObject<HTMLElement | null> }) => {
   const [symbol, setSymbol] = useState('R_100');
   const [selectedContractType, setSelectedContractType] = useState('CALL');
   const [selectedPrediction, setSelectedPrediction] = useState('5');
@@ -581,9 +571,25 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
   const [displaySymbols, setDisplaySymbols] = useState<string[]>([]);
   const [isExiting, setIsExiting] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [position, setPosition] = useState({ top: 0, right: 0 });
   const lastSpokenSignal = useRef('');
   const subscribedRef = useRef(false);
   const subscriptionRef = useRef<any>(null);
+  
+  // Calculate position relative to the anchor button
+  useEffect(() => {
+    if (anchorRef.current) {
+      const rect = anchorRef.current.getBoundingClientRect();
+      // Position popup above the button, aligned to right
+      setPosition({
+        bottom: window.innerHeight - rect.top + 10,
+        right: window.innerWidth - rect.right,
+      });
+    } else {
+      // Fallback position
+      setPosition({ bottom: 80, right: 20 });
+    }
+  }, [anchorRef]);
   
   const speak = useCallback((text: string) => {
     if (!voiceEnabled || !window.speechSynthesis) return;
@@ -752,23 +758,26 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
   const totalTicks = digitStats?.totalTicks || 0;
   
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md pointer-events-none">
+    <div 
+      className="fixed z-50 pointer-events-none"
+      style={{ bottom: position.bottom, right: position.right }}
+    >
       <div 
         className={`
           pointer-events-auto w-[450px] max-h-[90vh] overflow-y-auto rounded-xl shadow-2xl
-          bg-gradient-to-br from-gray-900 to-gray-950 border border-gray-700
-          ${isExiting ? 'animate-slide-down-center' : 'animate-slide-up-center'}
+          bg-gradient-to-br from-slate-900 to-slate-950 border border-blue-500/30
+          ${isExiting ? 'animate-slide-out-right' : 'animate-slide-in-right'}
         `}
       >
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-gradient-to-r from-gray-900 to-gray-950 border-b border-gray-800 p-3 flex items-center justify-between rounded-t-xl">
+        <div className="sticky top-0 z-10 bg-gradient-to-r from-slate-900 to-slate-950 border-b border-blue-500/30 p-3 flex items-center justify-between rounded-t-xl">
           <div className="flex items-center gap-2">
-            <div className="p-1.5 bg-gradient-to-br from-primary to-primary/70 rounded-lg">
+            <div className="p-1.5 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg">
               <BarChart3 className="w-3.5 h-3.5 text-white" />
             </div>
             <div>
               <h3 className="text-sm font-bold text-white">Ramzfx Trading Signals</h3>
-              <p className="text-[8px] text-gray-400">Live Market Analysis</p>
+              <p className="text-[8px] text-blue-300">Live Market Analysis</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -793,9 +802,9 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
         <div className="p-3 space-y-3">
           {/* Market Selector */}
           <div>
-            <label className="text-[9px] text-gray-400 block mb-1">Market</label>
+            <label className="text-[9px] text-blue-300 block mb-1">Market</label>
             <Select value={symbol} onValueChange={setSymbol}>
-              <SelectTrigger className="h-7 text-[10px] bg-gray-800/50 border-gray-700">
+              <SelectTrigger className="h-7 text-[10px] bg-slate-800/50 border-slate-700">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="max-h-40">
@@ -810,9 +819,9 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
           
           {/* Contract Type */}
           <div>
-            <label className="text-[9px] text-gray-400 block mb-1">Contract Type</label>
+            <label className="text-[9px] text-blue-300 block mb-1">Contract Type</label>
             <Select value={selectedContractType} onValueChange={setSelectedContractType}>
-              <SelectTrigger className="h-7 text-[10px] bg-gray-800/50 border-gray-700">
+              <SelectTrigger className="h-7 text-[10px] bg-slate-800/50 border-slate-700">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -828,7 +837,7 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
           {/* Prediction Digit */}
           {['DIGITMATCH', 'DIGITDIFF', 'DIGITOVER', 'DIGITUNDER'].includes(selectedContractType) && (
             <div>
-              <label className="text-[9px] text-gray-400 block mb-1">Prediction (0-9)</label>
+              <label className="text-[9px] text-blue-300 block mb-1">Prediction (0-9)</label>
               <div className="grid grid-cols-5 gap-1">
                 {Array.from({ length: 10 }, (_, i) => (
                   <button
@@ -836,8 +845,8 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
                     onClick={() => setSelectedPrediction(String(i))}
                     className={`h-7 rounded text-[10px] font-mono font-bold transition-all ${
                       selectedPrediction === String(i) 
-                        ? 'bg-primary text-white' 
-                        : 'bg-gray-800/50 text-gray-300 hover:bg-gray-700'
+                        ? 'bg-blue-500 text-white' 
+                        : 'bg-slate-800/50 text-gray-300 hover:bg-slate-700'
                     }`}
                   >
                     {i}
@@ -849,9 +858,9 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
           
           {/* Tick Range */}
           <div className="flex items-center justify-between">
-            <label className="text-[9px] text-gray-400">Tick Range</label>
+            <label className="text-[9px] text-blue-300">Tick Range</label>
             <Select value={String(tickRange)} onValueChange={v => setTickRange(parseInt(v))}>
-              <SelectTrigger className="h-6 text-[9px] w-20 bg-gray-800/50 border-gray-700">
+              <SelectTrigger className="h-6 text-[9px] w-20 bg-slate-800/50 border-slate-700">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -863,7 +872,7 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
           </div>
           
           {/* Live Stats Badge */}
-          <div className="flex items-center justify-between bg-gray-800/30 rounded-lg p-1.5">
+          <div className="flex items-center justify-between bg-slate-800/30 rounded-lg p-1.5 border border-blue-500/20">
             <div className="flex items-center gap-1">
               <span className="relative flex h-1.5 w-1.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
@@ -871,38 +880,38 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
               </span>
               <span className="text-[8px] text-gray-400">Live Ticks</span>
             </div>
-            <Badge variant="outline" className="text-[8px] bg-gray-800/50">
+            <Badge variant="outline" className="text-[8px] bg-slate-800/50 border-blue-500/30 text-blue-300">
               {totalTicks} ticks
             </Badge>
           </div>
           
           {/* Digit Analysis Grid */}
           <div className="grid grid-cols-2 gap-1.5">
-            <div className="bg-gray-800/30 rounded-lg p-1.5 text-center">
-              <div className="text-[7px] text-gray-400">Odd</div>
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+              <div className="text-[7px] text-blue-300">Odd</div>
               <div className="font-mono text-[11px] font-bold text-yellow-400">{oddPercentage.toFixed(1)}%</div>
-              <div className="h-1 bg-gray-700 rounded-full mt-0.5">
+              <div className="h-1 bg-slate-700 rounded-full mt-0.5">
                 <div className="h-full bg-yellow-500 rounded-full" style={{ width: `${oddPercentage}%` }} />
               </div>
             </div>
-            <div className="bg-gray-800/30 rounded-lg p-1.5 text-center">
-              <div className="text-[7px] text-gray-400">Even</div>
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+              <div className="text-[7px] text-blue-300">Even</div>
               <div className="font-mono text-[11px] font-bold text-green-400">{evenPercentage.toFixed(1)}%</div>
-              <div className="h-1 bg-gray-700 rounded-full mt-0.5">
+              <div className="h-1 bg-slate-700 rounded-full mt-0.5">
                 <div className="h-full bg-green-500 rounded-full" style={{ width: `${evenPercentage}%` }} />
               </div>
             </div>
-            <div className="bg-gray-800/30 rounded-lg p-1.5 text-center">
-              <div className="text-[7px] text-gray-400">Over 4</div>
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+              <div className="text-[7px] text-blue-300">Over 4</div>
               <div className="font-mono text-[11px] font-bold text-blue-400">{overPercentage.toFixed(1)}%</div>
-              <div className="h-1 bg-gray-700 rounded-full mt-0.5">
+              <div className="h-1 bg-slate-700 rounded-full mt-0.5">
                 <div className="h-full bg-blue-500 rounded-full" style={{ width: `${overPercentage}%` }} />
               </div>
             </div>
-            <div className="bg-gray-800/30 rounded-lg p-1.5 text-center">
-              <div className="text-[7px] text-gray-400">Under 5</div>
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+              <div className="text-[7px] text-blue-300">Under 5</div>
               <div className="font-mono text-[11px] font-bold text-yellow-400">{underPercentage.toFixed(1)}%</div>
-              <div className="h-1 bg-gray-700 rounded-full mt-0.5">
+              <div className="h-1 bg-slate-700 rounded-full mt-0.5">
                 <div className="h-full bg-yellow-500 rounded-full" style={{ width: `${underPercentage}%` }} />
               </div>
             </div>
@@ -919,14 +928,14 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
                   key={d}
                   onClick={() => setSelectedPrediction(String(d))}
                   className={`rounded-lg p-1.5 text-center transition-all border cursor-pointer ${
-                    selectedPrediction === String(d) ? 'ring-2 ring-primary' : ''
+                    selectedPrediction === String(d) ? 'ring-2 ring-blue-500' : ''
                   } ${isHot ? 'bg-red-500/20 border-red-500/40 text-red-400' :
                     isBestMatch ? 'bg-green-500/20 border-green-500/40 text-green-400' :
-                    'bg-gray-800/30 border-gray-700 text-gray-300'}`}
+                    'bg-slate-800/30 border-slate-700 text-gray-300'}`}
                 >
                   <div className="font-mono text-[13px] font-bold">{d}</div>
                   <div className="text-[7px]">{pct.toFixed(1)}%</div>
-                  <div className="h-0.5 bg-gray-700 rounded-full mt-0.5">
+                  <div className="h-0.5 bg-slate-700 rounded-full mt-0.5">
                     <div className={`h-full rounded-full ${isHot ? 'bg-red-500' : isBestMatch ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${Math.min(100, pct * 5)}%` }} />
                   </div>
                 </button>
@@ -935,7 +944,7 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
           </div>
           
           {/* Legend */}
-          <div className="flex flex-wrap gap-2 text-[7px] justify-center border-t border-gray-800 pt-2">
+          <div className="flex flex-wrap gap-2 text-[7px] justify-center border-t border-slate-800 pt-2">
             {legend.symbol1 && (
               <div className="flex items-center gap-1">
                 <div className={`w-3 h-3 rounded flex items-center justify-center text-[6px] font-bold ${
@@ -981,8 +990,8 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
           {/* Last 26 Digits */}
           <div>
             <div className="flex items-center justify-between mb-1.5">
-              <h4 className="text-[9px] font-semibold text-gray-300">Filtration Chamber</h4>
-              <Badge className="text-[6px] bg-primary/20 text-primary">
+              <h4 className="text-[9px] font-semibold text-blue-300">Filtration Chamber</h4>
+              <Badge className="text-[6px] bg-blue-500/20 text-blue-400 border-blue-500/30">
                 {selectedContractType === 'CALL' ? 'Rise' : 
                  selectedContractType === 'PUT' ? 'Fall' :
                  selectedContractType === 'DIGITOVER' ? `Over ${selectedPrediction}` :
@@ -1016,7 +1025,7 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
                     bgColor = 'bg-yellow-500/20';
                     textColor = 'text-yellow-400';
                   } else {
-                    bgColor = 'bg-gray-700/50';
+                    bgColor = 'bg-slate-700/50';
                     textColor = 'text-gray-300';
                   }
                   
@@ -1024,8 +1033,8 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
                     <div
                       key={i}
                       className={`w-6 h-7 rounded-lg flex items-center justify-center font-mono font-bold text-[11px] border ${
-                        isLast ? 'ring-2 ring-primary w-7 h-8 text-sm' : ''
-                      } ${bgColor} ${textColor} border-gray-700`}
+                        isLast ? 'ring-2 ring-blue-500 w-7 h-8 text-sm' : ''
+                      } ${bgColor} ${textColor} border-slate-700`}
                     >
                       {sym}
                     </div>
@@ -1039,13 +1048,13 @@ const TradingChartPopup = ({ onClose }: { onClose: () => void }) => {
           
           {/* Recommendations */}
           <div className="grid grid-cols-2 gap-1.5">
-            <div className="bg-gray-800/30 rounded-lg p-1.5 text-center">
-              <div className="text-[7px] text-gray-400">Most Appearing</div>
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+              <div className="text-[7px] text-blue-300">Most Appearing</div>
               <div className="font-mono text-[13px] font-bold text-green-400">{mostCommon}</div>
               <div className="text-[6px] text-gray-500">{percentages[mostCommon]?.toFixed(1)}%</div>
             </div>
-            <div className="bg-gray-800/30 rounded-lg p-1.5 text-center">
-              <div className="text-[7px] text-gray-400">Even/Odd</div>
+            <div className="bg-slate-800/30 rounded-lg p-1.5 text-center border border-blue-500/20">
+              <div className="text-[7px] text-blue-300">Even/Odd</div>
               <div className={`font-mono text-[11px] font-bold ${evenPercentage > 50 ? 'text-green-400' : 'text-yellow-400'}`}>
                 {evenPercentage > 50 ? 'EVEN' : 'ODD'}
               </div>
@@ -1267,7 +1276,9 @@ export default function ProScannerBot() {
   const { recordLoss } = useLossRequirement();
   const location = useLocation();
   
+  const [showSocialPopup, setShowSocialPopup] = useState(true); // Show by default
   const [showTradingChart, setShowTradingChart] = useState(false);
+  const chartButtonRef = useRef<HTMLButtonElement>(null);
   const [isChartAnimating, setIsChartAnimating] = useState(false);
 
   const balanceCache = useRef(BalanceCache.getInstance()).current;
@@ -2291,20 +2302,25 @@ export default function ProScannerBot() {
     setTimeout(() => setIsChartAnimating(false), 400);
   };
 
+  const handleCloseSocialPopup = () => {
+    setShowSocialPopup(false);
+  };
+
   return (
     <>
       <style>{notificationStyles}</style>
       
-      {/* Floating Chat Button */}
+      {/* Floating Chat Button - Positioned at bottom right */}
       <div className="fixed bottom-6 right-6 z-40">
         <button
+          ref={chartButtonRef}
           onClick={handleOpenTradingChart}
           className={`
-            group relative w-12 h-12 rounded-full bg-gradient-to-br from-primary to-primary/80 
-            shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 
+            group relative w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 
+            shadow-lg shadow-blue-500/30 hover:shadow-xl hover:shadow-blue-500/40 
             transition-all duration-300 hover:scale-110 active:scale-95
             flex items-center justify-center
-            before:absolute before:inset-0 before:rounded-full before:bg-primary/30 before:animate-ping before:opacity-75
+            before:absolute before:inset-0 before:rounded-full before:bg-blue-500/30 before:animate-ping before:opacity-75
           `}
         >
           <div className="absolute inset-0 rounded-full bg-gradient-to-br from-white/20 to-transparent" />
@@ -2313,29 +2329,32 @@ export default function ProScannerBot() {
         </button>
       </div>
 
-      {/* Trading Chart Popup */}
+      {/* Social Notification Popup - Top Right Corner */}
+      {showSocialPopup && <SocialNotificationPopup onClose={handleCloseSocialPopup} />}
+
+      {/* Trading Chart Popup - Positioned near the floating button */}
       {showTradingChart && (
-        <TradingChartPopup onClose={handleCloseTradingChart} />
+        <TradingChartPopup onClose={handleCloseTradingChart} anchorRef={chartButtonRef} />
       )}
 
       <div className="space-y-3 max-w-7xl mx-auto p-4">
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-card/80 to-card/50 backdrop-blur-sm border border-border rounded-xl px-4 py-3 shadow-lg">
+        <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-card/80 to-card/50 backdrop-blur-sm border border-blue-500/20 rounded-xl px-4 py-3 shadow-lg">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-primary to-primary/70 rounded-lg shadow-md">
-              <Scan className="w-4 h-4 text-primary-foreground" />
+            <div className="p-2 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg shadow-md">
+              <Scan className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h1 className="text-base font-bold bg-gradient-to-r from-primary to-primary/70 bg-clip-text text-transparent">Ramzfx Pro Scanner Bot</h1>
-              <p className="text-[10px] text-muted-foreground">Ramzfx Advanced Market Scanning & Recovery System</p>
+              <h1 className="text-base font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">Ramzfx Pro Scanner Bot</h1>
+              <p className="text-[10px] text-blue-300/80">Ramzfx Advanced Market Scanning & Recovery System</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Badge className={`${status.color} text-[9px] px-2 py-0.5 bg-muted/50`}>
+            <Badge className={`${status.color} text-[9px] px-2 py-0.5 bg-muted/50 border-blue-500/20`}>
               {status.icon} {status.label}
             </Badge>
             {isRunning && (
-              <Badge variant="outline" className="text-[9px] text-warning animate-pulse font-mono">
+              <Badge variant="outline" className="text-[9px] text-warning animate-pulse font-mono border-yellow-500/30">
                 P/L: ${netProfit.toFixed(2)}
               </Badge>
             )}
@@ -2354,10 +2373,10 @@ export default function ProScannerBot() {
 
         {/* Scanner + Turbo + Stats Row */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="bg-card border border-border rounded-xl p-3">
+          <div className="bg-card border border-blue-500/20 rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-1.5">
-                <Eye className="w-3.5 h-3.5 text-primary" />
+                <Eye className="w-3.5 h-3.5 text-blue-400" />
                 <span className="text-xs font-semibold">Scan All Markets </span>
                 <Badge variant={scannerActive ? 'default' : 'secondary'} className="text-[9px] h-4 px-1.5">
                   {scannerActive ? '🟢 ON' : '⚫ OFF'}
@@ -2370,7 +2389,7 @@ export default function ProScannerBot() {
                 const count = tickCounts[m.symbol] || 0;
                 return (
                   <Badge key={m.symbol} variant="outline"
-                    className={`text-[8px] h-5 px-1 font-mono ${count > 0 ? 'border-primary/50 text-primary' : 'text-muted-foreground'}`}>
+                    className={`text-[8px] h-5 px-1 font-mono ${count > 0 ? 'border-blue-500/50 text-blue-400' : 'text-muted-foreground'}`}>
                     {m.name}
                   </Badge>
                 );
@@ -2378,16 +2397,16 @@ export default function ProScannerBot() {
             </div>
           </div>
 
-          <div className="bg-card border border-border rounded-xl p-3">
+          <div className="bg-card border border-blue-500/20 rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-1.5">
-                <Zap className={`w-3.5 h-3.5 ${turboMode ? 'text-profit animate-pulse' : 'text-muted-foreground'}`} />
+                <Zap className={`w-3.5 h-3.5 ${turboMode ? 'text-blue-400 animate-pulse' : 'text-muted-foreground'}`} />
                 <span className="text-xs font-semibold">Turbo Mode</span>
               </div>
               <Button
                 size="sm"
                 variant={turboMode ? 'default' : 'outline'}
-                className={`h-6 text-[9px] px-2 ${turboMode ? 'bg-profit hover:bg-profit/90 text-profit-foreground animate-pulse' : ''}`}
+                className={`h-6 text-[9px] px-2 ${turboMode ? 'bg-blue-500 hover:bg-blue-600 text-white animate-pulse' : ''}`}
                 onClick={() => setTurboMode(!turboMode)}
                 disabled={isRunning}
               >
@@ -2397,7 +2416,7 @@ export default function ProScannerBot() {
             <div className="grid grid-cols-3 gap-1 text-center">
               <div className="bg-muted/50 rounded p-1">
                 <div className="text-[8px] text-muted-foreground">Latency</div>
-                <div className="font-mono text-[10px] text-primary font-bold">{turboLatency}ms</div>
+                <div className="font-mono text-[10px] text-blue-400 font-bold">{turboLatency}ms</div>
               </div>
               <div className="bg-muted/50 rounded p-1">
                 <div className="text-[8px] text-muted-foreground">Captured</div>
@@ -2410,10 +2429,10 @@ export default function ProScannerBot() {
             </div>
           </div>
 
-          <div className="bg-card border border-border rounded-xl p-3">
+          <div className="bg-card border border-blue-500/20 rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-semibold">Live Stats</span>
-              <span className="font-mono text-sm font-bold text-primary">${localBalance.toFixed(2)}</span>
+              <span className="font-mono text-sm font-bold text-blue-400">${localBalance.toFixed(2)}</span>
             </div>
             <div className="grid grid-cols-3 gap-1 text-center">
               <div className="bg-muted/50 rounded p-1">
@@ -2438,11 +2457,11 @@ export default function ProScannerBot() {
           <div className="lg:col-span-4 space-y-3">
             {/* Market Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-3">
-              <div className="bg-card border-2 border-profit/30 rounded-xl p-3 space-y-2">
+              <div className="bg-card border-2 border-blue-500/30 rounded-xl p-3 space-y-2">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold text-profit flex items-center gap-1"><Home className="w-3.5 h-3.5" /> M1 — Home</h3>
+                  <h3 className="text-xs font-bold text-blue-400 flex items-center gap-1"><Home className="w-3.5 h-3.5" /> M1 — Home</h3>
                   <div className="flex items-center gap-1.5">
-                    {currentMarket === 1 && isRunning && <span className="w-1.5 h-1.5 rounded-full bg-profit animate-pulse" />}
+                    {currentMarket === 1 && isRunning && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />}
                     <Switch checked={m1Enabled} onCheckedChange={setM1Enabled} disabled={isRunning} />
                   </div>
                 </div>
@@ -2459,7 +2478,7 @@ export default function ProScannerBot() {
                 )}
                 <div className="border-t border-border/30 pt-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[9px] font-semibold text-primary flex items-center gap-1"><Anchor className="w-3 h-3" /> Virtual Hook</span>
+                    <span className="text-[9px] font-semibold text-blue-400 flex items-center gap-1"><Anchor className="w-3 h-3" /> Virtual Hook</span>
                     <Switch checked={m1HookEnabled} onCheckedChange={setM1HookEnabled} disabled={isRunning} />
                   </div>
                   {m1HookEnabled && (
@@ -2498,7 +2517,7 @@ export default function ProScannerBot() {
                 )}
                 <div className="border-t border-border/30 pt-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[9px] font-semibold text-primary flex items-center gap-1"><Anchor className="w-3 h-3" /> Virtual Hook</span>
+                    <span className="text-[9px] font-semibold text-blue-400 flex items-center gap-1"><Anchor className="w-3 h-3" /> Virtual Hook</span>
                     <Switch checked={m2HookEnabled} onCheckedChange={setM2HookEnabled} disabled={isRunning} />
                   </div>
                   {m2HookEnabled && (
@@ -2519,8 +2538,8 @@ export default function ProScannerBot() {
 
             {/* Virtual Hook Stats */}
             {(m1HookEnabled || m2HookEnabled) && (
-              <div className="bg-card border border-primary/30 rounded-xl p-3">
-                <h3 className="text-[10px] font-semibold text-primary flex items-center gap-1 mb-2"><Anchor className="w-3 h-3" /> Hook Status</h3>
+              <div className="bg-card border border-blue-500/30 rounded-xl p-3">
+                <h3 className="text-[10px] font-semibold text-blue-400 flex items-center gap-1 mb-2"><Anchor className="w-3 h-3" /> Hook Status</h3>
                 <div className="grid grid-cols-4 gap-1 text-center">
                   <div className="bg-muted/50 rounded p-1">
                     <div className="text-[8px] text-muted-foreground">V-Win</div>
@@ -2545,7 +2564,7 @@ export default function ProScannerBot() {
             )}
 
             {/* Risk */}
-            <div className="bg-card border border-border rounded-xl p-3 space-y-2">
+            <div className="bg-card border border-blue-500/20 rounded-xl p-3 space-y-2">
               <h3 className="text-xs font-semibold flex items-center gap-1"><Shield className="w-3.5 h-3.5" /> Risk Management</h3>
               <div className="grid grid-cols-3 gap-2">
                 <div>
@@ -2591,12 +2610,12 @@ export default function ProScannerBot() {
 
             {/* Strategy Card */}
             {(strategyEnabled || strategyM1Enabled) && (
-              <div className="bg-card border border-warning/30 rounded-xl p-3 space-y-2">
-                <h3 className="text-xs font-semibold text-warning flex items-center gap-1"><Zap className="w-3.5 h-3.5" /> Strategy Conditions</h3>
+              <div className="bg-card border border-yellow-500/30 rounded-xl p-3 space-y-2">
+                <h3 className="text-xs font-semibold text-yellow-500 flex items-center gap-1"><Zap className="w-3.5 h-3.5" /> Strategy Conditions</h3>
                 {strategyM1Enabled && (
-                  <div className="border border-profit/20 rounded-lg p-2 space-y-1">
+                  <div className="border border-blue-500/20 rounded-lg p-2 space-y-1">
                     <div className="flex items-center justify-between">
-                      <label className="text-[9px] font-semibold text-profit">M1 Strategy</label>
+                      <label className="text-[9px] font-semibold text-blue-400">M1 Strategy</label>
                       <div className="flex gap-0.5">
                         <Button size="sm" variant={m1StrategyMode === 'pattern' ? 'default' : 'outline'} className="text-[9px] h-5 px-1.5" onClick={() => setM1StrategyMode('pattern')} disabled={isRunning}>Pattern</Button>
                         <Button size="sm" variant={m1StrategyMode === 'digit' ? 'default' : 'outline'} className="text-[9px] h-5 px-1.5" onClick={() => setM1StrategyMode('digit')} disabled={isRunning}>Digit</Button>
@@ -2622,9 +2641,9 @@ export default function ProScannerBot() {
                   </div>
                 )}
                 {strategyEnabled && (
-                  <div className="border border-destructive/20 rounded-lg p-2 space-y-1">
+                  <div className="border border-purple-500/20 rounded-lg p-2 space-y-1">
                     <div className="flex items-center justify-between">
-                      <label className="text-[9px] font-semibold text-destructive">M2 Strategy</label>
+                      <label className="text-[9px] font-semibold text-purple-400">M2 Strategy</label>
                       <div className="flex gap-0.5">
                         <Button size="sm" variant={m2StrategyMode === 'pattern' ? 'default' : 'outline'} className="text-[9px] h-5 px-1.5" onClick={() => setM2StrategyMode('pattern')} disabled={isRunning}>Pattern</Button>
                         <Button size="sm" variant={m2StrategyMode === 'digit' ? 'default' : 'outline'} className="text-[9px] h-5 px-1.5" onClick={() => setM2StrategyMode('digit')} disabled={isRunning}>Digit</Button>
@@ -2650,16 +2669,16 @@ export default function ProScannerBot() {
                   </div>
                 )}
                 {botStatus === 'waiting_pattern' && (
-                  <div className="bg-warning/10 border border-warning/30 rounded p-1.5 text-[9px] text-warning animate-pulse text-center font-semibold">⏳ WAITING FOR PATTERN...</div>
+                  <div className="bg-yellow-500/10 border border-yellow-500/30 rounded p-1.5 text-[9px] text-yellow-500 animate-pulse text-center font-semibold">⏳ WAITING FOR PATTERN...</div>
                 )}
                 {botStatus === 'pattern_matched' && (
-                  <div className="bg-profit/10 border border-profit/30 rounded p-1.5 text-[9px] text-profit text-center font-semibold animate-pulse">✅ PATTERN MATCHED! Taking trade...</div>
+                  <div className="bg-green-500/10 border border-green-500/30 rounded p-1.5 text-[9px] text-green-500 text-center font-semibold animate-pulse">✅ PATTERN MATCHED! Taking trade...</div>
                 )}
               </div>
             )}
 
             {/* Config Save/Load */}
-            <div className="bg-card border border-border rounded-xl p-3 space-y-2">
+            <div className="bg-card border border-blue-500/20 rounded-xl p-3 space-y-2">
               <h3 className="text-xs font-semibold">💾 Bot Config</h3>
               <Input placeholder="Enter bot name..." value={botName} onChange={e => setBotName(e.target.value)} disabled={isRunning} className="h-7 text-xs" />
               <div className="grid grid-cols-2 gap-2">
@@ -2702,7 +2721,7 @@ export default function ProScannerBot() {
           {/* RIGHT: Digit Stream + Activity Log */}
           <div className="lg:col-span-8 space-y-3">
             {/* Live Digits */}
-            <div className="bg-card border border-border rounded-xl p-3">
+            <div className="bg-card border border-blue-500/20 rounded-xl p-3">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-[10px] font-semibold">Live Digits — {activeSymbol}</h3>
                 <span className="text-[9px] text-muted-foreground font-mono">Win Rate: {winRate}% | Staked: ${totalStaked.toFixed(2)}</span>
@@ -2715,7 +2734,7 @@ export default function ProScannerBot() {
                   const isEven = d % 2 === 0;
                   const isLast = i === activeDigits.length - 1;
                   return (
-                    <div key={i} className={`w-8 h-10 rounded-lg flex flex-col items-center justify-center text-xs font-mono font-bold border ${isLast ? 'ring-2 ring-primary shadow-lg' : ''} ${isOver ? 'bg-loss/10 border-loss/30 text-loss' : 'bg-profit/10 border-profit/30 text-profit'}`}>
+                    <div key={i} className={`w-8 h-10 rounded-lg flex flex-col items-center justify-center text-xs font-mono font-bold border ${isLast ? 'ring-2 ring-blue-500 shadow-lg' : ''} ${isOver ? 'bg-loss/10 border-loss/30 text-loss' : 'bg-profit/10 border-profit/30 text-profit'}`}>
                       <span className="text-sm">{d}</span>
                       <span className="text-[7px] opacity-60">{isOver ? 'O' : 'U'}{isEven ? 'E' : 'O'}</span>
                     </div>
@@ -2733,7 +2752,7 @@ export default function ProScannerBot() {
                   relative w-full h-16 text-lg font-bold rounded-xl transition-all duration-300 ease-out overflow-hidden group
                   ${isRunning 
                     ? 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white shadow-lg shadow-red-500/30 animate-glow-pulse' 
-                    : 'bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-lg shadow-emerald-500/30'
+                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-500/30'
                   }
                   disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100
                   active:scale-98 transform
@@ -2776,7 +2795,7 @@ export default function ProScannerBot() {
               
               {isRunning && botStatus !== 'idle' && (
                 <div className="absolute -top-2 -right-2">
-                  <Badge className="bg-profit text-profit-foreground text-[8px] animate-pulse">
+                  <Badge className="bg-blue-500 text-white text-[8px] animate-pulse">
                     {botStatus === 'trading_m1' ? '🟢 ACTIVE' : 
                      botStatus === 'recovery' ? '🟣 RECOVERY' :
                      botStatus === 'waiting_pattern' ? '🟡 SCANNING' :
@@ -2789,10 +2808,10 @@ export default function ProScannerBot() {
             </div>
 
             {/* DUPLICATE LIVE STATUS - Added below start button and above Activity Log */}
-            <div className="bg-card border border-border rounded-xl p-3 shadow-md">
+            <div className="bg-card border border-blue-500/20 rounded-xl p-3 shadow-md">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-xs font-semibold flex items-center gap-2">
-                  <Zap className="w-3.5 h-3.5 text-primary" />
+                  <Zap className="w-3.5 h-3.5 text-blue-400" />
                   Live Status (Realtime)
                 </h3>
                 {isRunning && (
@@ -2814,13 +2833,13 @@ export default function ProScannerBot() {
                 </div>
                 <div className="bg-muted/40 rounded-lg p-2 text-center">
                   <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Market</div>
-                  <div className={`text-[11px] font-bold ${currentMarket === 1 ? 'text-profit' : 'text-purple-400'}`}>
+                  <div className={`text-[11px] font-bold ${currentMarket === 1 ? 'text-blue-400' : 'text-purple-400'}`}>
                     {currentMarket === 1 ? 'M1 (HOME)' : 'M2 (RECOVERY)'}
                   </div>
                 </div>
                 <div className="bg-muted/40 rounded-lg p-2 text-center">
                   <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Win Rate</div>
-                  <div className="text-[11px] font-bold font-mono text-primary">{winRate}%</div>
+                  <div className="text-[11px] font-bold font-mono text-blue-400">{winRate}%</div>
                 </div>
                 <div className="bg-muted/40 rounded-lg p-2 text-center">
                   <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Current P/L</div>
@@ -2840,7 +2859,7 @@ export default function ProScannerBot() {
                 </div>
                 <div className="bg-muted/40 rounded-lg p-2 text-center">
                   <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Balance</div>
-                  <div className="text-[11px] font-bold font-mono text-primary">${localBalance.toFixed(2)}</div>
+                  <div className="text-[11px] font-bold font-mono text-blue-400">${localBalance.toFixed(2)}</div>
                 </div>
                 <div className="bg-muted/40 rounded-lg p-2 text-center">
                   <div className="text-[8px] text-muted-foreground uppercase tracking-wider">Total Staked</div>
@@ -2856,8 +2875,8 @@ export default function ProScannerBot() {
                 </div>
               </div>
               {botStatus === 'virtual_hook' && (
-                <div className="mt-2 text-center bg-primary/10 border border-primary/30 rounded-lg p-1.5">
-                  <div className="text-[9px] text-primary animate-pulse flex items-center justify-center gap-2">
+                <div className="mt-2 text-center bg-blue-500/10 border border-blue-500/30 rounded-lg p-1.5">
+                  <div className="text-[9px] text-blue-400 animate-pulse flex items-center justify-center gap-2">
                     <Anchor className="w-3 h-3" />
                     Virtual Hook Active — Waiting for {m1HookEnabled ? m1VirtualLossCount : m2VirtualLossCount} consecutive losses...
                     <span className="font-bold">({vhConsecLosses}/{m1HookEnabled ? m1VirtualLossCount : m2VirtualLossCount})</span>
@@ -2865,8 +2884,8 @@ export default function ProScannerBot() {
                 </div>
               )}
               {botStatus === 'waiting_pattern' && (
-                <div className="mt-2 text-center bg-warning/10 border border-warning/30 rounded-lg p-1.5">
-                  <div className="text-[9px] text-warning animate-pulse flex items-center justify-center gap-2">
+                <div className="mt-2 text-center bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-1.5">
+                  <div className="text-[9px] text-yellow-500 animate-pulse flex items-center justify-center gap-2">
                     <Scan className="w-3 h-3" />
                     Scanning for pattern match...
                   </div>
@@ -2883,12 +2902,12 @@ export default function ProScannerBot() {
             </div>
 
             {/* Activity Log - Full Width, Full Height */}
-            <div className="bg-card border border-border rounded-xl overflow-hidden shadow-lg flex flex-col">
-              <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 bg-muted/20">
+            <div className="bg-card border border-blue-500/20 rounded-xl overflow-hidden shadow-lg flex flex-col">
+              <div className="px-4 py-3 border-b border-blue-500/20 flex items-center justify-between gap-3 bg-muted/20">
                 <h3 className="text-xs font-semibold text-foreground flex items-center gap-2">
-                  <RefreshCw className="w-3.5 h-3.5 text-primary" />
+                  <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
                   Activity Log
-                  <Badge variant="outline" className="text-[9px] bg-primary/10">
+                  <Badge variant="outline" className="text-[9px] bg-blue-500/10 border-blue-500/30 text-blue-400">
                     {logEntries.length} entries
                   </Badge>
                 </h3>
@@ -2906,7 +2925,7 @@ export default function ProScannerBot() {
               <div className="flex-1 max-h-[calc(100vh-300px)] min-h-[400px] overflow-auto">
                 <table className="w-full text-[10px]">
                   <thead className="text-[9px] text-muted-foreground bg-muted/40 sticky top-0 z-10">
-                    <tr className="border-b border-border">
+                    <tr className="border-b border-blue-500/20">
                       <th className="text-left p-2 font-semibold">Time</th>
                       <th className="text-left p-2 font-semibold">Mkt</th>
                       <th className="text-left p-2 font-semibold">Symbol</th>
@@ -2916,7 +2935,7 @@ export default function ProScannerBot() {
                       <th className="text-center p-2 font-semibold">Result</th>
                       <th className="text-right p-2 font-semibold">P/L</th>
                       <th className="text-right p-2 font-semibold">Bal</th>
-                     </tr>
+                    </tr>
                   </thead>
                   <tbody>
                     {logEntries.length === 0 ? (
@@ -2930,15 +2949,15 @@ export default function ProScannerBot() {
                       </tr>
                     ) : logEntries.map(e => (
                       <tr key={e.id} className={`border-b border-border/50 hover:bg-muted/30 transition-colors ${
-                        e.market === 'M1' ? 'border-l-2 border-l-profit' :
-                        e.market === 'VH' ? 'border-l-2 border-l-primary' :
+                        e.market === 'M1' ? 'border-l-2 border-l-blue-500' :
+                        e.market === 'VH' ? 'border-l-2 border-l-indigo-500' :
                         e.market === 'SYSTEM' ? 'border-l-2 border-l-orange-500' :
                         'border-l-2 border-l-purple-500'
                       }`}>
                         <td className="p-2 font-mono text-[9px] text-muted-foreground">{e.time}</td>
                         <td className={`p-2 font-bold text-[10px] ${
-                          e.market === 'M1' ? 'text-profit' :
-                          e.market === 'VH' ? 'text-primary' :
+                          e.market === 'M1' ? 'text-blue-400' :
+                          e.market === 'VH' ? 'text-indigo-400' :
                           e.market === 'SYSTEM' ? 'text-orange-500' :
                           'text-purple-400'
                         }`}>{e.market}</td>
@@ -2946,7 +2965,7 @@ export default function ProScannerBot() {
                         <td className="p-2 text-[9px] text-muted-foreground">{e.contract.replace('DIGIT', '')}</td>
                         <td className="p-2 font-mono text-right text-[9px]">
                           {e.market === 'VH' ? (
-                            <span className="text-primary">FAKE</span>
+                            <span className="text-indigo-400">FAKE</span>
                           ) : e.market === 'SYSTEM' ? (
                             <span className="text-orange-500">SYS</span>
                           ) : (
@@ -2981,9 +3000,6 @@ export default function ProScannerBot() {
           </div>
         </div>
       </div>
-      
-      {/* Social Notification Popup */}
-      <SocialNotificationPopup />
       
       {/* TP/SL Notification Popup */}
       <TPSLNotificationPopup />
