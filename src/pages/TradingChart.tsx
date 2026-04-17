@@ -497,9 +497,11 @@ interface MarketStats {
 // Constants
 const MAX_SCAN_ATTEMPTS = 100;
 const SCAN_INTERVAL = 100;
-const CONNECTION_CHECK_INTERVAL = 5000;
-const DATA_STALENESS_THRESHOLD = 10000;
-const HEARTBEAT_INTERVAL = 30000;
+const CONNECTION_CHECK_INTERVAL = 3000; // Reduced for faster detection
+const DATA_STALENESS_THRESHOLD = 8000; // Reduced for faster detection
+const HEARTBEAT_INTERVAL = 15000; // Reduced for faster detection
+const RECONNECT_DELAY = 2000;
+const MAX_RECONNECT_ATTEMPTS = 5;
 const DEBUG = true;
 const BALANCE_SYNC_INTERVAL = 1000;
 const IMMEDIATE_BALANCE_SYNC_DELAY = 50;
@@ -851,6 +853,21 @@ export default function ProScannerBot() {
   const connectionRetryCountRef = useRef<number>(0);
   const MAX_CONNECTION_RETRIES = 3;
   const isReconnectingRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Store bot state for recovery after reconnection
+  const botStateRef = useRef<{
+    cStake: number;
+    mStep: number;
+    inRecovery: boolean;
+    currentNetProfit: number;
+    currentLocalBalance: number;
+    baseStake: number;
+    waitingForPatternAfterLoss: boolean;
+    lastPatternSymbol?: string;
+    lastPatternDigits?: string;
+  } | null>(null);
 
   const tickMapRef = useRef<Map<string, number[]>>(new Map());
 
@@ -953,7 +970,7 @@ export default function ProScannerBot() {
     setIsScannerVoiceActive(isRunning);
   }, [isRunning]);
 
-  // IMPROVED CONNECTION MANAGEMENT
+  // IMPROVED CONNECTION MANAGEMENT WITH STATE PERSISTENCE
   const ensureConnection = useCallback(async (): Promise<boolean> => {
     // Check if already connected and has fresh data
     if (derivApi.isConnected) {
@@ -969,6 +986,7 @@ export default function ProScannerBot() {
       
       if (hasFreshData) {
         connectionRetryCountRef.current = 0;
+        reconnectAttemptsRef.current = 0;
         isReconnectingRef.current = false;
         return true;
       } else {
@@ -1013,9 +1031,9 @@ export default function ProScannerBot() {
     isReconnectingRef.current = true;
     setBotStatus('reconnecting');
     
-    for (let i = 0; i < MAX_CONNECTION_RETRIES; i++) {
+    for (let i = 0; i < MAX_RECONNECT_ATTEMPTS; i++) {
       try {
-        logDebug(`Connection attempt ${i + 1}/${MAX_CONNECTION_RETRIES}`);
+        logDebug(`Connection attempt ${i + 1}/${MAX_RECONNECT_ATTEMPTS}`);
         
         // Disconnect if already connected
         if (derivApi.isConnected) {
@@ -1042,38 +1060,76 @@ export default function ProScannerBot() {
           );
           
           await new Promise(r => setTimeout(r, 3000));
-          setBotStatus(runningRef.current ? 'trading_m1' : 'idle');
+          
+          // Restore bot state after successful reconnection
+          if (runningRef.current && botStateRef.current) {
+            logDebug('Restoring bot state after reconnection...', botStateRef.current);
+            setCurrentStakeState(botStateRef.current.cStake);
+            setMartingaleStepState(botStateRef.current.mStep);
+            setNetProfit(botStateRef.current.currentNetProfit);
+            netProfitRef.current = botStateRef.current.currentNetProfit;
+            setLocalBalance(botStateRef.current.currentLocalBalance);
+            localBalanceRef.current = botStateRef.current.currentLocalBalance;
+            
+            // Resume trading with restored state
+            setBotStatus(botStateRef.current.inRecovery ? 'recovery' : 'trading_m1');
+          } else {
+            setBotStatus(runningRef.current ? 'trading_m1' : 'idle');
+          }
+          
           connectionRetryCountRef.current = 0;
+          reconnectAttemptsRef.current = 0;
           isReconnectingRef.current = false;
           logDebug('Reconnection successful');
           return true;
         }
       } catch (error) {
         logDebug(`Reconnection attempt ${i + 1} failed:`, error);
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, RECONNECT_DELAY));
       }
     }
     
     setBotStatus('idle');
     isReconnectingRef.current = false;
     logDebug('Reconnection failed after all attempts');
+    
+    // If we're supposed to be running but reconnection failed, stop the bot
+    if (runningRef.current) {
+      logDebug('Stopping bot due to connection failure');
+      stopBot();
+    }
+    
     return false;
   }, []);
 
-  // Improved connection monitoring
+  // Improved connection monitoring with automatic resumption
   useEffect(() => {
     let connectionChecker: NodeJS.Timeout;
     let dataStalenessChecker: NodeJS.Timeout;
     
     if (isRunning) {
       connectionChecker = setInterval(async () => {
-        if (!derivApi.isConnected && !isReconnectingRef.current) {
+        if (!derivApi.isConnected && !isReconnectingRef.current && runningRef.current) {
           logDebug('Connection lost, attempting to reconnect...');
           const reconnected = await ensureConnection();
           if (!reconnected && runningRef.current) {
             // If reconnection fails and bot should be running, stop the bot
             logDebug('Failed to reconnect, stopping bot...');
             stopBot();
+          }
+        } else if (derivApi.isConnected && runningRef.current && !isReconnectingRef.current) {
+          // Verify we're getting data
+          let hasFreshData = false;
+          for (const market of SCANNER_MARKETS.slice(0, 5)) {
+            const lastTickTime = lastTickTimeRef.current.get(market.symbol);
+            if (lastTickTime && Date.now() - lastTickTime < DATA_STALENESS_THRESHOLD) {
+              hasFreshData = true;
+              break;
+            }
+          }
+          if (!hasFreshData) {
+            logDebug('No fresh data, refreshing connection...');
+            await ensureConnection();
           }
         }
       }, CONNECTION_CHECK_INTERVAL);
@@ -1098,6 +1154,7 @@ export default function ProScannerBot() {
     return () => {
       if (connectionChecker) clearInterval(connectionChecker);
       if (dataStalenessChecker) clearInterval(dataStalenessChecker);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     };
   }, [isRunning, ensureConnection]);
 
@@ -1107,13 +1164,13 @@ export default function ProScannerBot() {
     
     const heartbeat = setInterval(() => {
       if (!derivApi.isConnected && runningRef.current) {
-        logDebug('Heartbeat failed, stopping bot...');
-        stopBot();
+        logDebug('Heartbeat failed, attempting reconnect...');
+        ensureConnection();
       }
     }, HEARTBEAT_INTERVAL);
     
     return () => clearInterval(heartbeat);
-  }, [isRunning]);
+  }, [isRunning, ensureConnection]);
 
   const stopBot = useCallback(() => {
     logDebug('Stopping bot...');
@@ -1121,6 +1178,7 @@ export default function ProScannerBot() {
     setIsRunning(false);
     setBotStatus('idle');
     setIsScannerVoiceActive(false);
+    botStateRef.current = null;
     
     // Clear any pending timeouts/intervals
     if (statsIntervalRef.current) {
@@ -2205,7 +2263,29 @@ export default function ProScannerBot() {
     let currentLocalBalance = startBalance;
     let waitingForPatternAfterLoss = false;
 
+    // Initialize bot state for recovery
+    botStateRef.current = {
+      cStake,
+      mStep,
+      inRecovery,
+      currentNetProfit,
+      currentLocalBalance,
+      baseStake,
+      waitingForPatternAfterLoss
+    };
+
     while (runningRef.current) {
+      // Update bot state periodically for recovery
+      botStateRef.current = {
+        cStake,
+        mStep,
+        inRecovery,
+        currentNetProfit,
+        currentLocalBalance,
+        baseStake,
+        waitingForPatternAfterLoss
+      };
+      
       // Check connection status before each trade attempt
       if (!derivApi.isConnected) {
         logDebug('Connection lost during trading, attempting reconnect...');
@@ -2214,6 +2294,8 @@ export default function ProScannerBot() {
           logDebug('Failed to reconnect, stopping bot');
           break;
         }
+        // After successful reconnection, continue the loop with restored state
+        continue;
       }
       
       const mkt: 1 | 2 = inRecovery ? 2 : 1;
@@ -2348,6 +2430,7 @@ export default function ProScannerBot() {
     runningRef.current = false;
     setBotStatus('idle');
     setIsScannerVoiceActive(false);
+    botStateRef.current = null;
     logDebug('Bot stopped');
   }, [isAuthorized, isRunning, stake, m1Enabled, m2Enabled,
     martingaleOn, martingaleMultiplier, martingaleMaxSteps, takeProfit, stopLoss,
