@@ -746,7 +746,7 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
       await cleanup();
       
       try {
-        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, 500);
+        const hist = await derivApi.getTickHistory(symbol as MarketSymbol, 1000);
         if (!active) return;
         
         const historicalDigits = (hist.history.prices || []).map((p: number) => getLastDigit(p));
