@@ -489,7 +489,7 @@ const CONTRACT_TYPES_CHART = [
   { value: 'DIGITUNDER', label: 'Digits Under' },
 ];
 
-// Global tick storage for chart
+// Global tick storage for chart - now with 1000 tick history
 const chartTickHistory: { [symbol: string]: number[] } = {};
 const chartTickPrices: { [symbol: string]: number[] } = {};
 const chartTickCallbacks: { [symbol: string]: (() => void)[] } = [];
@@ -509,7 +509,7 @@ function addChartTick(symbol: string, digit: number, price: number) {
   chartTickHistory[symbol].push(digit);
   chartTickPrices[symbol].push(price);
   
-  // Keep larger buffer for better analysis (2000 items)
+  // Keep last 1000 ticks (increased from 500 to 1000)
   if (chartTickHistory[symbol].length > 2000) chartTickHistory[symbol].shift();
   if (chartTickPrices[symbol].length > 2000) chartTickPrices[symbol].shift();
   
@@ -526,33 +526,11 @@ function subscribeToChartTicks(symbol: string, callback: () => void) {
   };
 }
 
-// Updated to use the selected tickRange for accurate percentage calculations
 function calculateChartDigitStats(symbol: string, tickRange: number) {
   const ticks = getChartTickHistory(symbol);
   const tickPricesData = getChartTickPrices(symbol);
-  
-  // Use the selected tickRange for calculations
+  // Use the selected tickRange (default 1000) or all available if less
   const recentTicks = ticks.slice(-tickRange);
-  const recentPrices = tickPricesData.slice(-tickRange);
-  
-  if (recentTicks.length === 0) {
-    return {
-      frequency: { 0:0,1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0,9:0 },
-      percentages: { 0:0,1:0,2:0,3:0,4:0,5:0,6:0,7:0,8:0,9:0 },
-      mostCommon: 0,
-      secondMost: 0,
-      leastCommon: 0,
-      totalTicks: 0,
-      evenPercentage: 50,
-      oddPercentage: 50,
-      overPercentage: 50,
-      underPercentage: 50,
-      over3Percentage: 50,
-      under6Percentage: 50,
-      last26Digits: [],
-      tickPrices: [],
-    };
-  }
   
   const frequency: Record<number, number> = {};
   for (let i = 0; i <= 9; i++) frequency[i] = 0;
@@ -563,7 +541,7 @@ function calculateChartDigitStats(symbol: string, tickRange: number) {
   
   const percentages: Record<number, number> = {};
   for (let i = 0; i <= 9; i++) {
-    percentages[i] = (frequency[i] / recentTicks.length) * 100;
+    percentages[i] = recentTicks.length > 0 ? (frequency[i] / recentTicks.length) * 100 : 0;
   }
   
   let mostCommon = 0;
@@ -621,7 +599,7 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
   const [symbol, setSymbol] = useState('R_100');
   const [selectedContractType, setSelectedContractType] = useState('CALL');
   const [selectedPrediction, setSelectedPrediction] = useState('5');
-  const [tickRange, setTickRange] = useState(1000); // Default to 1000 ticks
+  const [tickRange, setTickRange] = useState(1000);
   const [digitStats, setDigitStats] = useState<any>(null);
   const [displaySymbols, setDisplaySymbols] = useState<string[]>([]);
   const [isExiting, setIsExiting] = useState(false);
@@ -769,7 +747,7 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
       await cleanup();
       
       try {
-        // Fetch 1000 ticks initial history
+        // Fetch 1000 ticks history (increased from 500 to 1000)
         const hist = await derivApi.getTickHistory(symbol as MarketSymbol, 1000);
         if (!active) return;
         
@@ -986,16 +964,16 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
             </div>
           )}
           
-          {/* Tick Range */}
+          {/* Tick Range - Default 1000 ticks */}
           <div className="flex items-center justify-between">
-            <label className="text-[9px] text-blue-300">Tick Range (Analysis)</label>
+            <label className="text-[9px] text-blue-300">Tick Range</label>
             <Select value={String(tickRange)} onValueChange={v => setTickRange(parseInt(v))}>
-              <SelectTrigger className="h-6 text-[9px] w-24 bg-slate-800/50 border-slate-700">
+              <SelectTrigger className="h-6 text-[9px] w-20 bg-slate-800/50 border-slate-700">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {[50, 100, 200, 300, 500, 1000].map(r => (
-                  <SelectItem key={r} value={String(r)}>{r} ticks</SelectItem>
+                {[100, 200, 300, 500, 1000, 2000].map(r => (
+                  <SelectItem key={r} value={String(r)}>{r}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -1008,10 +986,10 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500"></span>
               </span>
-              <span className="text-[8px] text-gray-400">Analysis Based On</span>
+              <span className="text-[8px] text-gray-400">Live Ticks</span>
             </div>
             <Badge variant="outline" className="text-[8px] bg-slate-800/50 border-blue-500/30 text-blue-300">
-              Last {totalTicks} ticks
+              {totalTicks} ticks
             </Badge>
           </div>
           
@@ -1221,7 +1199,7 @@ const TradingChartPopup = ({ onClose, isRunning }: { onClose: () => void; isRunn
           </div>
           
           <div className="text-center text-[6px] text-gray-500 py-1">
-            🔄 Analysis based on last {tickRange} ticks | Updates in real-time
+            🔄 Updates in real-time with each new tick | Analysis based on last {tickRange} ticks
           </div>
         </div>
       </div>
@@ -1624,7 +1602,7 @@ export default function ProScannerBot() {
       return true;
     }
     return false;
-  }, [isRunning, addLog]);
+  }, [isRunning]);
 
   // Enhanced connection checker without UI indicators
   useEffect(() => {
@@ -1666,7 +1644,7 @@ export default function ProScannerBot() {
     }, 3000);
     
     return () => clearInterval(connectionChecker);
-  }, [isRunning, ensureConnection, saveBotState, restoreBotState, isConnected, localBalance, addLog]);
+  }, [isRunning, ensureConnection, saveBotState, restoreBotState, isConnected, localBalance]);
 
   const addLog = useCallback((id: number, entry: Omit<LogEntry, 'id'>) => {
     setLogEntries(prev => [{ ...entry, id }, ...prev].slice(0, 100));
@@ -3117,4 +3095,4 @@ export default function ProScannerBot() {
       <TPSLNotificationPopup />
     </>
   );
-  }
+        }
